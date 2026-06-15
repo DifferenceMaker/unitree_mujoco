@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Loopback-only CycloneDDS config for the arch_b_sim plumbing test on a box
+     with NO robot NIC. lo is not multicast-capable, so we disable multicast and
+     use unicast peer discovery on localhost. Set:
+       export CYCLONEDDS_URI=file://$PWD/cyclonedds_lo.xml
+     This is for the FAKE-robot / sidecar plumbing test only. On the real
+     desktop, MuJoCo + controller + modules use the project's own config. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface name="lo" presence_required="false"/>
+      </Interfaces>
+      <AllowMulticast>false</AllowMulticast>
+    </General>
+    <Discovery>
+      <ParticipantIndex>auto</ParticipantIndex>
+      <Peers>
+        <Peer address="localhost"/>
+      </Peers>
+    </Discovery>
+    <Tracing>
+      <Verbosity>warning</Verbosity>
+    </Tracing>
+  </Domain>
+</CycloneDDS>
