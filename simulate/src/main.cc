@@ -29,6 +29,7 @@
 #include <new>
 #include <sstream>
 #include <string>
+#include <sys/stat.h>
 #include <thread>
 
 #include <mujoco/mujoco.h>
@@ -766,6 +767,14 @@ int main(int argc, char **argv)
   std::filesystem::path proj_dir = std::filesystem::path(getExecutableDir()).parent_path();
   param::config.load_from_yaml(proj_dir / "config.yaml");
   param::helper(argc, argv);
+
+  // apply the elastic-band (suspension harness) config to the global band
+  if (param::config.band_anchor.size() == 3)
+    elastic_band.point_ = param::config.band_anchor;
+  elastic_band.length_    = param::config.band_rest_length;
+  elastic_band.stiffness_ = param::config.band_stiffness;
+  elastic_band.damping_   = param::config.band_damping;
+
   if(param::config.robot_scene.is_relative()) {
     param::config.robot_scene = proj_dir.parent_path() / "unitree_robots" / param::config.robot / param::config.robot_scene;
   }
@@ -780,6 +789,27 @@ int main(int argc, char **argv)
   // harness stdin command thread (push <vx> <vy>)
   std::thread stdin_thread(StdinCommandThread);
   stdin_thread.detach();
+
+  // harness: auto-release the elastic band the moment the controller signals
+  // policy engagement (it creates ARCHB_BAND_RELEASE_FILE after FixStand). So
+  // the band supports spawn + the FixStand ramp, then the robot free-stands
+  // under the policy — no manual key press, no host/container coupling beyond
+  // a flag file on the shared mount.
+  if (const char *band_flag = std::getenv("ARCHB_BAND_RELEASE_FILE"))
+  {
+    if (band_flag[0])
+    {
+      std::thread band_thread([flag = std::string(band_flag)]() {
+        struct stat sb;
+        while (stat(flag.c_str(), &sb) != 0)
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        elastic_band.enable_ = false;
+        std::printf("[BAND] policy-engaged flag seen → elastic band released\n");
+        std::fflush(stdout);
+      });
+      band_thread.detach();
+    }
+  }
 
   // start physics thread
   std::thread physicsthreadhandle(&PhysicsThread, sim.get(), param::config.robot_scene.c_str());

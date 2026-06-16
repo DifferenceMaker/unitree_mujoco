@@ -69,6 +69,8 @@ STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 MJ_LOG="$LOG_DIR/mujoco_$STAMP.log"
 METRICS_LOG="$LOG_DIR/balance_metrics_${MODE}_$STAMP.log"
 METRICS_FIFO="/tmp/archb_metrics.stdin"
+BAND_FLAG="$SIM/logs/.band_release"                            # host path (shared mount, gitignored)
+BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"  # same file, container path
 
 [[ -x "$MJ_BIN" ]] || { echo "ERROR: MuJoCo binary not built: $MJ_BIN"; exit 1; }
 if ! ls /dev/input/js* >/dev/null 2>&1; then
@@ -86,7 +88,7 @@ cleanup() {
   [[ -n "$CTRL_PID" ]] && kill "$CTRL_PID" 2>/dev/null || true
   [[ -n "$MJ_PID"  ]] && kill "$MJ_PID"  2>/dev/null || true
   pkill -f "balance_metrics.py" 2>/dev/null || true
-  rm -f "$METRICS_FIFO"
+  rm -f "$METRICS_FIFO" "$BAND_FLAG"
   [[ "$METRICS" = "1" ]] && echo ">>> metrics log + RUN SUMMARY: $METRICS_LOG"
   echo ">>> done."
 }
@@ -94,7 +96,8 @@ trap cleanup EXIT INT TERM
 
 # ── 1. MuJoCo (host) ────────────────────────────────────────────────────────
 echo ">>> [1] launching unitree_mujoco (h1_2 D-model) on lo, domain 0..."
-( cd "$MUJOCO/simulate" && "$MJ_BIN" -r h1_2 -i 0 -n lo ) >"$MJ_LOG" 2>&1 &
+rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
+( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i 0 -n lo ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
 
@@ -128,6 +131,8 @@ else
   echo ">>> [3] ROS2 stack in container (MODE=$MODE, gains=$GAINS)..."
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
     -e MODE="$MODE" -e GAINS="$GAINS" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
+    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
+    -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh
 fi

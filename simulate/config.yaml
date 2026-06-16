@@ -12,3 +12,13 @@ joystick_bits: 16 # Some game controllers may only have 8-bit accuracy
 print_scene_information: 1 # Print link, joint and sensors information of robot
 
 enable_elastic_band: 1 # Virtual spring band, used for lifting h1
+
+# Suspension harness (gantry) — overhead spring on the pelvis. Tuned so its
+# equilibrium sits near the crouch height (~0.86 m) for the ~76 kg H1-2: supports
+# the robot with feet on the floor during bring-up, then the controller
+# auto-releases it when the policy engages. If the feet lift, lower band_stiffness;
+# if it sags, raise it. Keys 7/8 (or ↑/↓) in the sim window nudge the height live.
+band_anchor: [0.0, 0.0, 3.0]   # world point the band pulls the pelvis toward
+band_rest_length: 0.0          # spring rest length (m)
+band_stiffness: 350.0          # N/m  (~supports the 750 N weight at crouch height)
+band_damping: 150.0            # N·s/m

@@ -59,6 +59,19 @@ NUM_MOTOR = 27
 ARM_KP_DEFAULT = 50.0   # team real-robot arm gains (BridgeModule H1_2_KP/KD)
 ARM_KD_DEFAULT = 1.0
 
+# Safety net: clip every raw action to ±this before scale+offset, so a policy
+# transient (e.g. the OOD runaway) can never reach impossible joint targets.
+# Healthy balance actions are < 1, so this is inert in normal operation.
+ACTION_SAFETY_CLIP = float(os.environ.get("ARCHB_ACTION_CLIP", "5.0"))
+# FixStand: seconds to ramp from the spawn pose into the home/crouch before
+# engaging the policy, so the policy starts in-distribution (mirrors the C++
+# deploy FSM's FixStand->Balance). 0 disables the ramp.
+FIXSTAND_SEC = float(os.environ.get("ARCHB_FIXSTAND_SEC", "1.5"))
+# When set, the consumer creates this file once FixStand completes; the MuJoCo
+# sim watches for it and releases the elastic band (band supports spawn + ramp,
+# off under the policy). Path must resolve to the same file in both processes.
+BAND_RELEASE_FILE = os.environ.get("ARCHB_BAND_RELEASE_FILE", "")
+
 
 def sdk_default_pose() -> np.ndarray:
     """DEFAULT_JOINT_POS (policy order) → SDK/motor order, for the pre-command
@@ -166,6 +179,48 @@ def main():
     print(f"[sim_action_consumer] mode_machine={st['mode_machine']} — control ready",
           flush=True)
 
+    # ── FixStand: ramp spawn pose → home/crouch, THEN hand off to the policy, so
+    #    the body (and thus MovementModule's observations) stay in-distribution
+    #    from the policy's first step. Open-loop joint interpolation @ 50 Hz. ────
+    if FIXSTAND_SEC > 0:
+        with lock:
+            msg0 = st["msg"]
+        q_start = (np.array([msg0.motor_state[i].q for i in range(NUM_MOTOR)],
+                            dtype=np.float32)
+                   if msg0 is not None else default_sdk.copy())
+        n_ramp = max(1, int(round(FIXSTAND_SEC / STEP_DT)))
+        print(f"[sim_action_consumer] FixStand: ramp spawn→home over "
+              f"{FIXSTAND_SEC:.1f}s ({n_ramp} steps), then engage policy", flush=True)
+        t_r = time.monotonic()
+        for k in range(n_ramp + 1):
+            rclpy.spin_once(ros, timeout_sec=0.0)
+            alpha = k / n_ramp
+            tgt = (1.0 - alpha) * q_start + alpha * default_sdk
+            low_cmd.mode_pr = 0
+            low_cmd.mode_machine = st["mode_machine"]
+            for i in range(NUM_MOTOR):
+                mc = low_cmd.motor_cmd[i]
+                mc.mode = 1
+                mc.q = float(tgt[i]); mc.dq = 0.0; mc.tau = 0.0
+                mc.kp = float(kp[i]); mc.kd = float(kd[i])
+            low_cmd.crc = crc.Crc(low_cmd)
+            pub.Write(low_cmd)
+            t_r += STEP_DT
+            s = t_r - time.monotonic()
+            if s > 0:
+                time.sleep(s)
+        print("[sim_action_consumer] FixStand complete → policy engaged", flush=True)
+
+    # Signal the sim to release the elastic band now that the policy drives
+    # (fires whether or not FixStand ran).
+    if BAND_RELEASE_FILE:
+        try:
+            open(BAND_RELEASE_FILE, "w").close()
+            print(f"[sim_action_consumer] band-release signalled ({BAND_RELEASE_FILE})",
+                  flush=True)
+        except OSError as e:
+            print(f"[sim_action_consumer] band-release signal failed: {e}", flush=True)
+
     last_action = None
     next_t = time.monotonic()
     dbg_n = 0
@@ -202,7 +257,8 @@ def main():
             # legs+torso: transform the 13 raw actions (only once we have them)
             if action is not None and len(action) >= N_ACTION:
                 a = np.asarray(action[:N_ACTION], dtype=np.float32)
-                a = np.clip(a, ACTION_CLIP_LOW, ACTION_CLIP_HIGH)  # knee clip etc.
+                a = np.clip(a, -ACTION_SAFETY_CLIP, ACTION_SAFETY_CLIP)  # runaway safety net
+                a = np.clip(a, ACTION_CLIP_LOW, ACTION_CLIP_HIGH)        # contract knee clip
                 legs_torso = a * ACTION_SCALE + ACTION_OFFSET
                 target[ACTION_SDK_IDS] = legs_torso
                 last_action = a

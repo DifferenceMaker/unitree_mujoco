@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <vector>
 #include <boost/program_options.hpp>
 #include <yaml-cpp/yaml.h>
 #include <filesystem>
@@ -26,6 +27,14 @@ inline struct SimulationConfig
     int enable_elastic_band;
     int band_attached_link = 0;
 
+    // Elastic band (suspension harness) — overridable from config.yaml. Defaults
+    // tuned so the spring's equilibrium sits near the crouch height (feet on the
+    // floor) for the ~76 kg H1-2: supports it during bring-up without lifting.
+    std::vector<double> band_anchor = {0.0, 0.0, 3.0};
+    double band_rest_length = 0.0;
+    double band_stiffness = 350.0;
+    double band_damping = 150.0;
+
     void load_from_yaml(const std::string &filename)
     {
         auto cfg = YAML::LoadFile(filename);
@@ -47,6 +56,11 @@ inline struct SimulationConfig
             std::cerr << e.what() << '\n';
             exit(EXIT_FAILURE);
         }
+        // optional elastic-band params (keep the defaults above if absent)
+        if (cfg["band_anchor"])      band_anchor      = cfg["band_anchor"].as<std::vector<double>>();
+        if (cfg["band_rest_length"]) band_rest_length = cfg["band_rest_length"].as<double>();
+        if (cfg["band_stiffness"])   band_stiffness   = cfg["band_stiffness"].as<double>();
+        if (cfg["band_damping"])     band_damping     = cfg["band_damping"].as<double>();
     }
 } config;
 
