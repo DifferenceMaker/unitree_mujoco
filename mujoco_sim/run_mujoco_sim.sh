@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# run_arch_b_sim.sh — one-command Architecture B × MuJoCo balance sim.
+# run_mujoco_sim.sh — one-command Architecture B × MuJoCo balance sim.
 #
 # Brings up the mass-corrected H1-2 in unitree_mujoco on `lo` (host), the
 # balance_metrics sidecar headless→logfile (host, tv env), and either:
@@ -13,13 +13,13 @@
 #
 # The ROS2 nodes run in the ros2-humble-dev container (both repos mounted),
 # MuJoCo + metrics run on the host. DDS is CycloneDDS on lo (domain 0), shared
-# via --network host. See arch_b_sim/INTEGRATION_DESIGN.md (Addendum A6).
+# via --network host. See mujoco_sim/INTEGRATION_DESIGN.md (Addendum A6).
 #
 # Examples:
-#   bash run_arch_b_sim.sh --mode-a                 # balance bring-up
-#   bash run_arch_b_sim.sh --mode-b                 # + colleague's IK arms
-#   bash run_arch_b_sim.sh --ref                    # C++ reference path
-#   bash run_arch_b_sim.sh --mode-a --metrics-mode idle_quiet
+#   bash run_mujoco_sim.sh --mode-a                 # balance bring-up
+#   bash run_mujoco_sim.sh --mode-b                 # + colleague's IK arms
+#   bash run_mujoco_sim.sh --ref                    # C++ reference path
+#   bash run_mujoco_sim.sh --mode-a --metrics-mode idle_quiet
 #   echo "mode push" > /tmp/archb_metrics.stdin     # label a disturbance mode live
 # ============================================================================
 set -uo pipefail
@@ -30,7 +30,7 @@ ASPIRED="$REPOS/Aspired_Robot_Project"
 MUJOCO="$REPOS/unitree_mujoco"
 SDK="$REPOS/unitree_sdk2_python"
 RLLAB="$REPOS/unitree_rl_lab"
-SIM="$MUJOCO/arch_b_sim"
+SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
 XML="$MUJOCO/unitree_robots/h1_2/h1_2.xml"
@@ -50,6 +50,20 @@ while [[ $# -gt 0 ]]; do case "$1" in
   *) echo "unknown arg: $1"; exit 1;;
 esac; done
 
+# ── architecture banner — make it obvious which path is running ──────────────
+echo "============================================================"
+case "$MODE" in
+  a)   echo " ARCHITECTURE B × MuJoCo  —  MODE A (balance bring-up)"
+       echo "   ROS2 balance stack: our legs/torso policy + STATIC default arms" ;;
+  b)   echo " ARCHITECTURE B × MuJoCo  —  MODE B (full integration)"
+       echo "   ROS2 balance stack: our legs/torso policy + ActionModule IK arms" ;;
+  ref) echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
+       echo "   known-good controller, for the apples-to-apples comparison" ;;
+esac
+echo "   model: $XML"
+[[ "$MODE" != "ref" ]] && echo "   consumer gains: $GAINS"
+echo "============================================================"
+
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 MJ_LOG="$LOG_DIR/mujoco_$STAMP.log"
@@ -65,6 +79,7 @@ fi
 
 CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""
 cleanup() {
+  [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1   # run once: Ctrl+C fires INT then EXIT
   echo ""; echo ">>> cleaning up..."
   [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }  # → RUN SUMMARY into log
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -112,7 +127,7 @@ if [[ "$MODE" = "ref" ]]; then
 else
   echo ">>> [3] ROS2 stack in container (MODE=$MODE, gains=$GAINS)..."
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
-    -e MODE="$MODE" -e GAINS="$GAINS" \
+    -e MODE="$MODE" -e GAINS="$GAINS" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
-    --entrypoint bash ros2-humble-dev /unitree_mujoco/arch_b_sim/tools/_nodes_in_container.sh
+    --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh
 fi

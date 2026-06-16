@@ -3,25 +3,29 @@
 # ros2-humble-dev container, against rt/lowstate/rt/lowcmd already on `lo`
 # (real MuJoCo runs on the host; --network host shares the bus).
 #
-# Invoked by run_arch_b_sim.sh via docker run. Env in:
+# Invoked by run_mujoco_sim.sh via docker run. Env in:
 #   MODE = a (static arms, no ActionModule)  |  b (ActionModule IK arms)
 #   GAINS = harness | deploy | flat50  (consumer kp/kd regime)
 # Blocks until the container is stopped (SIGTERM) — then kills the children.
 source /opt/ros/humble/setup.bash   # before any set -u
 
 export ASPIRED_ROOT=/workspace
-export CYCLONEDDS_URI="file:///unitree_mujoco/arch_b_sim/tools/cyclonedds_lo.xml"
+export CYCLONEDDS_URI="file:///unitree_mujoco/mujoco_sim/tools/cyclonedds_lo.xml"
 export PYTHONPATH="/workspace/.global:/workspace/MovementModule/main:${PYTHONPATH:-}"
-SIM=/unitree_mujoco/arch_b_sim
+SIM=/unitree_mujoco/mujoco_sim
 MODE="${MODE:-a}"
 GAINS="${GAINS:-harness}"
+
+echo "============================================================"
+echo " ARCHITECTURE B (ROS2 balance stack)  —  MODE ${MODE}  —  gains=${GAINS}"
+echo "============================================================"
 
 echo ">>> [container] installing unitree_sdk2py for the sim nodes"
 pip install -e /unitree_sdk2_python -q 2>/dev/null || pip install unitree_sdk2py -q 2>/dev/null || true
 python3 -c "import unitree_sdk2py" 2>/dev/null || { echo "FATAL: unitree_sdk2py unavailable"; exit 2; }
 
 PIDS=()
-cleanup() { echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
+cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
 trap cleanup EXIT INT TERM
 
 echo ">>> [container] starting sim_state_bridge (rt/lowstate → /BridgeModule/joints_imu + conduct)"

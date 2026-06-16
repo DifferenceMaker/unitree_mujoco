@@ -48,8 +48,12 @@ from balance_contract import (  # noqa: E402
     N_ACTION, N_BODY,
     ACTION_SCALE, ACTION_OFFSET, ACTION_CLIP_LOW, ACTION_CLIP_HIGH,
     ACTION_SDK_IDS, ARM_SDK_ORDER, OBS_SDK_ORDER, DEFAULT_JOINT_POS,
-    STEP_DT, policy_dir,
+    STEP_DT, policy_dir, quat_rotate_inverse_gravity,
 )
+
+# ARCHB_DEBUG=1 → ~1 Hz diagnostic: projected_gravity (frame check), raw action
+# magnitude (policy-health check), and knee target-vs-measured (transform check).
+DEBUG = os.environ.get("ARCHB_DEBUG", "0") == "1"
 
 NUM_MOTOR = 27
 ARM_KP_DEFAULT = 50.0   # team real-robot arm gains (BridgeModule H1_2_KP/KD)
@@ -109,6 +113,11 @@ def main():
                          "(Mode A bring-up, no ActionModule)")
     args = ap.parse_args()
 
+    print("=" * 60, flush=True)
+    print("[Architecture B] sim_action_consumer — policy_action -> "
+          "transform+remap -> rt/lowcmd", flush=True)
+    print("=" * 60, flush=True)
+
     kp, kd = load_gains(args.gains)
     default_sdk = sdk_default_pose()
     arm_default = default_sdk[ARM_SDK_ORDER].copy()
@@ -159,6 +168,7 @@ def main():
 
     last_action = None
     next_t = time.monotonic()
+    dbg_n = 0
     try:
         while rclpy.ok():
             rclpy.spin_once(ros, timeout_sec=0.0)
@@ -211,6 +221,21 @@ def main():
                 m.kd = float(kd[i])
             low_cmd.crc = crc.Crc(low_cmd)
             pub.Write(low_cmd)
+
+            if DEBUG:
+                dbg_n += 1
+                if dbg_n % 50 == 0:   # ~1 Hz at the 50 Hz control loop
+                    pg = quat_rotate_inverse_gravity(
+                        np.asarray(msg.imu_state.quaternion, dtype=np.float32))
+                    if action is not None and len(action) >= N_ACTION:
+                        a = np.asarray(action[:N_ACTION], dtype=np.float32)
+                        print(f"[dbg] proj_grav={np.round(pg,2)} (upright≈[0,0,-1])  "
+                              f"act[min,max,|.|]=[{a.min():+.2f},{a.max():+.2f},{np.linalg.norm(a):.2f}]  "
+                              f"knee tgt={target[3]:+.2f},{target[9]:+.2f} "
+                              f"meas={cur_q[3]:+.2f},{cur_q[9]:+.2f}", flush=True)
+                    else:
+                        print(f"[dbg] proj_grav={np.round(pg,2)} (upright≈[0,0,-1])  "
+                              f"NO POLICY ACTION yet — consumer holding measured pose", flush=True)
 
             next_t += STEP_DT
             sleep = next_t - time.monotonic()

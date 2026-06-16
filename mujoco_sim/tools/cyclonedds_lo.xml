@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Loopback-only CycloneDDS config for the arch_b_sim plumbing test on a box
+<!-- Loopback-only CycloneDDS config for the mujoco_sim plumbing test on a box
      with NO robot NIC. lo is not multicast-capable, so we disable multicast and
      use unicast peer discovery on localhost. Set:
        export CYCLONEDDS_URI=file://$PWD/cyclonedds_lo.xml

@@ -1,8 +1,8 @@
-# arch_b_sim — Architecture B balance stack × unitree_mujoco (sim-only)
+# mujoco_sim — Architecture B balance stack × unitree_mujoco (sim-only)
 
 Sim-only scaffolding to run the ROS2 balance pipeline (MovementModule) against
 `unitree_mujoco` as a stand-in for the H1-2, **without editing the teammate's
-locked modules** (BridgeModule, ActionModule). Lives on the `arch-b-mujoco-sim`
+locked modules** (BridgeModule, ActionModule). Lives on the `mujoco_sim`
 branch of `unitree_mujoco`.
 
 ## Read in this order
@@ -14,9 +14,9 @@ branch of `unitree_mujoco`.
 
 ## Run
 ```bash
-bash run_arch_b_sim.sh --mode-a    # our legs/torso + static default arms
-bash run_arch_b_sim.sh --mode-b    # our legs/torso + colleague's ActionModule IK arms
-bash run_arch_b_sim.sh --ref       # known-good C++ controller (comparison baseline)
+bash run_mujoco_sim.sh --mode-a    # our legs/torso + static default arms
+bash run_mujoco_sim.sh --mode-b    # our legs/torso + colleague's ActionModule IK arms
+bash run_mujoco_sim.sh --ref       # known-good C++ controller (comparison baseline)
 ```
 
 ## Files
@@ -26,7 +26,7 @@ bash run_arch_b_sim.sh --ref       # known-good C++ controller (comparison basel
 | `sim_action_consumer.py` | `/MovementModule/policy_action` → transform+remap → `rt/lowcmd` (deploy.yaml + 50/1 arm gains) |
 | `sim_armpose_pub.py` | static `/BridgeModule/joint_set` (Mode A only) |
 | `selftest_transform.py` | offline assert of the transform/remap vs deploy.yaml + the C++ map |
-| `run_arch_b_sim.sh` | host orchestrator: MuJoCo + headless metrics + ROS2 stack |
+| `run_mujoco_sim.sh` | host orchestrator: MuJoCo + headless metrics + ROS2 stack |
 | `tools/_nodes_in_container.sh` | container-side node bring-up (Mode A/B) |
 | `tools/chain_selftest.sh` | full Mode-A data-flow test against a fake robot (no physics/GUI) |
 | `tools/fake_lowstate_pub.py` | MuJoCo stand-in: publishes rt/lowstate at the default pose |

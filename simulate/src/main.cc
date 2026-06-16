@@ -22,10 +22,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <new>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -84,6 +86,52 @@ public:
   std::vector<double> f_ = {0, 0, 0};
 };
 inline ElasticBand elastic_band;
+
+// Scripted push (sim2sim harness): an instantaneous world-frame base velocity
+// change requested from the stdin command thread, applied to the free-joint
+// linear DoFs inside the physics lock. Free-joint translational qvel is
+// expressed in the world frame, so this is a world-frame push by definition.
+struct ScriptedPush
+{
+  std::mutex mtx;
+  bool pending = false;
+  double vx = 0.0;
+  double vy = 0.0;
+};
+inline ScriptedPush scripted_push;
+
+// Reads harness commands from stdin:
+//   push <vx> <vy>   instantaneous base velocity change (m/s, world frame)
+// Each applied push is printed with wall + sim timestamps so runs can be
+// reproduced from the log.
+void StdinCommandThread()
+{
+  std::string line;
+  while (std::getline(std::cin, line))
+  {
+    std::istringstream iss(line);
+    std::string cmd;
+    if (!(iss >> cmd))
+      continue;
+    if (cmd == "push")
+    {
+      double vx, vy;
+      if (!(iss >> vx >> vy))
+      {
+        std::printf("[PUSH] usage: push <vx> <vy>   (m/s, world frame)\n");
+        continue;
+      }
+      std::lock_guard<std::mutex> lk(scripted_push.mtx);
+      scripted_push.vx = vx;
+      scripted_push.vy = vy;
+      scripted_push.pending = true;
+    }
+    else
+    {
+      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy>)\n", cmd.c_str());
+    }
+  }
+}
 
 
 namespace
@@ -421,6 +469,31 @@ namespace
           {
             bool stepped = false;
 
+            // scripted push (harness): apply pending base velocity change
+            {
+              std::lock_guard<std::mutex> plk(scripted_push.mtx);
+              if (scripted_push.pending)
+              {
+                if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE)
+                {
+                  d->qvel[0] += scripted_push.vx;
+                  d->qvel[1] += scripted_push.vy;
+                  auto now = std::chrono::system_clock::now();
+                  std::time_t tt = std::chrono::system_clock::to_time_t(now);
+                  char tbuf[32];
+                  std::strftime(tbuf, sizeof(tbuf), "%H:%M:%S", std::localtime(&tt));
+                  std::printf("[PUSH] wall=%s sim_t=%.3f dvx=%+.2f dvy=%+.2f m/s\n",
+                              tbuf, d->time, scripted_push.vx, scripted_push.vy);
+                  std::fflush(stdout);
+                }
+                else
+                {
+                  std::printf("[PUSH] ignored: model has no free-joint base\n");
+                }
+                scripted_push.pending = false;
+              }
+            }
+
             // record cpu time at start of iteration
             const auto startCPU = mj::Simulate::Clock::now();
 
@@ -549,6 +622,25 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
     {
       sim->Load(m, d, filename);
       mj_forward(m, d);
+
+      // ── startup banner: confirm which robot model actually loaded ──
+      {
+        const double total_mass = mj_getTotalmass(m);
+        std::printf(
+            "\n============================================================\n"
+            " unitree_mujoco loaded  |  robot=%s\n"
+            " scene=%s\n"
+            " nq=%d  nv=%d  nbody=%d  total_mass=%.3f kg\n",
+            param::config.robot.c_str(), filename, m->nq, m->nv, m->nbody,
+            total_mass);
+        if (param::config.robot == "h1_2")
+          std::printf(
+              " D-sweep model expects 76.484 kg (corrected CoM + mass): %s\n",
+              (total_mass > 76.0 && total_mass < 77.0) ? "OK" : "MISMATCH");
+        std::printf(
+            "============================================================\n\n");
+        std::fflush(stdout);
+      }
 
       // allocate ctrlnoise
       free(ctrlnoise);
@@ -684,6 +776,10 @@ int main(int argc, char **argv)
     &cam, &opt, &pert, /* is_passive = */ false);
 
   std::thread unitree_thread(UnitreeSdk2BridgeThread, nullptr);
+
+  // harness stdin command thread (push <vx> <vy>)
+  std::thread stdin_thread(StdinCommandThread);
+  stdin_thread.detach();
 
   // start physics thread
   std::thread physicsthreadhandle(&PhysicsThread, sim.get(), param::config.robot_scene.c_str());

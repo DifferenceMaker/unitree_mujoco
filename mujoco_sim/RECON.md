@@ -13,7 +13,7 @@ session-log "contract" and the actual code are called out in
 **Scope note / module ownership:** Only `MovementModule` may be edited.
 `BridgeModule`, `ActionModule` (incl. `JointCommander`) are a teammate's and
 stay untouched — any glue lives here in the `unitree_mujoco` branch
-`arch-b-mujoco-sim`. `unitree_rl_lab` (the C++ reference controller + config) is
+`mujoco_sim`. `unitree_rl_lab` (the C++ reference controller + config) is
 **not** a locked module and may be edited for the comparison.
 
 ---

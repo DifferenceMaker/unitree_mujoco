@@ -3,8 +3,8 @@
 One-page integration design. Read after `ARCH_B_RECON.md`. **Nothing built
 yet** — this is the proposal to approve before Phase 2.
 
-All new code lives in this `unitree_mujoco` branch (`arch-b-mujoco-sim`) under
-`arch_b_sim/`, clearly labeled sim-only. The teammate's modules
+All new code lives in this `unitree_mujoco` branch (`mujoco_sim`) under
+`mujoco_sim/`, clearly labeled sim-only. The teammate's modules
 (`BridgeModule`, `ActionModule`) are **not** touched. The only change in
 `Aspired_Robot_Project` is `MovementModule` `CONN_TEST → False` (the one allowed
 edit). `unitree_rl_lab` config is edited only to align the reference policy.
@@ -93,7 +93,7 @@ ACTION_CLIP_LOW/HIGH, ACTION_SDK_IDS, ARM_SDK_ORDER, DEFAULT_JOINT_POS` from
 `MovementModule/main/balance_contract.py`; load gains from the milestone
 deploy.yaml. Assert lengths at startup.
 
-## Component 4 — launch script `run_arch_b_sim.sh`
+## Component 4 — launch script `run_mujoco_sim.sh`
 
 Mirrors `start_teleop_balance.sh`'s structure (tabs/sections), but local + sim:
 1. MuJoCo: `simulate/build/unitree_mujoco` with the D-model on `lo`, domain 0,
@@ -231,9 +231,9 @@ compares against the harness controller on the same regime.
 self-contained `rt/lowstate` sidecar (MuJoCo-FK touchdowns/feet_dist/torso
 ang-vel RMS/falls; `--iface lo --domain 0 --xml <auto>`; stdin
 `zero|mode|note|quit`; **RUN SUMMARY on SIGINT/exit**; tolerant of a closed
-stdin when backgrounded). Plan: vendor a copy under `arch_b_sim/tools/` (with a
-provenance header), and have `run_arch_b_sim.sh` start it **in the background**
-with stdout→`arch_b_sim/logs/balance_metrics_<ts>.log`, print that path on
+stdin when backgrounded). Plan: vendor a copy under `mujoco_sim/tools/` (with a
+provenance header), and have `run_mujoco_sim.sh` start it **in the background**
+with stdout→`mujoco_sim/logs/balance_metrics_<ts>.log`, print that path on
 start, and on launcher exit `SIGINT` it so the summary lands in the log, then
 print the path again. A FIFO exposes its stdin so `mode <label>` / `zero` can be
 sent without a second console. Works identically for the ROS2 path and the C++
@@ -258,7 +258,7 @@ colleague's deploy repo, currently on `aspired/training`).
 
 `unitree_mujoco` (C++ sim, needs X/display) runs on the **host**. The Python sim
 nodes run in the `ros2-humble-dev` container (so ROS2 + the project's
-`Ros2_connector` are available) launched by `run_arch_b_sim.sh` with **both**
+`Ros2_connector` are available) launched by `run_mujoco_sim.sh` with **both**
 repos mounted (`-v Aspired:/workspace -v unitree_mujoco:/unitree_mujoco`),
 `--network host --ipc=host` so host-MuJoCo DDS (CycloneDDS, lo, domain 0) and the
 container share the bus. `unitree_sdk2py` is pip-installed into a small harness

@@ -11,7 +11,7 @@ is verified here.
 | Layer | How | Result |
 |---|---|---|
 | **Contract / obs / ONNX** | `MovementModule/Utils/offline_check.py` in the ros2 container | ALL PASS — obs width 87, proj_grav/joint_pos_rel/arm_cmd correct, ONNX 87→13, calm home action (max 0.456) |
-| **Action transform + SDK remap** | `arch_b_sim/selftest_transform.py` (container, ROS python) | ALL PASS — `ACTION_SDK_IDS == joint_ids_map[LEG_TORSO_URDF_IDS]` (the C++ map) read live from `deploy.yaml`; scale/offset/clip == deploy.yaml; knee clip [0.45,2.5]; slot coverage {0..26} disjoint |
+| **Action transform + SDK remap** | `mujoco_sim/selftest_transform.py` (container, ROS python) | ALL PASS — `ACTION_SDK_IDS == joint_ids_map[LEG_TORSO_URDF_IDS]` (the C++ map) read live from `deploy.yaml`; scale/offset/clip == deploy.yaml; knee clip [0.45,2.5]; slot coverage {0..26} disjoint |
 | **DDS on `lo`** | `tools/fake_lowstate_pub.py` → subscriber, `tools/cyclonedds_lo.xml` | rt/lowstate flows; unicast loopback discovery works (multicast disabled) |
 | **Full Mode-A data-flow (no physics)** | `tools/chain_selftest.sh` (one container, fake robot) | CHAIN OK — `/BridgeModule/joints_imu` → MovementModule → `/MovementModule/policy_action` (13) → consumer → `rt/lowcmd`; knee target 0.713 (=0.45 floor crouch), kp[knee]=300, kp[arm]=50 |
 
@@ -26,16 +26,16 @@ These are Phase-2 step 4 (closed-loop balance) and step 5 (C++ comparison), plus
 Mode B (colleague's IK arms). Run on the machine with a working display:
 
 ```bash
-cd ~/Projects/robot_projects/repos/unitree_mujoco/arch_b_sim
+cd ~/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim
 
 # A) balance bring-up: our legs/torso + a STATIC default arm pose
-bash run_arch_b_sim.sh --mode-a
+bash run_mujoco_sim.sh --mode-a
 #   → MuJoCo window opens; disable the elastic band in the sim for free-standing.
 #   → expect the robot to hold the p7_1b crouch. Watch balance_metrics log path
 #     printed at startup (touchdowns ~0, torso ang-vel RMS low, feet_dist steady).
 
 # B) FULL integration: our legs/torso + the colleague's ActionModule IK arms
-bash run_arch_b_sim.sh --mode-b
+bash run_mujoco_sim.sh --mode-b
 #   → ActionModule publishes /BridgeModule/joint_set arm slots (real IK). Trigger
 #     arm motion: ros2 topic pub --once /ActionModule/run std_msgs/String "data: <seq>"
 #   → needs ActionModule's MoveIt deps in the image (the colleague's normal setup).
@@ -45,7 +45,7 @@ bash run_arch_b_sim.sh --mode-b
 #     set FSM.BalancePush.policy_dir → ../../../logs/milestones/p7_1b  in
 #     deploy/robots/h1_2/config/config.yaml, then rebuild h1_2_ctrl.
 #   (p7_1b onnx is md5-identical to MovementModule's, so this is a true A/B.)
-bash run_arch_b_sim.sh --ref
+bash run_mujoco_sim.sh --ref
 #   → drive R3 FSM: FixStand → Balance. Compare its balance_metrics log to (A).
 ```
 

@@ -3,7 +3,7 @@
 sim_state_bridge.py — sim-only DDS→ROS2 state bridge for the Architecture B loop.
 
 Stands in for BridgeModule's ROS2-facing side WITHOUT its camera/hand/
-MotionSwitcher dependencies (see arch_b_sim/BRIDGEMODULE_SIM_NOTES.md). It:
+MotionSwitcher dependencies (see mujoco_sim/BRIDGEMODULE_SIM_NOTES.md). It:
 
   • subscribes  rt/lowstate  (unitree_hg LowState_) from unitree_mujoco on `lo`,
   • republishes the SAME 92-float `joints_imu` record BridgeModule produces, on
@@ -18,7 +18,7 @@ The 92-float record layout is copied byte-for-byte from
 so MovementModule's balance_contract slices (Q/DQ/QUAT/GYRO_SLICE) line up.
 
 DO NOT edit BridgeModule to use this — it lives here in the unitree_mujoco
-`arch-b-mujoco-sim` branch as sim-only scaffolding.
+`mujoco_sim` branch as sim-only scaffolding.
 
 Run (inside the ros2-humble-dev container, ROS2 sourced):
     python3 sim_state_bridge.py --iface lo

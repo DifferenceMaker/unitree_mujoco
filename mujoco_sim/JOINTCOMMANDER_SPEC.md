@@ -2,7 +2,7 @@
 
 For the **ActionModule / BridgeModule owner**. Delivered as a doc (not code) —
 these files are not ours to edit (mirrors the 2026-06-10 consumer handoff). The
-sim loop uses `arch_b_sim/sim_action_consumer.py` as the *executable reference*
+sim loop uses `mujoco_sim/sim_action_consumer.py` as the *executable reference*
 for everything below; this doc says what the production code must do to match it.
 
 ## The two bugs that stop the real robot from balancing
@@ -47,7 +47,7 @@ def policy_action_to_sdk_targets(action13, sdk_targets27):
 `ACTION_SDK_IDS = [0,6,12,1,7,2,8,3,9,4,10,5,11]`. This equals
 `joint_ids_map[LEG_TORSO_URDF_IDS]` in the C++ reference controller
 (`unitree_rl_lab/.../State_RLBase.cpp`) — verified by
-`arch_b_sim/selftest_transform.py` (run it; it asserts the equality against the
+`mujoco_sim/selftest_transform.py` (run it; it asserts the equality against the
 active policy's `deploy.yaml`).
 
 **Where to put it:** logically it belongs where `policy_action` is ingested
@@ -74,7 +74,7 @@ kp[13..26] = 50.0 ;  kd[13..26] = 1.0          # arms
 kd[0..12]  = deploy.yaml damping[0..12]         # 2.5/2.5/2.5/4/2/2 ×2, torso 6
 ```
 
-(`arch_b_sim/sim_action_consumer.py:load_gains()` does exactly this; `--gains
+(`mujoco_sim/sim_action_consumer.py:load_gains()` does exactly this; `--gains
 deploy` uses deploy.yaml for arms too, matching the *stock* C++ controller, and
 `--gains flat50` reproduces today's BridgeModule for A/B testing.)
 
@@ -88,9 +88,9 @@ from `sys.argv[1]` and is otherwise sim-ready.
 
 ## How to verify your production version matches
 
-1. `python3 arch_b_sim/selftest_transform.py` (in the container, ROS sourced) —
+1. `python3 mujoco_sim/selftest_transform.py` (in the container, ROS sourced) —
    asserts your constants/remap against `deploy.yaml` + the C++ map.
 2. Run your fixed stack against MuJoCo and compare `balance_metrics` (touchdowns
-   / feet_dist / torso ang-vel RMS) to `arch_b_sim/run_arch_b_sim.sh --ref`
+   / feet_dist / torso ang-vel RMS) to `mujoco_sim/run_mujoco_sim.sh --ref`
    (the C++ path) on the **same p7_1b policy + same XML**. They should balance
    equivalently; divergence is a glue bug, not the policy.

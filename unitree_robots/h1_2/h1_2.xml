@@ -111,7 +111,7 @@
         </body>
       </body>
       <body name="torso_link">
-        <inertial pos="0.000489 0.002797 0.20484" quat="0.999989 -0.00130808 -0.00282289 -0.00349105" mass="17.789" diaginertia="0.487315 0.409628 0.127837"/>
+        <inertial pos="0.030 -0.025 0.17" quat="0.999989 -0.00130808 -0.00282289 -0.00349105" mass="27.289" diaginertia="0.745692 0.626731 0.195590"/>
         <joint name="torso_joint" pos="0 0 0" axis="0 0 1" range="-2.35 2.35" actuatorfrcrange="-200 200"/>
         <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.1 0.1 0.1 1" mesh="torso_link"/>
         <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="torso_link"/>

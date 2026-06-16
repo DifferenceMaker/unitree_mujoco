@@ -56,10 +56,10 @@ the minimal changes would be:
   `_release_higher_level_mode()` in `set_joints` (MuJoCo needs no release).
 - Optionally honour an interface arg for `lo` (already supported via `sys.argv[1]`).
 
-Until then, the sim loop uses `arch_b_sim/sim_state_bridge.py`, which replicates
+Until then, the sim loop uses `mujoco_sim/sim_state_bridge.py`, which replicates
 **only** `get_joints_imu`'s 92-float record (byte-for-byte: `q27,dq27,tau27,
 quat4 wxyz,gyro3,acc3,ts1`) and publishes `/BridgeModule/joints_imu` +
 `/BridgeModule/conduct`, with no camera/hands/MotionSwitcher. The motor-write
-side is handled by `arch_b_sim/sim_action_consumer.py` (see
+side is handled by `mujoco_sim/sim_action_consumer.py` (see
 `JOINTCOMMANDER_SPEC.md`), not by `set_joints`, because the sim consumer also has
 to apply the action transform that `JointCommander` currently doesn't.

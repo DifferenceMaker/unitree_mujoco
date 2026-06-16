@@ -13,13 +13,13 @@
 #   docker run --rm --network host \
 #     -v <Aspired>:/workspace -v <unitree_mujoco>:/unitree_mujoco \
 #     -v <unitree_sdk2_python>:/unitree_sdk2_python \
-#     --entrypoint bash ros2-humble-dev /unitree_mujoco/arch_b_sim/tools/chain_selftest.sh
+#     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/chain_selftest.sh
 source /opt/ros/humble/setup.bash   # before any `set -u`: it reads unbound AMENT_* vars
 
 export ASPIRED_ROOT=/workspace
-export CYCLONEDDS_URI="file:///unitree_mujoco/arch_b_sim/tools/cyclonedds_lo.xml"
+export CYCLONEDDS_URI="file:///unitree_mujoco/mujoco_sim/tools/cyclonedds_lo.xml"
 export PYTHONPATH="/workspace/.global:/workspace/MovementModule/main:${PYTHONPATH:-}"
-SIM=/unitree_mujoco/arch_b_sim
+SIM=/unitree_mujoco/mujoco_sim
 L=/tmp/archb ; mkdir -p "$L"
 
 echo ">>> installing unitree_sdk2py (system python, for the sim nodes)"
