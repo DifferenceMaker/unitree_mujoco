@@ -67,6 +67,9 @@ ACTION_SAFETY_CLIP = float(os.environ.get("ARCHB_ACTION_CLIP", "5.0"))
 # engaging the policy, so the policy starts in-distribution (mirrors the C++
 # deploy FSM's FixStand->Balance). 0 disables the ramp.
 FIXSTAND_SEC = float(os.environ.get("ARCHB_FIXSTAND_SEC", "1.5"))
+# After the ramp, hold the home pose with the band STILL ON for this long, so the
+# robot settles at home before handoff (set high to read the home obs for validation).
+HOLD_SEC = float(os.environ.get("ARCHB_HOLD_SEC", "1.0"))
 # When set, the consumer creates this file once FixStand completes; the MuJoCo
 # sim watches for it and releases the elastic band (band supports spawn + ramp,
 # off under the policy). Path must resolve to the same file in both processes.
@@ -209,17 +212,54 @@ def main():
             s = t_r - time.monotonic()
             if s > 0:
                 time.sleep(s)
-        print("[sim_action_consumer] FixStand complete → policy engaged", flush=True)
+        print("[sim_action_consumer] FixStand complete", flush=True)
 
-    # Signal the sim to release the elastic band now that the policy drives
-    # (fires whether or not FixStand ran).
+    # Hold the home pose with the band STILL ON to settle before handoff. This is
+    # also the window to read MovementModule's obs at a known home state (set
+    # ARCHB_HOLD_SEC high for validation). Band stays on (robot supported) — unlike
+    # a policy-off settle, this does NOT let it fall.
+    if HOLD_SEC > 0:
+        n_hold = max(1, int(round(HOLD_SEC / STEP_DT)))
+        print(f"[sim_action_consumer] holding home (band on) {HOLD_SEC:.1f}s to settle",
+              flush=True)
+        t_h = time.monotonic()
+        for _ in range(n_hold):
+            rclpy.spin_once(ros, timeout_sec=0.0)
+            low_cmd.mode_pr = 0
+            low_cmd.mode_machine = st["mode_machine"]
+            for i in range(NUM_MOTOR):
+                mc = low_cmd.motor_cmd[i]
+                mc.mode = 1
+                mc.q = float(default_sdk[i]); mc.dq = 0.0; mc.tau = 0.0
+                mc.kp = float(kp[i]); mc.kd = float(kd[i])
+            low_cmd.crc = crc.Crc(low_cmd)
+            pub.Write(low_cmd)
+            t_h += STEP_DT
+            s = t_h - time.monotonic()
+            if s > 0:
+                time.sleep(s)
+
+    # Engage the policy and release the band TOGETHER: the policy must already be
+    # driving when the harness lets go, so it catches the robot instead of letting it
+    # topple. (The sim's band watcher polls ~10 Hz, so the band actually drops a few
+    # control steps into the policy loop — a brief supported overlap, which is ideal.)
     if BAND_RELEASE_FILE:
         try:
             open(BAND_RELEASE_FILE, "w").close()
-            print(f"[sim_action_consumer] band-release signalled ({BAND_RELEASE_FILE})",
+            print("[sim_action_consumer] band released + policy engaging (simultaneous)",
                   flush=True)
         except OSError as e:
             print(f"[sim_action_consumer] band-release signal failed: {e}", flush=True)
+
+    # diagnostic: orientation as the policy takes over (band still supporting here,
+    # it drops a few steps later) — should read upright.
+    with lock:
+        msg_eng = st["msg"]
+    if msg_eng is not None:
+        pg_eng = quat_rotate_inverse_gravity(
+            np.asarray(msg_eng.imu_state.quaternion, dtype=np.float32))
+        print(f"[sim_action_consumer] policy ENGAGE — proj_grav={np.round(pg_eng,3)} "
+              f"(upright≈[0,0,-1])", flush=True)
 
     last_action = None
     next_t = time.monotonic()

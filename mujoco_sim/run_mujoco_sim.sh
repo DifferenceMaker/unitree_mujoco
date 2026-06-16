@@ -131,7 +131,7 @@ else
   echo ">>> [3] ROS2 stack in container (MODE=$MODE, gains=$GAINS)..."
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
     -e MODE="$MODE" -e GAINS="$GAINS" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
-    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
+    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-1.0}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh

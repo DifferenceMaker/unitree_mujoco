@@ -105,7 +105,10 @@ def main():
                      *imu.quaternion,      # 4, wxyz
                      *imu.gyroscope,       # 3
                      *imu.accelerometer,   # 3
-                     float(int(time.time() * 1000))],
+                     # ts slot: CLOCK_MONOTONIC ms (mod 100 s so it fits float32
+                     # with ~ms precision). time.monotonic() is comparable across
+                     # processes on one host → downstream can measure obs latency.
+                     (time.monotonic() % 100.0) * 1000.0],
                     dtype=np.float32,
                 )
                 assert rec.shape[0] == RECORD_LEN, rec.shape
