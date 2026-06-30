@@ -17,6 +17,7 @@ find_package(Boost REQUIRED COMPONENTS program_options)
 include_directories(
   mujoco/include
   mujoco/simulate
+  src
   src/lodepng
 )
 link_directories(mujoco/lib)

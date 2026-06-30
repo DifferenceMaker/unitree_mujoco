@@ -37,6 +37,10 @@
 #include "array_safety.h"
 #include "unitree_sdk2_bridge.h"
 #include "param.h"
+#include "policy_hud.h"
+#include "arm_gui.h"
+#include <array>
+#include <unitree/idl/ros2/String_.hpp>
 
 #define MUJOCO_PLUGIN_DIR "mujoco_plugin"
 #define NUM_MOTOR_IDL_GO 20
@@ -87,6 +91,15 @@ public:
   std::vector<double> f_ = {0, 0, 0};
 };
 inline ElasticBand elastic_band;
+
+// Decoupled arm-pose command publisher (sim -> controller on rt/arm_pose_cmd).
+// Declared here so the bridge thread (which creates it) and user_key_cb (which
+// uses it) both see it. Initialized in UnitreeSdk2BridgeThread after DDS init.
+static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_arm_cmd_pub;
+
+// Metrics zero command publisher (sim -> sidecar on rt/metrics_cmd). Lets a sim
+// keypress reset the sidecar's lean/touchdown counters from the GUI.
+static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_metrics_cmd_pub;
 
 // Scripted push (sim2sim harness): an instantaneous world-frame base velocity
 // change requested from the stdin command thread, applied to the free-joint
@@ -679,6 +692,39 @@ void *UnitreeSdk2BridgeThread(void *arg)
 
   unitree::robot::ChannelFactory::Instance()->Init(param::config.domain_id, param::config.interface);
 
+  // Sim2sim HUD: subscribe to the controller's policy status and stash it for the
+  // render overlay (see policy_hud.h / simulate.cc). Kept alive for the thread's life.
+  static auto policy_status_sub =
+      std::make_shared<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>>(
+          "rt/policy_status", [](const void *msg) {
+            policy_hud::set_from_json(
+                reinterpret_cast<const std_msgs::msg::dds_::String_ *>(msg)->data());
+          });
+  policy_status_sub->InitChannel();
+
+  // Sim2sim arm-command publisher (rt/arm_pose_cmd): keyboard presets (and later
+  // the mjUI GUI) publish arm poses for the controller's External mode.
+  g_arm_cmd_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/arm_pose_cmd");
+  g_arm_cmd_pub->InitChannel();
+
+  // Sidecar metrics HUD: subscribe to rt/balance_metrics (published by
+  // balance_metrics.py) and stash it for the bottom-left overlay.
+  static auto metrics_sub =
+      std::make_shared<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>>(
+          "rt/balance_metrics", [](const void *msg) {
+            policy_hud::set_metrics_from_json(
+                reinterpret_cast<const std_msgs::msg::dds_::String_ *>(msg)->data());
+          });
+  metrics_sub->InitChannel();
+
+  // Metrics zero command (rt/metrics_cmd): sim keypress -> sidecar reset.
+  g_metrics_cmd_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/metrics_cmd");
+  g_metrics_cmd_pub->InitChannel();
+
 
   int body_id = mj_name2id(m, mjOBJ_BODY, "torso_link");
   if (body_id < 0) {
@@ -711,6 +757,23 @@ __attribute__((used, visibility("default"))) extern "C" void _mj_rosettaError(co
 }
 #endif
 
+// Phase-B arm-pose presets: keyboard keys publish a 14-dim arm pose that the
+// controller (ArmPosePublisher External mode) slews to. Phase D will replace these
+// presets with mjUI sliders driving this same publisher/topic. DEBUG/test path only.
+// 14-dim arm order: shPitch L R, shRoll L R, shYaw L R, elbPitch L R,
+//                   elbRoll L R, wrPitch L R, wrYaw L R.
+static void publish_arm_pose(const std::array<float, 14> &pose, float transition_s) {
+  if (!g_arm_cmd_pub) return;
+  std::ostringstream js;
+  js << "{\"pose\":[";
+  for (size_t i = 0; i < 14; ++i) js << (i ? "," : "") << pose[i];
+  js << "],\"transition_s\":" << transition_s << "}";
+  std_msgs::msg::dds_::String_ msg;
+  msg.data(js.str());
+  g_arm_cmd_pub->Write(msg, 0);
+  std::cout << "[ARM_CMD] published preset arm pose (transition " << transition_s << "s)" << std::endl;
+}
+
 // user keyboard callback
 void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
   if (act==GLFW_PRESS)
@@ -727,6 +790,56 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
     if(key==GLFW_KEY_BACKSPACE) {
       mj_resetData(m, d);
       mj_forward(m, d);
+    }
+    // Arm-pose presets -> rt/arm_pose_cmd (controller enters External mode and slews).
+    // 14-dim: shPitch L R, shRoll L R, shYaw L R, elbPitch L R, elbRoll L R, wrPitch L R, wrYaw L R.
+    // shoulder_pitch: 0=down, NEGATIVE=forward (-1.57=horizontal). elbow: 0=90deg-bent,
+    // ~1.57=straight. (Tunable starting poses.)
+    constexpr float kTrans = 3.0f;
+    if (key==GLFW_KEY_J) {        // forward reach, ~just below shoulder, arm near-straight
+      publish_arm_pose({-1.4f,-1.4f, 0.0f,0.0f, 0.0f,0.0f, 1.3f,1.3f, 0.0f,0.0f, 0.0f,0.0f, 0.0f,0.0f}, kTrans);
+    } else if (key==GLFW_KEY_K) { // carry: upper arms forward-down, forearms forward-horizontal (~90deg)
+      publish_arm_pose({-0.8f,-0.8f, 0.0f,0.0f, 0.0f,0.0f, 0.2f,0.2f, 0.0f,0.0f, 0.0f,0.0f, 0.0f,0.0f}, kTrans);
+    } else if (key==GLFW_KEY_L) { // default arms (rest)
+      publish_arm_pose({0.4f,0.4f, 0.0f,0.0f, 0.0f,0.0f, 0.3f,0.3f, 0.0f,0.0f, 0.0f,0.0f, 0.0f,0.0f}, kTrans);
+    }
+
+    // Hand payload (sim-local, Feature C): adjust mass added to BOTH wrist_yaw
+    // bodies live.  ] = +0.5 kg/hand,  [ = -0.5 kg/hand,  \ = zero. Point-mass
+    // approximation (inertia of the load is ignored). Matches training's
+    // add_hand_payload (U(0,3) kg on *_wrist_yaw_link).
+    {
+      static int wl = -2, wr = -2;           // cached body ids (-2 = unresolved)
+      static double base_l = 0.0, base_r = 0.0;
+      static float payload = 0.0f;
+      if (wl == -2) {
+        wl = mj_name2id(m, mjOBJ_BODY, "left_wrist_yaw_link");
+        wr = mj_name2id(m, mjOBJ_BODY, "right_wrist_yaw_link");
+        if (wl >= 0) base_l = m->body_mass[wl];
+        if (wr >= 0) base_r = m->body_mass[wr];
+      }
+      bool changed = false;
+      if (key==GLFW_KEY_RIGHT_BRACKET)      { payload += 0.5f; changed = true; }
+      else if (key==GLFW_KEY_LEFT_BRACKET)  { payload -= 0.5f; changed = true; }
+      else if (key==GLFW_KEY_BACKSLASH)     { payload  = 0.0f; changed = true; }
+      if (changed) {
+        if (payload < 0.0f) payload = 0.0f;
+        if (payload > 10.0f) payload = 10.0f;
+        if (wl >= 0) m->body_mass[wl] = base_l + payload;  // picked up next mj_step
+        if (wr >= 0) m->body_mass[wr] = base_r + payload;
+        char buf[48];
+        std::snprintf(buf, sizeof(buf), "payload: %.1f kg/hand", payload);
+        policy_hud::set_payload(buf);
+        std::cout << "[PAYLOAD] " << payload << " kg/hand" << std::endl;
+      }
+    }
+
+    // Zero the sidecar's metrics counters from the GUI (Feature E).
+    if (key==GLFW_KEY_Z && g_metrics_cmd_pub) {
+      std_msgs::msg::dds_::String_ cmd;
+      cmd.data("zero");
+      g_metrics_cmd_pub->Write(cmd, 0);
+      std::cout << "[METRICS] sent zero" << std::endl;
     }
   }
 }
@@ -813,6 +926,9 @@ int main(int argc, char **argv)
 
   // start physics thread
   std::thread physicsthreadhandle(&PhysicsThread, sim.get(), param::config.robot_scene.c_str());
+  // Feature D: route the Arm Cmd sliders' publishes through the same arm-pose
+  // publisher the keyboard presets use (no-ops until the bridge thread inits it).
+  arm_gui::publish_fn() = publish_arm_pose;
   // start simulation UI loop (blocking call)
   glfwSetKeyCallback(static_cast<mj::GlfwAdapter*>(sim->platform_ui.get())->window_,user_key_cb);
   sim->RenderLoop();
