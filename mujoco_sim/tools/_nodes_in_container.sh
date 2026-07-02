@@ -1,26 +1,31 @@
 #!/usr/bin/env bash
-# _nodes_in_container.sh — bring up the Architecture B ROS2 nodes inside the
+# _nodes_in_container.sh — bring up the REAL Architecture B v2 stack inside the
 # ros2-humble-dev container, against rt/lowstate/rt/lowcmd already on `lo`
-# (real MuJoCo runs on the host; --network host shares the bus).
+# (MuJoCo runs on the host; --network host shares the bus).
+#
+# REAL modules only — no sim shims. BridgeModule runs in --sim mode (no camera /
+# hands / MotionSwitcher) and owns ALL robot DDS I/O; MovementModule attaches to
+# it directly via /BridgeModule/joint_set_legs + /BridgeModule/joint_set_arms
+# (arch_b_v2 contract) and does its own FixStand->hold->engage bring-up.
 #
 # Invoked by run_mujoco_sim.sh via docker run. Env in:
-#   MODE = a (static arms, no ActionModule)  |  b (ActionModule IK arms)
-#   GAINS = harness | deploy | flat50  (consumer kp/kd regime)
+#   MODE = a (no arm source: MovementModule falls back to measured arms)
+#        | b (ActionModule IK arms -> /BridgeModule/joint_set_arms)
+#   ARCHB_FIXSTAND_SEC / ARCHB_HOLD_SEC / ARCHB_ACTION_CLIP / ARCHB_DEBUG /
+#   ARCHB_BAND_RELEASE_FILE  -> consumed by MovementModule's bring-up
 # Blocks until the container is stopped (SIGTERM) — then kills the children.
 source /opt/ros/humble/setup.bash   # before any set -u
 
 export ASPIRED_ROOT=/workspace
 export CYCLONEDDS_URI="file:///unitree_mujoco/mujoco_sim/tools/cyclonedds_lo.xml"
-export PYTHONPATH="/workspace/.global:/workspace/MovementModule/main:${PYTHONPATH:-}"
-SIM=/unitree_mujoco/mujoco_sim
 MODE="${MODE:-a}"
-GAINS="${GAINS:-harness}"
 
 echo "============================================================"
-echo " ARCHITECTURE B (ROS2 balance stack)  —  MODE ${MODE}  —  gains=${GAINS}"
+echo " ARCHITECTURE B v2 (REAL modules: BridgeModule --sim + MovementModule)"
+echo "   MODE ${MODE}  (a = arms-hold fallback, b = ActionModule IK arms)"
 echo "============================================================"
 
-echo ">>> [container] installing unitree_sdk2py for the sim nodes"
+echo ">>> [container] installing unitree_sdk2py for BridgeModule"
 pip install -e /unitree_sdk2_python -q 2>/dev/null || pip install unitree_sdk2py -q 2>/dev/null || true
 python3 -c "import unitree_sdk2py" 2>/dev/null || { echo "FATAL: unitree_sdk2py unavailable"; exit 2; }
 
@@ -28,29 +33,24 @@ PIDS=()
 cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
 trap cleanup EXIT INT TERM
 
-echo ">>> [container] starting sim_state_bridge (rt/lowstate → /BridgeModule/joints_imu + conduct)"
-python3 "$SIM/sim_state_bridge.py" & PIDS+=($!)
-sleep 1
-
-if [ "$MODE" = "b" ]; then
-  echo ">>> [container] MODE B — launching colleague's ActionModule (real IK arms)"
-  ( source /workspace/.venv/ActionModule/bin/activate 2>/dev/null
-    PYTHONPATH="/workspace/.global:/workspace/ActionModule/main:${PYTHONPATH}" \
-    python3 /workspace/ActionModule/main/main.py ) & PIDS+=($!)
-  CONSUMER_ARMS=""    # consumer reads joint_set arm slots from ActionModule
-else
-  echo ">>> [container] MODE A — static default arm pose on /BridgeModule/joint_set"
-  python3 "$SIM/sim_armpose_pub.py" & PIDS+=($!)
-  CONSUMER_ARMS="--static-arms"
-fi
-
-echo ">>> [container] starting MovementModule (balance policy → /MovementModule/policy_action)"
-( source /workspace/.venv/MovementModule/bin/activate
-  python3 /workspace/MovementModule/main/main.py ) & PIDS+=($!)
+echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo)"
+( PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+  BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
 sleep 2
 
-echo ">>> [container] starting sim_action_consumer (transform+remap → rt/lowcmd, gains=$GAINS)"
-python3 "$SIM/sim_action_consumer.py" --gains "$GAINS" $CONSUMER_ARMS & PIDS+=($!)
+if [ "$MODE" = "b" ]; then
+  echo ">>> [container] MODE B — ActionModule (IK arms -> /BridgeModule/joint_set_arms)"
+  ( source /workspace/.venv/ActionModule/bin/activate 2>/dev/null
+    PYTHONPATH="/workspace/.global:/workspace/ActionModule/main:${PYTHONPATH:-}" \
+    python3 /workspace/ActionModule/main/main.py ) & PIDS+=($!)
+else
+  echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
+fi
+
+echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"
+( source /workspace/.venv/MovementModule/bin/activate
+  PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+  python3 /workspace/MovementModule/main/main.py ) & PIDS+=($!)
 
 echo ">>> [container] all nodes up (MODE=$MODE). Ctrl+C the launcher to stop."
 wait

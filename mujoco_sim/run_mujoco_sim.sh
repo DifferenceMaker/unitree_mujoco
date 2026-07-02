@@ -4,10 +4,10 @@
 #
 # Brings up the mass-corrected H1-2 in unitree_mujoco on `lo` (host), the
 # balance_metrics sidecar headless→logfile (host, tv env), and either:
-#   --mode-a  (default) our balance stack with a STATIC default arm pose
-#             sim_state_bridge + sim_armpose_pub + MovementModule + consumer
-#   --mode-b  FULL integration: our balance legs/torso + the colleague's
-#             ActionModule IK-resolved arms (real /BridgeModule/joint_set)
+#   --mode-a  (default) the REAL Architecture B v2 stack, no sim shims:
+#             BridgeModule (BRIDGE_SIM=1, joints-only) + MovementModule
+#             (FixStand→hold→policy; arms-hold fallback for joint_set_arms)
+#   --mode-b  + the colleague's ActionModule (IK arms → /BridgeModule/joint_set_arms)
 #   --ref     the known-good C++ reference: h1_2_ctrl --network lo (NO ROS2
 #             stack) — for the apples-to-apples comparison
 #
@@ -38,12 +38,11 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── args ────────────────────────────────────────────────────────────────────
-MODE="a"; GAINS="harness"; METRICS=1; METRICS_MODE="idle_quiet"
+MODE="a"; METRICS=1; METRICS_MODE="idle_quiet"
 while [[ $# -gt 0 ]]; do case "$1" in
   --mode-a) MODE="a"; shift;;
   --mode-b) MODE="b"; shift;;
   --ref)    MODE="ref"; shift;;
-  --gains)  GAINS="$2"; shift 2;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
   -h|--help) sed -n '2,33p' "$0"; exit 0;;
@@ -53,15 +52,14 @@ esac; done
 # ── architecture banner — make it obvious which path is running ──────────────
 echo "============================================================"
 case "$MODE" in
-  a)   echo " ARCHITECTURE B × MuJoCo  —  MODE A (balance bring-up)"
-       echo "   ROS2 balance stack: our legs/torso policy + STATIC default arms" ;;
-  b)   echo " ARCHITECTURE B × MuJoCo  —  MODE B (full integration)"
-       echo "   ROS2 balance stack: our legs/torso policy + ActionModule IK arms" ;;
+  a)   echo " ARCHITECTURE B v2 × MuJoCo  —  MODE A (REAL stack, no shims)"
+       echo "   BridgeModule --sim + MovementModule (arms-hold fallback)" ;;
+  b)   echo " ARCHITECTURE B v2 × MuJoCo  —  MODE B (full integration)"
+       echo "   BridgeModule --sim + MovementModule + ActionModule IK arms" ;;
   ref) echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
        echo "   known-good controller, for the apples-to-apples comparison" ;;
 esac
 echo "   model: $XML"
-[[ "$MODE" != "ref" ]] && echo "   consumer gains: $GAINS"
 echo "============================================================"
 
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
@@ -128,10 +126,10 @@ if [[ "$MODE" = "ref" ]]; then
   "$CTRL_BIN" --network lo & CTRL_PID=$!
   wait "$CTRL_PID"
 else
-  echo ">>> [3] ROS2 stack in container (MODE=$MODE, gains=$GAINS)..."
+  echo ">>> [3] REAL Architecture B v2 stack in container (MODE=$MODE)..."
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
-    -e MODE="$MODE" -e GAINS="$GAINS" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
-    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-1.0}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
+    -e MODE="$MODE" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
+    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-4.0}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh
