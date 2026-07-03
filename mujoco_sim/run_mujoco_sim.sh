@@ -99,6 +99,18 @@ rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
 
+# SAFETY GATE: if MuJoCo died during startup (e.g. "Joystick open failed."), do
+# NOT bring up the ROS2 stack. Without a sim robot, MovementModule's
+# /BridgeModule/* topics can discover a REAL BridgeModule on the network and
+# command the REAL robot (2026-07-03 incident).
+sleep 3
+if ! kill -0 "$MJ_PID" 2>/dev/null; then
+  echo "ERROR: MuJoCo exited during startup — see $MJ_LOG"
+  tail -3 "$MJ_LOG" | sed 's/^/    /'
+  echo "       Aborting: refusing to start the ROS2 stack without a live sim."
+  exit 1
+fi
+
 # ── 2. metrics sidecar (host, tv env, headless → logfile) ───────────────────
 if [[ "$METRICS" = "1" ]]; then
   if [[ -x "$TV_PY" ]]; then
@@ -127,7 +139,15 @@ if [[ "$MODE" = "ref" ]]; then
   wait "$CTRL_PID"
 else
   echo ">>> [3] REAL Architecture B v2 stack in container (MODE=$MODE)..."
+  # ROS2 ISOLATION (do not remove): the sim stack publishes the same
+  # /BridgeModule/* topics the REAL robot stack uses. Unpinned, ROS2/FastDDS
+  # discovers peers on ALL interfaces incl. the robot LAN (enp6s0,
+  # 192.168.123.x) on the default domain 0 — a sim run WILL drive the real
+  # robot if the real BridgeModule is up (2026-07-03 incident). Pin the sim to
+  # its own domain + loopback-only discovery; the CYCLONEDDS_URI lo-config
+  # only covers the unitree-SDK plane, not ROS2.
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
+    -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
     -e MODE="$MODE" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
     -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-4.0}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
