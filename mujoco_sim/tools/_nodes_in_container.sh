@@ -43,8 +43,8 @@ if [ "$MODE" = "b" ]; then
   echo "      -> ActionModule ikpy IK -> /BridgeModule/joint_set_arms)."
   echo "      Command from the host:  echo \"l 0.35 0.25 0.10\" >> mujoco_sim/logs/.arm_targets"
   echo "      (also: 'r x y z' | 'default';  ARM_IK_DEMO=1 auto-cycles targets)"
-  ( source /workspace/.venv/ActionModule/bin/activate 2>/dev/null
-    PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+  pip install -q ikpy 2>/dev/null || true   # pure-python IK dep (no ActionModule venv exists)
+  ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 else
