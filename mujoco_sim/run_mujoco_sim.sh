@@ -33,7 +33,7 @@ RLLAB="$REPOS/unitree_rl_lab"
 SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
-XML="$MUJOCO/unitree_robots/h1_2/h1_2.xml"
+XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches config.yaml scene_sym.xml
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
@@ -71,11 +71,10 @@ BAND_FLAG="$SIM/logs/.band_release"                            # host path (shar
 BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"  # same file, container path
 
 [[ -x "$MJ_BIN" ]] || { echo "ERROR: MuJoCo binary not built: $MJ_BIN"; exit 1; }
-if ! ls /dev/input/js* >/dev/null 2>&1; then
-  echo "NOTE: no joystick at /dev/input/js* — config has use_joystick:1. Push/command"
-  echo "      tests need a gamepad; balance still runs. (Edit simulate/config.yaml"
-  echo "      use_joystick:0 if the sim refuses to start without one.)"
-fi
+# Architecture B is JOYSTICKLESS by design (config.yaml use_joystick:0) — the
+# whole flow runs from the PC: bring-up + engage are automatic (MovementModule),
+# band release is the engage flag, disturbances via the sim's stdin `push <vx> <vy>`
+# and sim-window keys (9 = band toggle, 7/8 = band height).
 
 CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""
 cleanup() {

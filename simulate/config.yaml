@@ -1,10 +1,13 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene.xml" # Robot scene, /unitree_robots/[robot]/scene.xml 
+robot_scene: "scene_sym.xml" # SYM body (torso CoM y=0) — the p10+ training standard; D retired
 
 domain_id: 0  # Domain id
-interface: "lo" # Interface 
+interface: "lo" # Interface
 
-use_joystick: 1 # Simulate Unitree WirelessController using a gamepad
+# Architecture B is joystickless BY DESIGN (everything runs from the PC; the
+# deployed product has no gamepad). Keep 0 — with 1 and no gamepad the sim
+# exits at startup ("Joystick open failed."), see the 2026-07-03 incident.
+use_joystick: 0 # Simulate Unitree WirelessController using a gamepad
 joystick_type: "xbox" # support "xbox" and "switch" gamepad layout
 joystick_device: "/dev/input/js0" # Device path
 joystick_bits: 16 # Some game controllers may only have 8-bit accuracy
