@@ -39,10 +39,14 @@ echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo)"
 sleep 2
 
 if [ "$MODE" = "b" ]; then
-  echo ">>> [container] MODE B — ActionModule (IK arms -> /BridgeModule/joint_set_arms)"
+  echo ">>> [container] MODE B — arm_ik_commander (red/blue dot Cartesian targets"
+  echo "      -> ActionModule ikpy IK -> /BridgeModule/joint_set_arms)."
+  echo "      Command from the host:  echo \"l 0.35 0.25 0.10\" >> mujoco_sim/logs/.arm_targets"
+  echo "      (also: 'r x y z' | 'default';  ARM_IK_DEMO=1 auto-cycles targets)"
   ( source /workspace/.venv/ActionModule/bin/activate 2>/dev/null
-    PYTHONPATH="/workspace/.global:/workspace/ActionModule/main:${PYTHONPATH:-}" \
-    python3 /workspace/ActionModule/main/main.py ) & PIDS+=($!)
+    PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+    ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
+    python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
