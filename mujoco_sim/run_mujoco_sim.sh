@@ -92,7 +92,8 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # ── 1. MuJoCo (host) ────────────────────────────────────────────────────────
-echo ">>> [1] launching unitree_mujoco (h1_2 D-model) on lo, domain 0..."
+SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
+echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain 0..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
 ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i 0 -n lo ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
@@ -148,7 +149,7 @@ else
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
     -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
     -e MODE="$MODE" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
-    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-4.0}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
+    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.5}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh

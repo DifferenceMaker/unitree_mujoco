@@ -636,7 +636,7 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
             total_mass);
         if (param::config.robot == "h1_2")
           std::printf(
-              " D-sweep model expects 76.484 kg (corrected CoM + mass): %s\n",
+              " corrected h1_2 body expects 76.484 kg (D and SYM share it): %s\n",
               (total_mass > 76.0 && total_mass < 77.0) ? "OK" : "MISMATCH");
         std::printf(
             "============================================================\n\n");
