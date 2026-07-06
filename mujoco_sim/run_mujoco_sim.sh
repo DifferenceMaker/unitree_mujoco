@@ -39,9 +39,19 @@ DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── args ────────────────────────────────────────────────────────────────────
 MODE="a"; GAINS="harness"; METRICS=1; METRICS_MODE="idle_quiet"
+# SAFETY: the Architecture-B ROS2 modes are DISABLED on this branch (dds_cpp is
+# the C++ path only). This launcher predates the DDS-isolation guards — running
+# its ROS2 stack drove the REAL robot twice (2026-07-03, incidents #1 and #2:
+# unpinned ROS2 domain 0 discovered the real BridgeModule over the robot LAN).
+# Arch-B sim runs live on branch arch_b_v2.
+_archb_disabled() {
+  echo "ERROR: Arch-B ROS2 modes are disabled on branch dds_cpp (no DDS isolation guards)."
+  echo "       git checkout arch_b_v2   # then: bash run_mujoco_sim.sh [balance|arms|arms-demo]"
+  exit 1
+}
 while [[ $# -gt 0 ]]; do case "$1" in
-  --mode-a) MODE="a"; shift;;
-  --mode-b) MODE="b"; shift;;
+  --mode-a) _archb_disabled;;
+  --mode-b) _archb_disabled;;
   --ref)    MODE="ref"; shift;;
   --gains)  GAINS="$2"; shift 2;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
@@ -49,6 +59,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   -h|--help) sed -n '2,33p' "$0"; exit 0;;
   *) echo "unknown arg: $1"; exit 1;;
 esac; done
+[[ "$MODE" == "ref" ]] || _archb_disabled   # no-args default was mode-a — block it too
 
 # ── architecture banner — make it obvious which path is running ──────────────
 echo "============================================================"
