@@ -58,7 +58,7 @@ elif [ "$MODE" = "c" ]; then
   echo ">>> [container] MODE C — REAL ActionModule (IK_ENGINE=ikpy) + teleop keyboard."
   echo "      Keys (this terminal): w/s=+x/-x  a/d=+y/-y  q/e=+z/-z  (left hand),"
   echo "      i/k j/l u/o = roll/pitch/yaw, p = print pose, ESC = quit teleop."
-  pip install -q ikpy scipy 2>/dev/null || true   # ActionModule deps (no venv exists)
+  pip install -q ikpy scipy scikit-learn 2>/dev/null || true   # ActionModule deps (no venv exists)
   ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
   ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
     IK_ENGINE=ikpy \
