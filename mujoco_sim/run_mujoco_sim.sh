@@ -55,7 +55,7 @@ DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 # ── profile + options ────────────────────────────────────────────────────────
 PROFILE="balance"; METRICS=1; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
-  balance|arms|arms-demo|teleop|ref) PROFILE="$1"; shift;;
+  balance|arms|arms-demo|teleop|ref|stop) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
@@ -63,7 +63,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
-  *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | ref)"; exit 1;;
+  *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
 esac; done
 
 # Everything a profile implies, derived in ONE place:
@@ -113,26 +113,38 @@ BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"  # same file, cont
 # band release is the engage flag, disturbances via the sim's stdin `push <vx> <vy>`
 # and sim-window keys (9 = band toggle, 7/8 = band height).
 
-# ── 0. preflight: sweep leftovers from crashed/aborted runs ──────────────────
-# A run that died mid-way (e.g. Ctrl+C eaten by teleop's raw key reader, or a
-# crashed sim) leaves its container + nodes LIVE on the sim DDS bus — the next
-# run then joins a bus with an already-engaged controller ("phantom" arms /
-# instant policy). Also clear the stale command/flag files: .arm_targets is
+# ── 0. sweep: kill anything left from crashed/aborted runs ──────────────────
+# A run that died mid-way (Ctrl+C eaten by teleop's raw key reader, a frozen/
+# killed sim window) leaves its container + nodes LIVE on the sim DDS bus — the
+# next run then joins a bus with an already-engaged controller ("phantom" arms /
+# instant policy). Also clears stale command/flag files: .arm_targets is
 # replayed in full by arm_ik_commander at startup, and a leftover .band_release
-# would drop the band instantly.
-STRAYS=$(docker ps -q --filter "name=archb_sim_")
-if [[ -n "$STRAYS" ]]; then
-  echo ">>> [0] removing leftover archb containers: $(docker ps --format '{{.Names}}' --filter 'name=archb_sim_' | tr '\n' ' ')"
-  docker rm -f $STRAYS >/dev/null 2>&1
-fi
-pkill -f "$MJ_BIN" 2>/dev/null && echo ">>> [0] killed a leftover unitree_mujoco sim"
-pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [0] killed a leftover balance_metrics"
-rm -f "$BAND_FLAG" "$SIM/logs/.arm_targets"
+# would drop the band instantly. Runs at every launch AND as the guaranteed
+# exit: `bash run_mujoco_sim.sh stop`.
+sweep_leftovers() {
+  local strays; strays=$(docker ps -q --filter "name=archb_sim_")
+  if [[ -n "$strays" ]]; then
+    echo ">>> [sweep] removing archb containers: $(docker ps --format '{{.Names}}' --filter 'name=archb_sim_' | tr '\n' ' ')"
+    docker rm -f $strays >/dev/null 2>&1
+  fi
+  pkill -f "$MJ_BIN" 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"
+  pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [sweep] killed a leftover balance_metrics"
+  rm -f "$BAND_FLAG" "$SIM/logs/.arm_targets" "$METRICS_FIFO"
+}
 
-CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""
+if [[ "$PROFILE" == "stop" ]]; then
+  echo ">>> STOP: tearing down any running/leftover sim stack..."
+  sweep_leftovers
+  echo ">>> done — environment clean."
+  exit 0
+fi
+sweep_leftovers
+
+CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""; WATCHDOG_PID=""
 cleanup() {
   [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1   # run once: Ctrl+C fires INT then EXIT
   echo ""; echo ">>> cleaning up..."
+  [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null
   [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }  # → RUN SUMMARY into log
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "$CTRL_PID" ]] && kill "$CTRL_PID" 2>/dev/null || true
@@ -197,6 +209,15 @@ if [[ "$MODE" = "ref" ]]; then
   "$CTRL_BIN" --network lo & CTRL_PID=$!
   wait "$CTRL_PID"
 else
+  # WATCHDOG: if the sim dies mid-run (frozen window killed, crash), tear the
+  # container down so the ROS2 stack can't outlive its robot (the "phantom
+  # controller" orphan). Removing the container unblocks the foreground
+  # docker run below -> the EXIT trap finishes the rest of the cleanup.
+  ( while kill -0 "$MJ_PID" 2>/dev/null; do sleep 2; done
+    echo ""; echo ">>> [watchdog] sim process died — tearing down the stack"
+    docker rm -f "$CONTAINER" >/dev/null 2>&1 ) &
+  WATCHDOG_PID=$!
+
   echo ">>> [3] REAL Architecture B v2 stack in container (MODE=$MODE)..."
   # ROS2 ISOLATION (do not remove): the sim stack publishes the same
   # /BridgeModule/* topics the REAL robot stack uses. Unpinned, ROS2/FastDDS
