@@ -55,19 +55,10 @@ if [ "$MODE" = "b" ]; then
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 elif [ "$MODE" = "c" ]; then
-  echo ">>> [container] MODE C — REAL ActionModule (IK_ENGINE=ikpy) + teleop keyboard."
-  echo "      Keys (this terminal): w/s=+x/-x  a/d=+y/-y  q/e=+z/-z  (left hand),"
-  echo "      i/k j/l u/o = roll/pitch/yaw, p = print pose, ESC = quit teleop."
+  echo ">>> [container] MODE C — REAL ActionModule (IK_ENGINE=ikpy), launched in the"
+  echo "      FOREGROUND below so THIS terminal's keyboard drives teleop."
   pip install -q ikpy scipy scikit-learn 2>/dev/null || true   # ActionModule deps (no venv exists)
   ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
-  ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
-    IK_ENGINE=ikpy \
-    python3 /workspace/ActionModule/main/main.py ) & PIDS+=($!)
-  # Auto-trigger the teleop sequence once the handshake has settled (ActionModule
-  # blocks on BridgeModule conduct, which needs sim lowstate flowing first).
-  ( sleep 15
-    echo ">>> [container] triggering teleop sequence (/ActionModule/run <- 'teleop')"
-    ros2 topic pub --once /ActionModule/run std_msgs/String "data: teleop" ) &
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
@@ -77,5 +68,21 @@ echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /Bridge
   PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
   python3 /workspace/MovementModule/main/main.py ) & PIDS+=($!)
 
-echo ">>> [container] all nodes up (MODE=$MODE). Ctrl+C the launcher to stop."
-wait
+if [ "$MODE" = "c" ]; then
+  # ActionModule runs FOREGROUND as this tty's owner: teleop's /dev/tty raw-mode
+  # key capture works only for the foreground process group (backgrounded, the
+  # keys just echoed into the console — the 2026-07-06 'can't type' failure).
+  # When ActionModule exits (ESC then Ctrl+C), the trap tears everything down.
+  ( sleep 15
+    echo ">>> [container] triggering teleop sequence (/ActionModule/run <- 'teleop')"
+    ros2 topic pub --once /ActionModule/run std_msgs/String "data: teleop" >/dev/null 2>&1 ) &
+  echo ">>> [container] all nodes up. ActionModule in FOREGROUND — teleop auto-starts in ~15 s."
+  echo "      KEYS (type here): w/s=+x/-x  a/d=+y/-y  q/e=+z/-z (left hand),"
+  echo "      i/k j/l u/o = roll/pitch/yaw, p = print pose, ESC = quit, then Ctrl+C."
+  PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+  IK_ENGINE=ikpy \
+  python3 /workspace/ActionModule/main/main.py
+else
+  echo ">>> [container] all nodes up (MODE=$MODE). Ctrl+C the launcher to stop."
+  wait
+fi
