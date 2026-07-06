@@ -89,7 +89,9 @@ case "$PROFILE" in
   arms-demo) echo " ARCH B v2 × MuJoCo  —  profile: arms-demo (auto-cycling dots)"
              echo "   BridgeModule --sim + MovementModule + arm_ik_commander" ;;
   teleop)    echo " ARCH B v2 × MuJoCo  —  profile: teleop (DEPLOYMENT REHEARSAL)"
-             echo "   BridgeModule --sim + MovementModule + REAL ActionModule (teleop keys)" ;;
+             echo "   BridgeModule --sim + MovementModule + REAL ActionModule (teleop keys)"
+             echo "   NOTE: teleop's key reader eats Ctrl+C — press ESC first (quit teleop),"
+             echo "         THEN Ctrl+C to stop the run." ;;
   ref)       echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
              echo "   !! DDS domain 0 — do NOT run while the real stack is up on this PC" ;;
 esac
@@ -110,6 +112,22 @@ BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"  # same file, cont
 # whole flow runs from the PC: bring-up + engage are automatic (MovementModule),
 # band release is the engage flag, disturbances via the sim's stdin `push <vx> <vy>`
 # and sim-window keys (9 = band toggle, 7/8 = band height).
+
+# ── 0. preflight: sweep leftovers from crashed/aborted runs ──────────────────
+# A run that died mid-way (e.g. Ctrl+C eaten by teleop's raw key reader, or a
+# crashed sim) leaves its container + nodes LIVE on the sim DDS bus — the next
+# run then joins a bus with an already-engaged controller ("phantom" arms /
+# instant policy). Also clear the stale command/flag files: .arm_targets is
+# replayed in full by arm_ik_commander at startup, and a leftover .band_release
+# would drop the band instantly.
+STRAYS=$(docker ps -q --filter "name=archb_sim_")
+if [[ -n "$STRAYS" ]]; then
+  echo ">>> [0] removing leftover archb containers: $(docker ps --format '{{.Names}}' --filter 'name=archb_sim_' | tr '\n' ' ')"
+  docker rm -f $STRAYS >/dev/null 2>&1
+fi
+pkill -f "$MJ_BIN" 2>/dev/null && echo ">>> [0] killed a leftover unitree_mujoco sim"
+pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [0] killed a leftover balance_metrics"
+rm -f "$BAND_FLAG" "$SIM/logs/.arm_targets"
 
 CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""
 cleanup() {
