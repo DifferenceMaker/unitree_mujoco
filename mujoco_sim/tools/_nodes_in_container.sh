@@ -33,7 +33,7 @@ PIDS=()
 cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
 trap cleanup EXIT INT TERM
 
-echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo)"
+echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DDS domain ${BRIDGE_DDS_DOMAIN:-0})"
 ( PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
   BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
 sleep 2

@@ -2,25 +2,34 @@
 # ============================================================================
 # run_mujoco_sim.sh — one-command Architecture B × MuJoCo balance sim.
 #
-# Brings up the mass-corrected H1-2 in unitree_mujoco on `lo` (host), the
-# balance_metrics sidecar headless→logfile (host, tv env), and either:
-#   --mode-a  (default) the REAL Architecture B v2 stack, no sim shims:
-#             BridgeModule (BRIDGE_SIM=1, joints-only) + MovementModule
-#             (FixStand→hold→policy; arms-hold fallback for joint_set_arms)
-#   --mode-b  + the colleague's ActionModule (IK arms → /BridgeModule/joint_set_arms)
-#   --ref     the known-good C++ reference: h1_2_ctrl --network lo (NO ROS2
-#             stack) — for the apples-to-apples comparison
+# ONE positional PROFILE picks the whole configuration (no flag combinatorics):
 #
-# The ROS2 nodes run in the ros2-humble-dev container (both repos mounted),
-# MuJoCo + metrics run on the host. DDS is CycloneDDS on lo (domain 0), shared
-# via --network host. See mujoco_sim/INTEGRATION_DESIGN.md (Addendum A6).
+#   balance    (default) REAL Arch B v2 stack, balance only — BridgeModule
+#              (BRIDGE_SIM=1, joints-only) + MovementModule (FixStand→hold→
+#              policy; arms hold via the measured-arms fallback)
+#   arms       balance + arm_ik_commander: red/blue-dot Cartesian arm targets
+#              from the command file  mujoco_sim/logs/.arm_targets
+#              ('l x y z' | 'r x y z' | 'default')
+#   arms-demo  arms, with auto-cycling demo targets (hands-free eval)
+#   ref        the known-good C++ h1_2_ctrl (NO ROS2) — apples-to-apples only.
+#              WARNING: runs on DDS domain 0 (h1_2_ctrl hardcodes it) — do NOT
+#              use while the real-robot stack is up on this PC.
+#
+# Options: --quiet (turn off the ARCHB_DEBUG diagnostics; default ON)
+#          --no-metrics | --metrics-mode <idle_quiet|push|trainingdist>
+#
+# ISOLATION (both DDS planes, do not weaken — 2026-07-03 incidents #1 & #2):
+#   ROS2 plane:        ROS_DOMAIN_ID=77 + ROS_LOCALHOST_ONLY=1 (container)
+#   unitree-SDK plane: DDS domain 1 on lo for sim+metrics+Bridge
+#                      (the real robot bus is domain 0; the real stack's
+#                      cyclonedds binds 127.0.0.1 too, so domain separation —
+#                      not interface separation — is what actually isolates)
 #
 # Examples:
-#   bash run_mujoco_sim.sh --mode-a                 # balance bring-up
-#   bash run_mujoco_sim.sh --mode-b                 # + colleague's IK arms
-#   bash run_mujoco_sim.sh --ref                    # C++ reference path
-#   bash run_mujoco_sim.sh --mode-a --metrics-mode idle_quiet
-#   echo "mode push" > /tmp/archb_metrics.stdin     # label a disturbance mode live
+#   bash run_mujoco_sim.sh                    # balance
+#   bash run_mujoco_sim.sh arms-demo          # balance + auto-cycling arm dots
+#   echo "l 0.35 0.25 0.10" >> mujoco_sim/logs/.arm_targets   # steer the red dot
+#   echo "mode push" > /tmp/archb_metrics.stdin   # label a disturbance mode live
 # ============================================================================
 set -uo pipefail
 
@@ -37,29 +46,43 @@ XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches config.y
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
-# ── args ────────────────────────────────────────────────────────────────────
-MODE="a"; METRICS=1; METRICS_MODE="idle_quiet"
+# ── profile + options ────────────────────────────────────────────────────────
+PROFILE="balance"; METRICS=1; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
-  --mode-a) MODE="a"; shift;;
-  --mode-b) MODE="b"; shift;;
-  --ref)    MODE="ref"; shift;;
+  balance|arms|arms-demo|ref) PROFILE="$1"; shift;;
+  --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
+  --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
+  --ref)    PROFILE="ref"; shift;;
+  --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
-  -h|--help) sed -n '2,33p' "$0"; exit 0;;
-  *) echo "unknown arg: $1"; exit 1;;
+  -h|--help) sed -n '2,42p' "$0"; exit 0;;
+  *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | ref)"; exit 1;;
 esac; done
+
+# Everything a profile implies, derived in ONE place:
+MODE="a"; ARM_DEMO=0; SIM_DDS_DOMAIN=1
+case "$PROFILE" in
+  balance)   MODE="a";;
+  arms)      MODE="b";;
+  arms-demo) MODE="b"; ARM_DEMO=1;;
+  ref)       MODE="ref"; SIM_DDS_DOMAIN=0;;   # h1_2_ctrl hardcodes domain 0
+esac
 
 # ── architecture banner — make it obvious which path is running ──────────────
 echo "============================================================"
-case "$MODE" in
-  a)   echo " ARCHITECTURE B v2 × MuJoCo  —  MODE A (REAL stack, no shims)"
-       echo "   BridgeModule --sim + MovementModule (arms-hold fallback)" ;;
-  b)   echo " ARCHITECTURE B v2 × MuJoCo  —  MODE B (full integration)"
-       echo "   BridgeModule --sim + MovementModule + ActionModule IK arms" ;;
-  ref) echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
-       echo "   known-good controller, for the apples-to-apples comparison" ;;
+case "$PROFILE" in
+  balance)   echo " ARCH B v2 × MuJoCo  —  profile: balance (REAL stack, no shims)"
+             echo "   BridgeModule --sim + MovementModule (arms-hold fallback)" ;;
+  arms)      echo " ARCH B v2 × MuJoCo  —  profile: arms (file-driven dot targets)"
+             echo "   BridgeModule --sim + MovementModule + arm_ik_commander" ;;
+  arms-demo) echo " ARCH B v2 × MuJoCo  —  profile: arms-demo (auto-cycling dots)"
+             echo "   BridgeModule --sim + MovementModule + arm_ik_commander" ;;
+  ref)       echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
+             echo "   !! DDS domain 0 — do NOT run while the real stack is up on this PC" ;;
 esac
 echo "   model: $XML"
+echo "   sim DDS: lo, domain $SIM_DDS_DOMAIN   |   ROS2: domain ${ARCHB_ROS_DOMAIN:-77}, localhost-only"
 echo "============================================================"
 
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
@@ -93,9 +116,9 @@ trap cleanup EXIT INT TERM
 
 # ── 1. MuJoCo (host) ────────────────────────────────────────────────────────
 SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
-echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain 0..."
+echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain $SIM_DDS_DOMAIN..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
-( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i 0 -n lo ) >"$MJ_LOG" 2>&1 &
+( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
 
@@ -117,7 +140,7 @@ if [[ "$METRICS" = "1" ]]; then
     rm -f "$METRICS_FIFO"; mkfifo "$METRICS_FIFO"
     sleep infinity > "$METRICS_FIFO" &   # hold the write end open so stdin doesn't EOF
     HOLD_PID=$!
-    "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain 0 --xml "$XML" \
+    "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain "$SIM_DDS_DOMAIN" --xml "$XML" \
         --mode "$METRICS_MODE" < "$METRICS_FIFO" > "$METRICS_LOG" 2>&1 &
     METRICS_PID=$!
     echo ">>> [2] balance_metrics headless (pid $METRICS_PID)"
@@ -148,9 +171,10 @@ else
   # only covers the unitree-SDK plane, not ROS2.
   docker run --rm --name "$CONTAINER" --network host --ipc=host \
     -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
-    -e MODE="$MODE" -e ARCHB_DEBUG="${ARCHB_DEBUG:-0}" \
+    -e BRIDGE_DDS_DOMAIN="$SIM_DDS_DOMAIN" \
+    -e MODE="$MODE" -e ARCHB_DEBUG="$DEBUG" \
     -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-5.0}" \
-    -e ARM_IK_DEMO="${ARM_IK_DEMO:-0}" \
+    -e ARM_IK_DEMO="$ARM_DEMO" \
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh
