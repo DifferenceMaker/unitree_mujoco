@@ -11,6 +11,12 @@
 #              from the command file  mujoco_sim/logs/.arm_targets
 #              ('l x y z' | 'r x y z' | 'default')
 #   arms-demo  arms, with auto-cycling demo targets (hands-free eval)
+#   teleop     DEPLOYMENT REHEARSAL: the REAL ActionModule (colleague's IK
+#              stack, IK_ENGINE=ikpy) + his teleop keyboard driving the arms
+#              while the balance policy stands. Type in THIS terminal:
+#              w/s a/d q/e = left hand x/y/z, i/k j/l u/o = roll/pitch/yaw,
+#              p = print pose, ESC = quit teleop. (sim `push` unavailable here —
+#              the terminal belongs to teleop; use balance/arms for pushes.)
 #   ref        the known-good C++ h1_2_ctrl (NO ROS2) — apples-to-apples only.
 #              WARNING: runs on DDS domain 0 (h1_2_ctrl hardcodes it) — do NOT
 #              use while the real-robot stack is up on this PC.
@@ -49,7 +55,7 @@ DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 # ── profile + options ────────────────────────────────────────────────────────
 PROFILE="balance"; METRICS=1; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
-  balance|arms|arms-demo|ref) PROFILE="$1"; shift;;
+  balance|arms|arms-demo|teleop|ref) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
@@ -61,13 +67,17 @@ while [[ $# -gt 0 ]]; do case "$1" in
 esac; done
 
 # Everything a profile implies, derived in ONE place:
-MODE="a"; ARM_DEMO=0; SIM_DDS_DOMAIN=1
+MODE="a"; ARM_DEMO=0; SIM_DDS_DOMAIN=1; DOCKER_TTY=""
 case "$PROFILE" in
   balance)   MODE="a";;
   arms)      MODE="b";;
   arms-demo) MODE="b"; ARM_DEMO=1;;
+  teleop)    MODE="c"; DOCKER_TTY="-it";;     # teleop reads keys from the container tty
   ref)       MODE="ref"; SIM_DDS_DOMAIN=0;;   # h1_2_ctrl hardcodes domain 0
 esac
+if [[ "$PROFILE" == "teleop" && ! -t 0 ]]; then
+  echo "ERROR: the teleop profile needs an interactive terminal (keyboard input)."; exit 1
+fi
 
 # ── architecture banner — make it obvious which path is running ──────────────
 echo "============================================================"
@@ -78,6 +88,8 @@ case "$PROFILE" in
              echo "   BridgeModule --sim + MovementModule + arm_ik_commander" ;;
   arms-demo) echo " ARCH B v2 × MuJoCo  —  profile: arms-demo (auto-cycling dots)"
              echo "   BridgeModule --sim + MovementModule + arm_ik_commander" ;;
+  teleop)    echo " ARCH B v2 × MuJoCo  —  profile: teleop (DEPLOYMENT REHEARSAL)"
+             echo "   BridgeModule --sim + MovementModule + REAL ActionModule (teleop keys)" ;;
   ref)       echo " REFERENCE PATH (NOT Architecture B)  —  C++ h1_2_ctrl"
              echo "   !! DDS domain 0 — do NOT run while the real stack is up on this PC" ;;
 esac
@@ -118,7 +130,13 @@ trap cleanup EXIT INT TERM
 SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
 echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain $SIM_DDS_DOMAIN..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
-( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+if [[ "$PROFILE" == "teleop" ]]; then
+  # teleop owns the terminal keys — detach the sim's stdin so its `push`
+  # reader can't steal keystrokes from the teleop dispatcher.
+  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
+else
+  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+fi
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
 
@@ -169,7 +187,7 @@ else
   # robot if the real BridgeModule is up (2026-07-03 incident). Pin the sim to
   # its own domain + loopback-only discovery; the CYCLONEDDS_URI lo-config
   # only covers the unitree-SDK plane, not ROS2.
-  docker run --rm --name "$CONTAINER" --network host --ipc=host \
+  docker run --rm $DOCKER_TTY --name "$CONTAINER" --network host --ipc=host \
     -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
     -e BRIDGE_DDS_DOMAIN="$SIM_DDS_DOMAIN" \
     -e MODE="$MODE" -e ARCHB_DEBUG="$DEBUG" \

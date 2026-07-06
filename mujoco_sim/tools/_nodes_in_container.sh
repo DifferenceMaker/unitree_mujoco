@@ -10,7 +10,10 @@
 #
 # Invoked by run_mujoco_sim.sh via docker run. Env in:
 #   MODE = a (no arm source: MovementModule falls back to measured arms)
-#        | b (ActionModule IK arms -> /BridgeModule/joint_set_arms)
+#        | b (arm_ik_commander dots -> /BridgeModule/joint_set_arms)
+#        | c (the REAL ActionModule + teleop keyboard: WASD/QE = left hand,
+#             IK-resolved by the colleague's stack -> joint_set_arms.
+#             Needs docker -it: teleop reads /dev/tty.)
 #   ARCHB_FIXSTAND_SEC / ARCHB_HOLD_SEC / ARCHB_ACTION_CLIP / ARCHB_DEBUG /
 #   ARCHB_BAND_RELEASE_FILE  -> consumed by MovementModule's bring-up
 # Blocks until the container is stopped (SIGTERM) — then kills the children.
@@ -34,7 +37,11 @@ cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container
 trap cleanup EXIT INT TERM
 
 echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DDS domain ${BRIDGE_DDS_DOMAIN:-0})"
+# BRIDGE_GAINS_FROM_POLICY: Bridge reads ALL 27 PD gains (arms included) from
+# the ACTIVE policy's deploy.yaml (MovementModule/policy/CURRENT) — policies
+# are gain-adapted; wrong arm gains invalidate the eval (2026-07-06 handoff).
 ( PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+  BRIDGE_GAINS_FROM_POLICY=/workspace/MovementModule/policy \
   BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
 sleep 2
 
@@ -47,6 +54,20 @@ if [ "$MODE" = "b" ]; then
   ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
+elif [ "$MODE" = "c" ]; then
+  echo ">>> [container] MODE C — REAL ActionModule (IK_ENGINE=ikpy) + teleop keyboard."
+  echo "      Keys (this terminal): w/s=+x/-x  a/d=+y/-y  q/e=+z/-z  (left hand),"
+  echo "      i/k j/l u/o = roll/pitch/yaw, p = print pose, ESC = quit teleop."
+  pip install -q ikpy scipy 2>/dev/null || true   # ActionModule deps (no venv exists)
+  ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
+  ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+    IK_ENGINE=ikpy \
+    python3 /workspace/ActionModule/main/main.py ) & PIDS+=($!)
+  # Auto-trigger the teleop sequence once the handshake has settled (ActionModule
+  # blocks on BridgeModule conduct, which needs sim lowstate flowing first).
+  ( sleep 15
+    echo ">>> [container] triggering teleop sequence (/ActionModule/run <- 'teleop')"
+    ros2 topic pub --once /ActionModule/run std_msgs/String "data: teleop" ) &
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
