@@ -82,7 +82,9 @@ case "$PROFILE" in
     echo "TELEOP KEYS — this terminal now drives the arms (logs stay in the other one)."
     echo "  w/s a/d q/e = left hand x/y/z   i/k j/l u/o = rot   p = pose   ESC = quit teleop"
     echo "  Ctrl+C here just exits this reader (teleop keeps running; rerun 'keys' to reattach)."
-    stty -icanon -echo; trap 'stty sane' EXIT INT TERM
+    # min 1: without it many stty impls leave MIN=0 and cat's first read
+    # returns EOF instantly (the keys terminal 'exits immediately' bug).
+    stty -icanon min 1 time 0 -echo; trap 'stty sane' EXIT INT TERM
     cat > "$KFIFO"
     exit 0;;
   ref)       MODE="ref"; SIM_DDS_DOMAIN=0;;   # h1_2_ctrl hardcodes domain 0
