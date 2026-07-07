@@ -55,8 +55,8 @@ if [ "$MODE" = "b" ]; then
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 elif [ "$MODE" = "c" ]; then
-  echo ">>> [container] MODE C — REAL ActionModule (IK_ENGINE=ikpy), launched in the"
-  echo "      FOREGROUND below so THIS terminal's keyboard drives teleop."
+  echo ">>> [container] MODE C — REAL ActionModule (his MoveIt/ernest IK stack),"
+  echo "      launched FOREGROUND below so THIS terminal's keyboard drives teleop."
   pip install -q ikpy scipy scikit-learn 2>/dev/null || true   # ActionModule deps (no venv exists)
   ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
 else
@@ -79,8 +79,10 @@ if [ "$MODE" = "c" ]; then
   echo ">>> [container] all nodes up. ActionModule in FOREGROUND — teleop auto-starts in ~15 s."
   echo "      KEYS (type here): w/s=+x/-x  a/d=+y/-y  q/e=+z/-z (left hand),"
   echo "      i/k j/l u/o = roll/pitch/yaw, p = print pose, ESC = quit, then Ctrl+C."
+  # No IK_ENGINE override: MoveIt is available in this container, so ActionModule
+  # runs the SAME moveit+ernest resolvers as the real robot (full parity —
+  # verified live 2026-07-07, "You can start planning now!").
   PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
-  IK_ENGINE=ikpy \
   python3 /workspace/ActionModule/main/main.py
 else
   echo ">>> [container] all nodes up (MODE=$MODE). Ctrl+C the launcher to stop."
