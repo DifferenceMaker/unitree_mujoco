@@ -82,7 +82,12 @@ if [ "$MODE" = "c" ]; then
   # No IK_ENGINE override: MoveIt is available in this container, so ActionModule
   # runs the SAME moveit+ernest resolvers as the real robot (full parity —
   # verified live 2026-07-07, "You can start planning now!").
+  # TELEOP_INPUT: keys come from a dedicated FIFO on the shared mount (fed by
+  # `run_mujoco_sim.sh keys` in a clean host terminal) — /dev/tty capture is a
+  # lost race in a container where every helper subprocess shares one process
+  # group (non-interactive shell = no job control).
   PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+  TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.teleop_keys \
   python3 /workspace/ActionModule/main/main.py
 else
   echo ">>> [container] all nodes up (MODE=$MODE). Ctrl+C the launcher to stop."

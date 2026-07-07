@@ -55,7 +55,7 @@ DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 # ── profile + options ────────────────────────────────────────────────────────
 PROFILE="balance"; METRICS=1; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
-  balance|arms|arms-demo|teleop|ref|stop) PROFILE="$1"; shift;;
+  balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
@@ -72,7 +72,19 @@ case "$PROFILE" in
   balance)   MODE="a";;
   arms)      MODE="b";;
   arms-demo) MODE="b"; ARM_DEMO=1;;
-  teleop)    MODE="c"; DOCKER_TTY="-it";;     # teleop reads keys from the container tty
+  teleop)    MODE="c"; DOCKER_TTY="-it";;     # keys arrive via the FIFO ('keys' terminal)
+  keys)
+    # Dedicated teleop key terminal: raw single-key reads forwarded to the
+    # FIFO the in-container teleop dispatcher reads (TELEOP_INPUT). Run this
+    # in a SECOND clean terminal while the teleop profile is up.
+    KFIFO="$SIM/logs/.teleop_keys"
+    [[ -p "$KFIFO" ]] || mkfifo "$KFIFO"
+    echo "TELEOP KEYS — this terminal now drives the arms (logs stay in the other one)."
+    echo "  w/s a/d q/e = left hand x/y/z   i/k j/l u/o = rot   p = pose   ESC = quit teleop"
+    echo "  Ctrl+C here just exits this reader (teleop keeps running; rerun 'keys' to reattach)."
+    stty -icanon -echo; trap 'stty sane' EXIT INT TERM
+    cat > "$KFIFO"
+    exit 0;;
   ref)       MODE="ref"; SIM_DDS_DOMAIN=0;;   # h1_2_ctrl hardcodes domain 0
 esac
 if [[ "$PROFILE" == "teleop" && ! -t 0 ]]; then
@@ -129,7 +141,7 @@ sweep_leftovers() {
   fi
   pkill -f "$MJ_BIN" 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"
   pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [sweep] killed a leftover balance_metrics"
-  rm -f "$BAND_FLAG" "$SIM/logs/.arm_targets" "$METRICS_FIFO"
+  rm -f "$BAND_FLAG" "$SIM/logs/.arm_targets" "$SIM/logs/.teleop_keys" "$METRICS_FIFO"
 }
 
 if [[ "$PROFILE" == "stop" ]]; then
