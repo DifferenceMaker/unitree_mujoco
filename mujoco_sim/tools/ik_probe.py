@@ -68,44 +68,73 @@ def main():
     else:
         print("/joint_states: NO MESSAGE in 4 s — bridge not publishing!")
 
-    # 2) seedless /compute_ik with the known-good boot pose
+    # 2) /compute_ik request matrix — replicates the EXACT requests
+    #    ActionModule's failing teleop solves sent (poses+rpy+seed from the
+    #    2026-07-07 14:24 run's [ik/moveit] FAIL prints), alongside the
+    #    known-good boot request. Whichever row flips SUCCESS->FAIL names
+    #    the field that breaks it.
     client = node.create_client(GetPositionIK, "/compute_ik")
     if not client.wait_for_service(timeout_sec=5.0):
         print("/compute_ik: SERVICE NOT AVAILABLE")
         rclpy.shutdown()
         sys.exit(1)
 
-    req = GetPositionIK.Request()
-    ik = PositionIKRequest()
-    ik.group_name = "left_arm"
-    ik.ik_link_name = "left_wrist_yaw_link"
-    ik.avoid_collisions = False
-    ik.timeout.sec = 1
-    ps = PoseStamped()
-    ps.header.frame_id = "torso_link"
-    ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = BOOT_POSE
-    qx, qy, qz, qw = rpy_to_quat(*(math.radians(d) for d in BOOT_RPY_DEG))
-    ps.pose.orientation = Quaternion(x=qx, y=qy, z=qz, w=qw)
-    ik.pose_stamped = ps
-    req.ik_request = ik
+    LEFT_ARM_JOINTS = [
+        "left_shoulder_pitch_joint", "left_shoulder_roll_joint",
+        "left_shoulder_yaw_joint", "left_elbow_joint",
+        "left_wrist_roll_joint", "left_wrist_pitch_joint",
+        "left_wrist_yaw_joint",
+    ]
+    TELEOP_SEED = [-0.24, 0.21, 0.04, 0.54, 1.51, 0.10, 1.01]
 
-    future = client.call_async(req)
-    rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
-    res = future.result()
-    if res is None:
-        print("/compute_ik: NO RESPONSE in 5 s")
-    elif res.error_code.val == 1:
-        sol = dict(zip(res.solution.joint_state.name,
-                       res.solution.joint_state.position))
-        arm = {n: v for n, v in sol.items() if n.startswith("left_")
-               and ("shoulder" in n or "elbow" in n or "wrist" in n)}
-        print(f"/compute_ik: SUCCESS — boot pose IS solvable right now")
-        for n, v in arm.items():
-            print(f"  {n:35s} {v:+.3f}")
-    else:
-        print(f"/compute_ik: FAILED error_code={res.error_code.val} "
-              f"(-31=NO_IK_SOLUTION) — live planning-scene state has made "
-              f"the boot pose unreachable")
+    def compute_ik(label, pose, rpy_deg, seed=None):
+        req = GetPositionIK.Request()
+        ik = PositionIKRequest()
+        ik.group_name = "left_arm"
+        ik.ik_link_name = "left_wrist_yaw_link"
+        ik.avoid_collisions = False
+        ik.timeout.sec = 1
+        ps = PoseStamped()
+        ps.header.frame_id = "torso_link"
+        ps.pose.position.x, ps.pose.position.y, ps.pose.position.z = pose
+        qx, qy, qz, qw = rpy_to_quat(*(math.radians(d) for d in rpy_deg))
+        ps.pose.orientation = Quaternion(x=qx, y=qy, z=qz, w=qw)
+        ik.pose_stamped = ps
+        if seed is not None:
+            js = JointState()
+            js.name = list(LEFT_ARM_JOINTS)
+            js.position = [float(v) for v in seed]
+            ik.robot_state.joint_state = js
+        req.ik_request = ik
+        future = client.call_async(req)
+        rclpy.spin_until_future_complete(node, future, timeout_sec=5.0)
+        res = future.result()
+        if res is None:
+            print(f"{label:28s} NO RESPONSE in 5 s")
+        elif res.error_code.val == 1:
+            sol = dict(zip(res.solution.joint_state.name,
+                           res.solution.joint_state.position))
+            arm = [f"{sol[n]:+.2f}" for n in LEFT_ARM_JOINTS if n in sol]
+            print(f"{label:28s} SUCCESS  joints=[{','.join(arm)}]")
+        else:
+            print(f"{label:28s} FAILED error_code={res.error_code.val} "
+                  f"(-31=NO_IK_SOLUTION, -21=FRAME_TRANSFORM_FAILURE)")
+
+    print()
+    print("request matrix (pose / rpy deg / seed):")
+    # baseline: boot request, known good
+    compute_ik("boot seedless", BOOT_POSE, BOOT_RPY_DEG)
+    compute_ik("boot + teleop seed", BOOT_POSE, BOOT_RPY_DEG, TELEOP_SEED)
+    # the failing 'w' target: x+0.05 then LCC z-drop; LCM yaw from y=0.3
+    compute_ik("teleop 'w' seedless", (0.350, 0.300, -0.130),
+               (103.5, -41.5, 11.3))
+    compute_ik("teleop 'w' + seed", (0.350, 0.300, -0.130),
+               (103.5, -41.5, 11.3), TELEOP_SEED)
+    # the bisect endpoint that also failed: ~current pose, ~boot rpy
+    compute_ik("bisect endpoint seedless", (0.300, 0.300, 0.049),
+               (103.4, -41.5, -0.95))
+    compute_ik("bisect endpoint + seed", (0.300, 0.300, 0.049),
+               (103.4, -41.5, -0.95), TELEOP_SEED)
 
     rclpy.shutdown()
 
