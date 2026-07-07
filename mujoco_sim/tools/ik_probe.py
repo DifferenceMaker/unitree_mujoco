@@ -121,20 +121,28 @@ def main():
                   f"(-31=NO_IK_SOLUTION, -21=FRAME_TRANSFORM_FAILURE)")
 
     print()
-    print("request matrix (pose / rpy deg / seed):")
-    # baseline: boot request, known good
-    compute_ik("boot seedless", BOOT_POSE, BOOT_RPY_DEG)
-    compute_ik("boot + teleop seed", BOOT_POSE, BOOT_RPY_DEG, TELEOP_SEED)
-    # the failing 'w' target: x+0.05 then LCC z-drop; LCM yaw from y=0.3
-    compute_ik("teleop 'w' seedless", (0.350, 0.300, -0.130),
-               (103.5, -41.5, 11.3))
-    compute_ik("teleop 'w' + seed", (0.350, 0.300, -0.130),
-               (103.5, -41.5, 11.3), TELEOP_SEED)
-    # the bisect endpoint that also failed: ~current pose, ~boot rpy
-    compute_ik("bisect endpoint seedless", (0.300, 0.300, 0.049),
-               (103.4, -41.5, -0.95))
-    compute_ik("bisect endpoint + seed", (0.300, 0.300, 0.049),
-               (103.4, -41.5, -0.95), TELEOP_SEED)
+    print("workspace-margin matrix (all with the boot orientation "
+          f"{BOOT_RPY_DEG} deg, seed = teleop seed):")
+    # Round-3 verdict: the LCM/LCC targets were genuinely unreachable and
+    # the boot pose sits ON the workspace boundary (z 0.050 solves, 0.049
+    # does not). This matrix maps the PLAIN move_r neighborhood — a 5 cm
+    # step in each direction with the orientation held — i.e. exactly what
+    # each teleop key requests with lCM_TEST=False.
+    bx, by, bz = BOOT_POSE
+    compute_ik("boot (baseline)", BOOT_POSE, BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("w: x+0.05", (bx + 0.05, by, bz), BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("s: x-0.05", (bx - 0.05, by, bz), BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("a: y+0.05", (bx, by + 0.05, bz), BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("d: y-0.05", (bx, by - 0.05, bz), BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("q: z+0.05", (bx, by, bz + 0.05), BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("e: z-0.05", (bx, by, bz - 0.05), BOOT_RPY_DEG, TELEOP_SEED)
+    # context rows: the old table-height start pose (colleague's teleop was
+    # tuned here) and mid-height candidates with more margin
+    compute_ik("old table pose", (0.250, 0.490, 0.550), BOOT_RPY_DEG)
+    compute_ik("candidate (0.30,0.25,0.15)", (0.300, 0.250, 0.150),
+               BOOT_RPY_DEG, TELEOP_SEED)
+    compute_ik("candidate (0.35,0.25,0.20)", (0.350, 0.250, 0.200),
+               BOOT_RPY_DEG, TELEOP_SEED)
 
     rclpy.shutdown()
 
