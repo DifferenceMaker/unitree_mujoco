@@ -173,6 +173,11 @@ SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev
 echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain $SIM_DDS_DOMAIN..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
 if [[ "$PROFILE" == "teleop" ]]; then
+  # The teleop key FIFO must EXIST before the container starts (the dispatcher
+  # opens it read-side and blocks until the 'keys' terminal attaches).
+  rm -f "$SIM/logs/.teleop_keys"; mkfifo "$SIM/logs/.teleop_keys"
+fi
+if [[ "$PROFILE" == "teleop" ]]; then
   # teleop owns the terminal keys — detach the sim's stdin so its `push`
   # reader can't steal keystrokes from the teleop dispatcher.
   ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
