@@ -90,7 +90,13 @@ inline void set_from_json(const std::string& js) {
   const std::string kp = json_field(js, "arm_kp");
   const std::string kd = json_field(js, "arm_kd");
 
+  const std::string oa = json_field(js, "obs_age_ms");
+  const std::string aa = json_field(js, "act_age_ms");
+
   std::string out = "POLICY: " + (policy.empty() ? std::string("?") : policy);
+  if (!oa.empty() || !aa.empty())
+    out += "\nobs_age " + (oa.empty() ? "?" : oa) + " ms   act_age " +
+           (aa.empty() ? "?" : aa) + " ms";
   if (!trans.empty()) out += "\narm_transition: " + trans + "s";
   if (!ovr.empty()) out += "   gain_override: " + ovr;
   if (!kp.empty()) out += "\narm_kp " + kp;
