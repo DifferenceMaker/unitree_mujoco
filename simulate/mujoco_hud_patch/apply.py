@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""Re-apply the sim2sim HUD / arm-slider / vsync edits to the vendored MuJoCo.
+
+`simulate/mujoco` is a symlink to the system MuJoCo install (e.g.
+~/.mujoco/mujoco-3.3.6) and is gitignored, so the edits we make to its
+simulate.cc / simulate.h are NOT tracked by this repo. This script versions
+those edits and re-applies them (e.g. after a MuJoCo reinstall/upgrade).
+
+It is idempotent: each hunk is skipped if already present.
+
+  python3 simulate/mujoco_hud_patch/apply.py            # apply
+  python3 simulate/mujoco_hud_patch/apply.py --check     # report only
+
+What it adds (all DEBUG/sim2sim-only, no effect on physics):
+  simulate.cc : include policy_hud.h + arm_gui.h; policy/payload/metrics HUD
+                overlay in Render(); "Arm Cmd" slider section (MakeArmSection,
+                registered in MakeUiSections) + its publish hook in UiEvent.
+  simulate.h  : default Vertical Sync off (vsync = 0).
+The companion headers (policy_hud.h, arm_gui.h) live in simulate/src/ and ARE
+tracked by this repo.
+"""
+import os
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+MJ = os.path.join(HERE, "..", "mujoco", "simulate")  # via the symlink
+CC = os.path.join(MJ, "simulate.cc")
+H = os.path.join(MJ, "simulate.h")
+
+# (file, marker-already-applied, find, replace)
+HUNKS = [
+    (CC, '#include "arm_gui.h"',
+     '#include "platform_ui_adapter.h"\n#include "array_safety.h"',
+     '#include "platform_ui_adapter.h"\n#include "array_safety.h"\n'
+     '#include "policy_hud.h"\n#include "arm_gui.h"'),
+
+    (CC, 'policy_hud::get_status()',
+     '''  // show ui 0
+  if (this->ui0_enable) {''',
+     '''  // sim2sim HUD (DEBUG overlay only): top-left = policy/gains (controller),
+  // bottom-left = payload (sim) + balance metrics (sidecar).
+  {
+    std::string hud_status = policy_hud::get_status();
+    if (!hud_status.empty()) {
+      mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, rect, hud_status.c_str(),
+                  nullptr, &this->platform_ui->mjr_context());
+    }
+    std::string hud_aux = policy_hud::get_aux();
+    if (!hud_aux.empty()) {
+      mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMLEFT, rect, hud_aux.c_str(),
+                  nullptr, &this->platform_ui->mjr_context());
+    }
+  }
+
+  // show ui 0
+  if (this->ui0_enable) {'''),
+
+    (CC, 'void MakeArmSection',
+     '''// make model-dependent UI sections
+void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {''',
+     '''// Feature D: live arm-pose command sliders (publishes to rt/arm_pose_cmd).
+void MakeArmSection(mj::Simulate* sim) {
+  mjuiDef defArm[] = {
+    {mjITEM_SECTION,   "Arm Cmd", mjPRESERVE, nullptr,            "AM"},
+    {mjITEM_SLIDERNUM, "sh pitch", 2, arm_gui::sliders().data()+0, "-3.0 1.5"},
+    {mjITEM_SLIDERNUM, "sh roll",  2, arm_gui::sliders().data()+1, "0 1.5"},
+    {mjITEM_SLIDERNUM, "sh yaw",   2, arm_gui::sliders().data()+2, "-1.5 1.5"},
+    {mjITEM_SLIDERNUM, "elbow",    2, arm_gui::sliders().data()+3, "-0.9 3.0"},
+    {mjITEM_SLIDERNUM, "slew s",   2, arm_gui::sliders().data()+4, "0 5"},
+    {mjITEM_END}
+  };
+  mjui_add(&sim->ui1, defArm);
+}
+
+// make model-dependent UI sections
+void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {'''),
+
+    (CC, 'MakeArmSection(sim);',
+     '  MakeEqualitySection(sim);\n}',
+     '  MakeEqualitySection(sim);\n  MakeArmSection(sim);\n}'),
+
+    (CC, 'arm_gui::owns(it->pdata)',
+     '''    // stop if UI processed event
+    if (it!=nullptr || (state->type==mjEVENT_KEY && state->key==0)) {
+      return;
+    }
+  }
+
+  // shortcut not handled by UI''',
+     '''    // Arm Cmd sliders (Feature D): publish the commanded arm pose on any edit.
+    if (it && arm_gui::owns(it->pdata)) {
+      arm_gui::publish_from_sliders();
+    }
+
+    // stop if UI processed event
+    if (it!=nullptr || (state->type==mjEVENT_KEY && state->key==0)) {
+      return;
+    }
+  }
+
+  // shortcut not handled by UI'''),
+
+    (H, 'int vsync = 0;',
+     '  int vsync = 1;',
+     '  int vsync = 0;  // off by default (uncapped frame rate; toggle in the Rendering UI)'),
+]
+
+check_only = "--check" in sys.argv
+applied = skipped = 0
+for path, marker, find, repl in HUNKS:
+    rp = os.path.realpath(path)
+    with open(rp, "r") as f:
+        text = f.read()
+    label = f"{os.path.basename(path)} :: {marker[:40]}"
+    if marker in text:
+        print(f"  [skip]  {label}")
+        skipped += 1
+        continue
+    if find not in text:
+        print(f"  [WARN]  anchor not found, manual fix needed: {label}")
+        continue
+    if check_only:
+        print(f"  [todo]  {label}")
+        continue
+    text = text.replace(find, repl, 1)
+    with open(rp, "w") as f:
+        f.write(text)
+    print(f"  [apply] {label}")
+    applied += 1
+
+print(f"\n{'check' if check_only else 'done'}: {applied} applied, {skipped} already present")
