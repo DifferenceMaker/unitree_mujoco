@@ -248,14 +248,27 @@ else
   # robot if the real BridgeModule is up (2026-07-03 incident). Pin the sim to
   # its own domain + loopback-only discovery; the CYCLONEDDS_URI lo-config
   # only covers the unitree-SDK plane, not ROS2.
-  docker run --rm $DOCKER_TTY --name "$CONTAINER" --network host --ipc=host \
-    -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
-    -e BRIDGE_DDS_DOMAIN="$SIM_DDS_DOMAIN" \
-    -e MODE="$MODE" -e ARCHB_DEBUG="$DEBUG" \
-    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}" \
-    -e ARCHB_ENGAGE_BLEND_SEC="${ARCHB_ENGAGE_BLEND_SEC:-0.3}" -e ARCHB_LOAD_STEPS="${ARCHB_LOAD_STEPS:-3}" \
-    -e ARM_IK_DEMO="$ARM_DEMO" \
-    -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
-    -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
-    --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh
+  DOCKER_CMD=(docker run --rm $DOCKER_TTY --name "$CONTAINER" --network host --ipc=host
+    -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1
+    -e BRIDGE_DDS_DOMAIN="$SIM_DDS_DOMAIN"
+    -e MODE="$MODE" -e ARCHB_DEBUG="$DEBUG"
+    -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}"
+    -e ARCHB_ENGAGE_BLEND_SEC="${ARCHB_ENGAGE_BLEND_SEC:-0.3}" -e ARCHB_LOAD_STEPS="${ARCHB_LOAD_STEPS:-3}"
+    -e ARM_IK_DEMO="$ARM_DEMO"
+    -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
+    -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python"
+    --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh)
+  if [[ -n "$DOCKER_TTY" ]]; then
+    # teleop: -it needs a real tty; piping through tee would break it.
+    "${DOCKER_CMD[@]}"
+  else
+    # Archive the stack console: the [Bridge set] latency lines and [MM obs]
+    # breakdowns previously existed ONLY on this console and were lost on
+    # scroll — the A/B evidence (obs/action/loop ages) now lands next to the
+    # metrics log.
+    echo ">>> stack console log: $LOG_DIR/stack_$STAMP.log"
+    "${DOCKER_CMD[@]}" 2>&1 | tee "$LOG_DIR/stack_$STAMP.log"
+  fi
+file is excluded (docker -it + pipe don't mix); its keys come via the
+  # FIFO, and latency A/Bs run on balance/arms anyway.
 fi
