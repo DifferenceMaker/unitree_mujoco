@@ -100,6 +100,18 @@ void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {'''),
 
   // shortcut not handled by UI'''),
 
+    (CC, 'policy_hud::request_fsm',
+     '''  // shortcut not handled by UI''',
+     '''  // Sim2sim keyboard FSM control (Feature F): digits 0-8 (not consumed by
+  // the UI) publish to rt/fsm_cmd; the controller maps them via its key map
+  // (shown in the HUD "FSM keys:" line). '9' stays the band toggle. Stock
+  // geom-group toggles on digits still fire (harmless visual side effect).
+  if (state->type==mjEVENT_KEY && state->key>='0' && state->key<='8') {
+    policy_hud::request_fsm(static_cast<char>(state->key));
+  }
+
+  // shortcut not handled by UI'''),
+
     (H, 'int vsync = 0;',
      '  int vsync = 1;',
      '  int vsync = 0;  // off by default (uncapped frame rate; toggle in the Rendering UI)'),

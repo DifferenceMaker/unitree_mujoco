@@ -90,7 +90,9 @@ inline void set_from_json(const std::string& js) {
   const std::string kp = json_field(js, "arm_kp");
   const std::string kd = json_field(js, "arm_kd");
 
+  const std::string fsm_keys = json_field(js, "fsm_keys");
   std::string out = "POLICY: " + (policy.empty() ? std::string("?") : policy);
+  if (!fsm_keys.empty()) out += "\nFSM keys: " + fsm_keys;
   if (!trans.empty()) out += "\narm_transition: " + trans + "s";
   if (!ovr.empty()) out += "   gain_override: " + ovr;
   if (!kp.empty()) out += "\narm_kp " + kp;
@@ -116,6 +118,16 @@ inline void set_metrics_from_json(const std::string& js) {
   if (!td_rate.empty()) out += "  (" + td_rate + "/s)";
   if (!ang_rms.empty()) out += "\ntorso_ang_vel rms " + ang_rms;
   set_metrics(out);
+}
+
+// Keyboard FSM control (digits pressed in the sim window -> rt/fsm_cmd).
+// Publisher is injected by main.cc (same pattern as arm_gui::publish_fn).
+inline void (*&fsm_publish_fn())(char) {
+  static void (*fn)(char) = nullptr;
+  return fn;
+}
+inline void request_fsm(char key) {
+  if (fsm_publish_fn()) fsm_publish_fn()(key);
 }
 
 }  // namespace policy_hud

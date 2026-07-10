@@ -709,6 +709,19 @@ void *UnitreeSdk2BridgeThread(void *arg)
           "rt/arm_pose_cmd");
   g_arm_cmd_pub->InitChannel();
 
+  // Keyboard FSM control: digits in the sim window -> rt/fsm_cmd -> controller
+  // FSMRequest (key map shown in the HUD's "FSM keys:" line).
+  static auto fsm_cmd_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/fsm_cmd");
+  fsm_cmd_pub->InitChannel();
+  policy_hud::fsm_publish_fn() = [](char key) {
+    std_msgs::msg::dds_::String_ m;
+    m.data(std::string(1, key));
+    fsm_cmd_pub->Write(m, 0);
+    std::cout << "[SIM] fsm key '" << key << "' -> rt/fsm_cmd" << std::endl;
+  };
+
   // Sidecar metrics HUD: subscribe to rt/balance_metrics (published by
   // balance_metrics.py) and stash it for the bottom-left overlay.
   static auto metrics_sub =
