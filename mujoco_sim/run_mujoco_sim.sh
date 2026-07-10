@@ -269,6 +269,4 @@ else
     echo ">>> stack console log: $LOG_DIR/stack_$STAMP.log"
     "${DOCKER_CMD[@]}" 2>&1 | tee "$LOG_DIR/stack_$STAMP.log"
   fi
-file is excluded (docker -it + pipe don't mix); its keys come via the
-  # FIFO, and latency A/Bs run on balance/arms anyway.
 fi
