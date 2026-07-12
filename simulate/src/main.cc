@@ -804,6 +804,12 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
       mj_resetData(m, d);
       mj_forward(m, d);
     }
+
+    // Keyboard FSM control: digits 0-6 -> rt/fsm_cmd (key map = HUD top-right
+    // list; controller side derives the same map). 7/8/9 stay elastic-band.
+    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_6) {
+      policy_hud::request_fsm(static_cast<char>('0' + (key - GLFW_KEY_0)));
+    }
     // Arm-pose presets -> rt/arm_pose_cmd (controller enters External mode and slews).
     // 14-dim: shPitch L R, shRoll L R, shYaw L R, elbPitch L R, elbRoll L R, wrPitch L R, wrYaw L R.
     // shoulder_pitch: 0=down, NEGATIVE=forward (-1.57=horizontal). elbow: 0=90deg-bent,

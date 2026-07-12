@@ -27,6 +27,10 @@ inline std::string& metrics_slot() {
   static std::string s;
   return s;
 }
+inline std::string& fsm_slot() {
+  static std::string s;
+  return s;
+}
 
 inline void set_status(const std::string& v) {
   std::lock_guard<std::mutex> lk(mutex());
@@ -39,6 +43,10 @@ inline void set_payload(const std::string& v) {
 inline void set_metrics(const std::string& v) {
   std::lock_guard<std::mutex> lk(mutex());
   metrics_slot() = v;
+}
+inline void set_fsm(const std::string& v) {
+  std::lock_guard<std::mutex> lk(mutex());
+  fsm_slot() = v;
 }
 
 // Top-left block: controller policy/gains.
@@ -55,6 +63,30 @@ inline std::string get_aux() {
     s += metrics_slot();
   }
   return s;
+}
+
+// Top-right block: vertical FSM key list ("press digit -> state").
+inline std::string get_fsm_list() {
+  std::string raw;
+  {
+    std::lock_guard<std::mutex> lk(mutex());
+    raw = fsm_slot();
+  }
+  if (raw.empty()) return "";
+  std::string out = "FSM KEYS";
+  size_t i = 0;
+  while (i < raw.size()) {
+    while (i < raw.size() && raw[i] == ' ') ++i;
+    size_t j = raw.find(' ', i);
+    if (j == std::string::npos) j = raw.size();
+    std::string entry = raw.substr(i, j - i);          // "2=Balance_x"
+    size_t eq = entry.find('=');
+    if (eq != std::string::npos) {
+      out += "\n" + entry.substr(0, eq) + "  " + entry.substr(eq + 1);
+    }
+    i = j;
+  }
+  return out;
 }
 
 // Minimal flat-JSON field extractor (no JSON dependency). Handles "key":"str",
@@ -91,8 +123,8 @@ inline void set_from_json(const std::string& js) {
   const std::string kd = json_field(js, "arm_kd");
 
   const std::string fsm_keys = json_field(js, "fsm_keys");
+  if (!fsm_keys.empty()) set_fsm(fsm_keys);
   std::string out = "POLICY: " + (policy.empty() ? std::string("?") : policy);
-  if (!fsm_keys.empty()) out += "\nFSM keys: " + fsm_keys;
   if (!trans.empty()) out += "\narm_transition: " + trans + "s";
   if (!ovr.empty()) out += "   gain_override: " + ovr;
   if (!kp.empty()) out += "\narm_kp " + kp;
