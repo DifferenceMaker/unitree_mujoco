@@ -35,6 +35,14 @@ inline struct SimulationConfig
     double band_stiffness = 350.0;
     double band_damping = 150.0;
 
+    // OU IMU observation noise (HuB-style corrupted-eval; sim2real realism).
+    // std = stationary per-axis std of the orientation-estimate error (deg),
+    // tau = OU correlation time (ms). 0 std = off (exact sim state, default).
+    // Fit both from real FixStand IMU logs. Gyro/acc are rotated into the
+    // perturbed frame so the error stays structurally coupled like a real IMU's.
+    double imu_noise_std_deg = 0.0;
+    double imu_noise_tau_ms = 40.0;
+
     void load_from_yaml(const std::string &filename)
     {
         auto cfg = YAML::LoadFile(filename);
@@ -61,6 +69,8 @@ inline struct SimulationConfig
         if (cfg["band_rest_length"]) band_rest_length = cfg["band_rest_length"].as<double>();
         if (cfg["band_stiffness"])   band_stiffness   = cfg["band_stiffness"].as<double>();
         if (cfg["band_damping"])     band_damping     = cfg["band_damping"].as<double>();
+        if (cfg["imu_noise_std_deg"]) imu_noise_std_deg = cfg["imu_noise_std_deg"].as<double>();
+        if (cfg["imu_noise_tau_ms"])  imu_noise_tau_ms  = cfg["imu_noise_tau_ms"].as<double>();
     }
 } config;
 

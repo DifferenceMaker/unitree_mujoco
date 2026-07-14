@@ -10,6 +10,8 @@
 #include <unitree/idl/hg/IMUState_.hpp>
 
 #include <iostream>
+#include <random>
+#include <cmath>
 
 #include "param.h"
 #include "physics_joystick.h"
@@ -81,6 +83,29 @@ protected:
     int imu_quat_adr_ = -1;
     int imu_gyro_adr_ = -1;
     int imu_acc_adr_ = -1;
+
+    // --- OU IMU-noise state (param::config.imu_noise_std_deg / _tau_ms) ---
+    // A body-frame orientation-estimate error evolves as an OU process in sim
+    // time; the published quat is composed with it, and gyro/acc are rotated
+    // into the same perturbed frame (structural coupling, like a real IMU).
+    double ou_rpy_[3] = {0.0, 0.0, 0.0};
+    double ou_last_t_ = -1.0;
+    double err_quat_[4] = {1.0, 0.0, 0.0, 0.0};
+    std::mt19937 ou_rng_{12345};
+    std::normal_distribution<double> ou_n_{0.0, 1.0};
+
+    void rotate_into_observed_frame(double v[3]) const
+    {
+        // rotate v (true body frame) by the inverse of err_quat_
+        const double w = err_quat_[0], x = -err_quat_[1], y = -err_quat_[2], z = -err_quat_[3];
+        const double uvx = 2 * (y * v[2] - z * v[1]);
+        const double uvy = 2 * (z * v[0] - x * v[2]);
+        const double uvz = 2 * (x * v[1] - y * v[0]);
+        const double o0 = v[0] + w * uvx + (y * uvz - z * uvy);
+        const double o1 = v[1] + w * uvy + (z * uvx - x * uvz);
+        const double o2 = v[2] + w * uvz + (x * uvy - y * uvx);
+        v[0] = o0; v[1] = o1; v[2] = o2;
+    }
     int frame_pos_adr_ = -1;
     int frame_vel_adr_ = -1;
 
@@ -195,15 +220,40 @@ public:
             }
             
             if(imu_quat_adr_ >= 0) {
-                lowstate->msg_.imu_state().quaternion()[0] = mj_data_->sensordata[imu_quat_adr_ + 0];
-                lowstate->msg_.imu_state().quaternion()[1] = mj_data_->sensordata[imu_quat_adr_ + 1];
-                lowstate->msg_.imu_state().quaternion()[2] = mj_data_->sensordata[imu_quat_adr_ + 2];
-                lowstate->msg_.imu_state().quaternion()[3] = mj_data_->sensordata[imu_quat_adr_ + 3];
+                double w = mj_data_->sensordata[imu_quat_adr_ + 0];
+                double x = mj_data_->sensordata[imu_quat_adr_ + 1];
+                double y = mj_data_->sensordata[imu_quat_adr_ + 2];
+                double z = mj_data_->sensordata[imu_quat_adr_ + 3];
 
-                double w = lowstate->msg_.imu_state().quaternion()[0];
-                double x = lowstate->msg_.imu_state().quaternion()[1];
-                double y = lowstate->msg_.imu_state().quaternion()[2];
-                double z = lowstate->msg_.imu_state().quaternion()[3];
+                if (param::config.imu_noise_std_deg > 0.0) {
+                    const double tau = param::config.imu_noise_tau_ms * 1e-3;
+                    const double std_rad = param::config.imu_noise_std_deg * M_PI / 180.0;
+                    const double dt = (ou_last_t_ < 0.0) ? 0.0 : mj_data_->time - ou_last_t_;
+                    ou_last_t_ = mj_data_->time;
+                    if (dt > 0.0 && dt < 0.1) {
+                        const double sw = std_rad * std::sqrt(2.0 / tau);
+                        for (int k = 0; k < 3; k++)
+                            ou_rpy_[k] += -(ou_rpy_[k] / tau) * dt + sw * std::sqrt(dt) * ou_n_(ou_rng_);
+                    }
+                    const double cr = cos(ou_rpy_[0] / 2), sr = sin(ou_rpy_[0] / 2);
+                    const double cp = cos(ou_rpy_[1] / 2), sp = sin(ou_rpy_[1] / 2);
+                    const double cy = cos(ou_rpy_[2] / 2), sy = sin(ou_rpy_[2] / 2);
+                    err_quat_[0] = cr * cp * cy + sr * sp * sy;
+                    err_quat_[1] = sr * cp * cy - cr * sp * sy;
+                    err_quat_[2] = cr * sp * cy + sr * cp * sy;
+                    err_quat_[3] = cr * cp * sy - sr * sp * cy;
+                    // q_obs = q_true (x) q_err : error lives in the body frame
+                    const double ow = w * err_quat_[0] - x * err_quat_[1] - y * err_quat_[2] - z * err_quat_[3];
+                    const double ox = w * err_quat_[1] + x * err_quat_[0] + y * err_quat_[3] - z * err_quat_[2];
+                    const double oy = w * err_quat_[2] - x * err_quat_[3] + y * err_quat_[0] + z * err_quat_[1];
+                    const double oz = w * err_quat_[3] + x * err_quat_[2] - y * err_quat_[1] + z * err_quat_[0];
+                    w = ow; x = ox; y = oy; z = oz;
+                }
+
+                lowstate->msg_.imu_state().quaternion()[0] = w;
+                lowstate->msg_.imu_state().quaternion()[1] = x;
+                lowstate->msg_.imu_state().quaternion()[2] = y;
+                lowstate->msg_.imu_state().quaternion()[3] = z;
 
                 lowstate->msg_.imu_state().rpy()[0] = atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y));
                 lowstate->msg_.imu_state().rpy()[1] = asin(2 * (w * y - z * x));
@@ -211,15 +261,23 @@ public:
             }
             
             if(imu_gyro_adr_ >= 0) {
-                lowstate->msg_.imu_state().gyroscope()[0] = mj_data_->sensordata[imu_gyro_adr_ + 0];
-                lowstate->msg_.imu_state().gyroscope()[1] = mj_data_->sensordata[imu_gyro_adr_ + 1];
-                lowstate->msg_.imu_state().gyroscope()[2] = mj_data_->sensordata[imu_gyro_adr_ + 2];
+                double g[3] = {mj_data_->sensordata[imu_gyro_adr_ + 0],
+                               mj_data_->sensordata[imu_gyro_adr_ + 1],
+                               mj_data_->sensordata[imu_gyro_adr_ + 2]};
+                if (param::config.imu_noise_std_deg > 0.0) rotate_into_observed_frame(g);
+                lowstate->msg_.imu_state().gyroscope()[0] = g[0];
+                lowstate->msg_.imu_state().gyroscope()[1] = g[1];
+                lowstate->msg_.imu_state().gyroscope()[2] = g[2];
             }
 
             if(imu_acc_adr_ >= 0) {
-                lowstate->msg_.imu_state().accelerometer()[0] = mj_data_->sensordata[imu_acc_adr_ + 0];
-                lowstate->msg_.imu_state().accelerometer()[1] = mj_data_->sensordata[imu_acc_adr_ + 1];
-                lowstate->msg_.imu_state().accelerometer()[2] = mj_data_->sensordata[imu_acc_adr_ + 2];
+                double a[3] = {mj_data_->sensordata[imu_acc_adr_ + 0],
+                               mj_data_->sensordata[imu_acc_adr_ + 1],
+                               mj_data_->sensordata[imu_acc_adr_ + 2]};
+                if (param::config.imu_noise_std_deg > 0.0) rotate_into_observed_frame(a);
+                lowstate->msg_.imu_state().accelerometer()[0] = a[0];
+                lowstate->msg_.imu_state().accelerometer()[1] = a[1];
+                lowstate->msg_.imu_state().accelerometer()[2] = a[2];
             }
             
             lowstate->msg_.tick() = std::round(mj_data_->time / 1e-3);
