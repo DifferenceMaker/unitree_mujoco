@@ -1,5 +1,5 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_sym.xml" # Robot scene, /unitree_robots/[robot]/scene.xml 
+robot_scene: "scene_comx06.xml" # Robot scene, /unitree_robots/[robot]/scene.xml 
 
 domain_id: 0  # Domain id
 interface: "lo" # Interface 
@@ -20,7 +20,7 @@ enable_elastic_band: 1 # Virtual spring band, used for lifting h1
 # if it sags, raise it. Keys 7/8 (or ↑/↓) in the sim window nudge the height live.
 band_anchor: [0.0, 0.0, 3.0]   # world point the band pulls the pelvis toward
 band_rest_length: 0.0          # spring rest length (m)
-imu_noise_std_deg: 0       # OU IMU noise: stationary std (deg) of the published orientation error; 0 = off
+imu_noise_std_deg: 5       # OU IMU noise: stationary std (deg) of the published orientation error; 0 = off
 imu_noise_tau_ms: 40       # OU correlation time (ms) — fit both from real FixStand IMU logs
 band_stiffness: 345.0          # N/m  (holds the robot a little higher in FixStand — less slouch)
 band_damping: 150.0            # N·s/m
