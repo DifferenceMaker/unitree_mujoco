@@ -29,8 +29,25 @@ echo "   MODE ${MODE}  (a = arms-hold fallback, b = ActionModule IK arms)"
 echo "============================================================"
 
 echo ">>> [container] installing unitree_sdk2py for BridgeModule"
+# Deliberately NOT from .venv/BridgeModule: the -e install uses the LOCAL
+# /unitree_sdk2_python mount (incl. any local sim patches), matching what the
+# sim has always run against.
 pip install -e /unitree_sdk2_python -q 2>/dev/null || pip install unitree_sdk2py -q 2>/dev/null || true
 python3 -c "import unitree_sdk2py" 2>/dev/null || { echo "FATAL: unitree_sdk2py unavailable"; exit 2; }
+
+# MovementModule/ActionModule run from their OFFICIAL venvs (.venv/<module>,
+# created from each module's requirements.txt by the repo's own setup chain).
+# No ad-hoc in-container pip for them: 2026-07-14 ActionModule grew pin+casadi
+# (Pinocchio IK backend) and the old boot-time pip list had silently drifted
+# from requirements.txt — a venv can't drift. If a venv is missing, fail fast
+# with the recovery command instead of falling back to system python (whose
+# missing-module crash 30 lines later is much harder to read).
+need_venv() {
+  [ -f "/workspace/.venv/$1/bin/activate" ] && return 0
+  echo "FATAL: /workspace/.venv/$1 missing — create it (online, no ROS nodes started):"
+  echo "       bash mujoco_sim/tools/prep_env.sh        (in unitree_mujoco)"
+  exit 3
+}
 
 PIDS=()
 cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
@@ -50,20 +67,22 @@ if [ "$MODE" = "b" ]; then
   echo "      -> ActionModule ikpy IK -> /BridgeModule/joint_set_arms)."
   echo "      Command from the host:  echo \"l 0.35 0.25 0.10\" >> mujoco_sim/logs/.arm_targets"
   echo "      (also: 'r x y z' | 'default';  ARM_IK_DEMO=1 auto-cycles targets)"
-  pip install -q ikpy 2>/dev/null || true   # pure-python IK dep (no ActionModule venv exists)
-  ( PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+  need_venv ActionModule                    # ikpy et al. live in the module venv
+  ( source /workspace/.venv/ActionModule/bin/activate
+    PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 elif [ "$MODE" = "c" ]; then
   echo ">>> [container] MODE C — REAL ActionModule (his MoveIt/ernest IK stack),"
   echo "      launched FOREGROUND below so THIS terminal's keyboard drives teleop."
-  pip install -q ikpy scipy scikit-learn 2>/dev/null || true   # ActionModule deps (no venv exists)
+  need_venv ActionModule                    # official venv (pin+casadi Pinocchio IK, ikpy, …)
   ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
 
 echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"
+need_venv MovementModule                    # onnxruntime lives here (silent system-python fallback = cryptic crash)
 ( source /workspace/.venv/MovementModule/bin/activate
   PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
   python3 /workspace/MovementModule/main/main.py ) & PIDS+=($!)
@@ -86,6 +105,7 @@ if [ "$MODE" = "c" ]; then
   # `run_mujoco_sim.sh keys` in a clean host terminal) — /dev/tty capture is a
   # lost race in a container where every helper subprocess shares one process
   # group (non-interactive shell = no job control).
+  source /workspace/.venv/ActionModule/bin/activate
   PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
   TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.teleop_keys \
   python3 /workspace/ActionModule/main/main.py

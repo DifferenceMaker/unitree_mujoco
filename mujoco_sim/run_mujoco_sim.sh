@@ -157,6 +157,23 @@ if [[ "$PROFILE" == "stop" ]]; then
 fi
 sweep_leftovers
 
+# ── preflight: module venvs must exist (official chain, see prep_env.sh) ────
+# The stack runs from .venv/<module> inside the container (requirements.txt
+# parity with the real robot — no ad-hoc boot pip since 2026-07-14). Fail here,
+# on the host, instead of 40 lines deep inside the container.
+_need=()
+case "$MODE" in
+  a)   _need=(MovementModule);;              # balance: no arm source
+  b|c) _need=(MovementModule ActionModule);;
+esac                                          # ref: dds_cpp binary, no Aspired stack
+for _m in "${_need[@]}"; do
+  if [[ ! -f "$ASPIRED/.venv/$_m/bin/activate" ]]; then
+    echo "FATAL: $ASPIRED/.venv/$_m missing."
+    echo "       Create it (no ROS nodes started):  bash $SIM/tools/prep_env.sh"
+    exit 3
+  fi
+done
+
 CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""; WATCHDOG_PID=""
 cleanup() {
   [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1   # run once: Ctrl+C fires INT then EXIT
