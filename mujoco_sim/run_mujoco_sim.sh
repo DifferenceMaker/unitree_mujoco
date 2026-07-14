@@ -48,7 +48,7 @@ RLLAB="$REPOS/unitree_rl_lab"
 SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
-XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches config.yaml scene_sym.xml
+XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"   # comx06 body — matches config.yaml scene_comx06.xml
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 

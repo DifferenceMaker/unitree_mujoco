@@ -1,5 +1,5 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_sym.xml" # SYM body (torso CoM y=0) — the p10+ training standard; D retired
+robot_scene: "scene_comx06.xml" # comx06 body (whole-robot CoM +5.6mm fwd of pelvis) — standard since the 2026-07-14 p12f bisection; SYM retired
 
 domain_id: 0  # Domain id
 interface: "lo" # Interface
