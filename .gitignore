@@ -4,3 +4,6 @@
 **/log/
 **/install/
 simulate/mujoco
+# MuJoCo GUI debug dumps (F-key state/log dumps)
+simulate/MJDATA.TXT
+simulate/MUJOCO_LOG.TXT
