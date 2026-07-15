@@ -807,7 +807,11 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
 
     // Keyboard FSM control: digits 0-6 -> rt/fsm_cmd (key map = HUD top-right
     // list; controller side derives the same map). 7/8/9 stay elastic-band.
-    if (key >= GLFW_KEY_0 && key <= GLFW_KEY_6) {
+    // NUMPAD 0-9: full FSM range without colliding with the harness keys
+    // (main-row 7/8/9 = band up/lower/toggle). Main-row 0-6 kept as aliases.
+    if (key >= GLFW_KEY_KP_0 && key <= GLFW_KEY_KP_9) {
+      policy_hud::request_fsm(static_cast<char>('0' + (key - GLFW_KEY_KP_0)));
+    } else if (key >= GLFW_KEY_0 && key <= GLFW_KEY_6) {
       policy_hud::request_fsm(static_cast<char>('0' + (key - GLFW_KEY_0)));
     }
     // Arm-pose presets -> rt/arm_pose_cmd (controller enters External mode and slews).
