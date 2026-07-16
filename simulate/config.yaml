@@ -1,9 +1,12 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_comx06_grip.xml" # Robot scene, /unitree_robots/[robot]/scene.xml 
+robot_scene: "scene_comx06_grip.xml" # comx06 body (CoM +5.6mm fwd of pelvis, standard since the 2026-07-14 p12f bisection; SYM retired). _grip = cement floor (friction 2.5) for anti-squeeze eval; plain scene_comx06.xml = creep floor.
 
 domain_id: 0  # Domain id
-interface: "lo" # Interface 
+interface: "lo" # Interface
 
+# Architecture B is joystickless BY DESIGN (everything runs from the PC; the
+# deployed product has no gamepad). Keep 0 — with 1 and no gamepad the sim
+# exits at startup ("Joystick open failed."), see the 2026-07-03 incident.
 use_joystick: 0 # Simulate Unitree WirelessController using a gamepad
 joystick_type: "xbox" # support "xbox" and "switch" gamepad layout
 joystick_device: "/dev/input/js0" # Device path
@@ -11,13 +14,12 @@ joystick_bits: 16 # Some game controllers may only have 8-bit accuracy
 
 print_scene_information: 1 # Print link, joint and sensors information of robot
 
-enable_elastic_band: 1 # Virtual spring band, used for lifting h1
-
-# Suspension harness (gantry) — overhead spring on the pelvis. Tuned so its
-# equilibrium sits near the crouch height (~0.86 m) for the ~76 kg H1-2: supports
+# Virtual elastic band (suspension harness). Enable to hold the robot up during
+# bring-up; tune stiffness so the spring equilibrium sits near the crouch with
 # the robot with feet on the floor during bring-up, then the controller
-# auto-releases it when the policy engages. If the feet lift, lower band_stiffness;
-# if it sags, raise it. Keys 7/8 (or ↑/↓) in the sim window nudge the height live.
+# takes over. If the robot hangs in the air, lower band_stiffness a little;
+# if it sags, raise it. Keys 7/8 (or up/down) in the sim window nudge the height live.
+enable_elastic_band: 1 # Virtual spring band, used for lifting h1
 band_anchor: [0.0, 0.0, 3.0]   # world point the band pulls the pelvis toward
 band_rest_length: 0.0          # spring rest length (m)
 imu_noise_std_deg: 0       # OU IMU noise: stationary std (deg) of the published orientation error; 0 = off
