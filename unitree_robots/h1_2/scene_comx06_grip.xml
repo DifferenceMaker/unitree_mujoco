@@ -1,4 +1,9 @@
 <mujoco model="Unitree H1-2 SYM">
+  <!-- High-friction contacts need the elliptic cone: the default pyramidal
+       solver goes ill-conditioned at mu=2.5 — soft normals (feet sink ~2cm)
+       and erratic tangentials ("feels slipperier"). Measured 2026-07-16:
+       pyramidal 21.4mm mean penetration -> elliptic/impratio10 = 1.7mm. -->
+  <option cone="elliptic" impratio="10"/>
   <include file="h1_2_comx06.xml" />
   <statistic center="1 0.7 1.5" extent="0.8" />
   <visual>
