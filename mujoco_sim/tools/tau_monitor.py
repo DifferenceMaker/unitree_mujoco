@@ -56,8 +56,9 @@ def main():
         if msg is None:
             continue
         ms = msg.motor_state
-        tau = [abs(ms[i].tau_est) for i in range(args.n_motors)]
-        temp = [ms[i].temperature for i in range(args.n_motors)]
+        tau = [abs(float(ms[i].tau_est)) for i in range(args.n_motors)]
+        # temperature is a 2-element array per motor (two sensors) — take the hotter.
+        temp = [max(ms[i].temperature) for i in range(args.n_motors)]
 
         imax = max(range(args.n_motors), key=lambda i: tau[i])
         tmax = max(range(args.n_motors), key=lambda i: temp[i])
