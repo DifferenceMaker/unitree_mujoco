@@ -1,5 +1,5 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_comx06_grip.xml" # comx06 body (CoM +5.6mm fwd of pelvis, standard since the 2026-07-14 p12f bisection; SYM retired). _grip = cement floor (friction 2.5) for anti-squeeze eval; plain scene_comx06.xml = creep floor.
+robot_scene: "scene_sym.xml" # SYM body (torso 0.03 = whole-robot CoM +22.4mm) — matches the shod robot & the p12h policies. scene_sym_grip.xml = cement floor (anti-squeeze eval).
 
 domain_id: 0  # Domain id
 interface: "lo" # Interface
