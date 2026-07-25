@@ -1,5 +1,5 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_sym_soft08.xml" # SYM body + solref 0.08 cushion = HARDWARE-MATCHED shod eval (2026-07-21 sweep: 0.08 reproduces the shod step-loop). scene_sym.xml=rigid, _grip=cement, _soft08=shod cushion.
+robot_scene: "scene_sym_soft07.xml" # SYM body + solref 0.08 cushion = HARDWARE-MATCHED shod eval (2026-07-21 sweep: 0.08 reproduces the shod step-loop). scene_sym.xml=rigid, _grip=cement, _soft08=shod cushion.
 
 domain_id: 0  # Domain id
 interface: "lo" # Interface
