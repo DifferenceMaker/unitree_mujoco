@@ -72,13 +72,15 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; METRICS_MODE="idle_quiet"; DEBUG=1
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
   --policy)       POLICY="$2"; shift 2;;
+  --no-arm-ready) ARM_READY=0; shift;;
+  --arm-ready-sec) ARM_READY_SEC="$2"; shift 2;;
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
@@ -294,6 +296,18 @@ if [[ "$METRICS" = "1" ]]; then
 fi
 
 # ── 3. controller / ROS2 stack ──────────────────────────────────────────────
+# ── arm-ready: raise the arms above the desk shortly after engage ───────────
+# The commander's joint-space default pose hangs the hands BELOW the 1m desk
+# top, and ikpy has no collision awareness (colleague-confirmed limitation) —
+# so reaching from under the desk drags arms through it. Seed raised Cartesian
+# targets (hands ~ desk + 10 cm) once the stack is up; disable: --no-arm-ready.
+if [[ "$ARM_READY" == "1" && "$MODE" == "b" ]]; then
+  ( sleep "$ARM_READY_SEC"
+    echo "l 0.30 0.25 0.10" >> "$SIM/logs/.arm_targets"
+    echo "r 0.30 -0.25 0.10" >> "$SIM/logs/.arm_targets"
+    echo ">>> [arm-ready] raised start pose commanded (hands ~desk+10cm)" ) &
+fi
+
 if [[ "$MODE" = "ref" ]]; then
   [[ -x "$CTRL_BIN" ]] || { echo "ERROR: h1_2_ctrl not built: $CTRL_BIN"; exit 1; }
   echo ">>> [3] REFERENCE path: $CTRL_BIN --network lo"
