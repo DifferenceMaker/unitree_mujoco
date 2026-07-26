@@ -213,6 +213,12 @@ public:
 
         // lowstate
         if(lowstate->trylock()) {
+            // stamp tick with sim time (ms) — the real robot's tick advances,
+            // and BridgeModule derives its obs timestamp from it. Left at 0 the
+            // stamp freezes at startup and every displayed obs_age grows
+            // monotonically with wall time (the 'obscene obs_age' artifact,
+            // 2026-07-26). uint32 ms wraps at ~49.7 days of sim time — fine.
+            lowstate->msg_.tick() = static_cast<uint32_t>(mj_data_->time * 1000.0);
             for(int i(0); i<num_motor_; i++) {
                 lowstate->msg_.motor_state()[i].q() = mj_data_->sensordata[i];
                 lowstate->msg_.motor_state()[i].dq() = mj_data_->sensordata[i + num_motor_];

@@ -67,7 +67,7 @@ RLLAB="$REPOS/unitree_rl_lab"
 SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
-XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"   # comx06 body — matches config.yaml scene_comx06.xml
+XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches scene_sym_soft07_desk + the desk-line policies
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
@@ -246,6 +246,7 @@ trap cleanup EXIT INT TERM
 
 # ── 1. MuJoCo (host) ────────────────────────────────────────────────────────
 SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
+ulimit -c unlimited 2>/dev/null   # capture a core if the sim segfaults (lands in simulate/)
 echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain $SIM_DDS_DOMAIN..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
 if [[ "$PROFILE" == "teleop" ]]; then
