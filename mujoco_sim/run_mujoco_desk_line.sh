@@ -116,6 +116,39 @@ if [[ "$PROFILE" == "teleop" && ! -t 0 ]]; then
   echo "ERROR: the teleop profile needs an interactive terminal (keyboard input)."; exit 1
 fi
 
+# ── desk-line policy staging (overlay-mounted over MovementModule/policy) ────
+MS=""
+if [[ "$PROFILE" != "stop" ]]; then
+MILESTONES="$RLLAB/logs/milestones"
+resolve_ms() {  # exact dir > exact job-name boundary (*_<name>_<date>) > newest substring
+  [[ -d "$MILESTONES/$1" ]] && { echo "$1"; return; }
+  local m
+  m=$(ls -dt "$MILESTONES"/*"_${1}_"[0-9]* 2>/dev/null | head -1)
+  [[ -z "$m" ]] && m=$(ls -dt "$MILESTONES"/"${1}_"[0-9]* 2>/dev/null | head -1)
+  [[ -z "$m" ]] && m=$(ls -dt "$MILESTONES"/*"$1"* 2>/dev/null | head -1)
+  [[ -n "$m" ]] && basename "$m"
+}
+MS="$(resolve_ms "$POLICY")"
+[[ -n "$MS" && -d "$MILESTONES/$MS" ]] || { echo "FATAL: no milestone matches --policy '$POLICY' under $MILESTONES"; exit 2; }
+for f in exported/policy.onnx params/deploy.yaml; do
+  [[ -f "$MILESTONES/$MS/$f" ]] || { echo "FATAL: $MS missing $f (harvest/export incomplete)"; exit 2; }
+done
+STAGE="$SIM/logs/.desk_policy_stage"
+rm -rf "$STAGE"; mkdir -p "$STAGE/$MS"
+cp "$MILESTONES/$MS/exported/policy.onnx" "$STAGE/$MS/policy.onnx"
+cp "$MILESTONES/$MS/params/deploy.yaml"   "$STAGE/$MS/deploy.yaml"
+cp "$MILESTONES/$MS/overrides.json"       "$STAGE/$MS/" 2>/dev/null || true
+cp "$MILESTONES/$MS/MILESTONE.md"         "$STAGE/$MS/" 2>/dev/null || true
+printf '%s\n' "$MS" > "$STAGE/CURRENT"
+echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
+
+# desk scene: the desk + click-to-reach markers must be in the sim
+if ! grep -q 'robot_scene: "scene_sym_soft07_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+  sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+  echo ">>> [scene] robot_scene -> scene_sym_soft07_desk.xml (desk + target balls)"
+fi
+fi
+
 # ── architecture banner — make it obvious which path is running ──────────────
 echo "============================================================"
 case "$PROFILE" in
@@ -177,36 +210,6 @@ if [[ "$PROFILE" == "stop" ]]; then
   exit 0
 fi
 sweep_leftovers
-
-# ── desk-line policy staging (overlay-mounted over MovementModule/policy) ────
-MILESTONES="$RLLAB/logs/milestones"
-resolve_ms() {  # exact dir > exact job-name boundary (*_<name>_<date>) > newest substring
-  [[ -d "$MILESTONES/$1" ]] && { echo "$1"; return; }
-  local m
-  m=$(ls -dt "$MILESTONES"/*"_${1}_"[0-9]* 2>/dev/null | head -1)
-  [[ -z "$m" ]] && m=$(ls -dt "$MILESTONES"/"${1}_"[0-9]* 2>/dev/null | head -1)
-  [[ -z "$m" ]] && m=$(ls -dt "$MILESTONES"/*"$1"* 2>/dev/null | head -1)
-  [[ -n "$m" ]] && basename "$m"
-}
-MS="$(resolve_ms "$POLICY")"
-[[ -n "$MS" && -d "$MILESTONES/$MS" ]] || { echo "FATAL: no milestone matches --policy '$POLICY' under $MILESTONES"; exit 2; }
-for f in exported/policy.onnx params/deploy.yaml; do
-  [[ -f "$MILESTONES/$MS/$f" ]] || { echo "FATAL: $MS missing $f (harvest/export incomplete)"; exit 2; }
-done
-STAGE="$SIM/logs/.desk_policy_stage"
-rm -rf "$STAGE"; mkdir -p "$STAGE/$MS"
-cp "$MILESTONES/$MS/exported/policy.onnx" "$STAGE/$MS/policy.onnx"
-cp "$MILESTONES/$MS/params/deploy.yaml"   "$STAGE/$MS/deploy.yaml"
-cp "$MILESTONES/$MS/overrides.json"       "$STAGE/$MS/" 2>/dev/null || true
-cp "$MILESTONES/$MS/MILESTONE.md"         "$STAGE/$MS/" 2>/dev/null || true
-printf '%s\n' "$MS" > "$STAGE/CURRENT"
-echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
-
-# desk scene: the desk + click-to-reach markers must be in the sim
-if ! grep -q 'robot_scene: "scene_sym_soft07_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
-  sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
-  echo ">>> [scene] robot_scene -> scene_sym_soft07_desk.xml (desk + target balls)"
-fi
 
 # ── preflight: module venvs must exist (official chain, see prep_env.sh) ────
 # The stack runs from .venv/<module> inside the container (requirements.txt
