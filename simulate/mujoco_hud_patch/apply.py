@@ -29,6 +29,56 @@ H = os.path.join(MJ, "simulate.h")
 
 # (file, marker-already-applied, find, replace)
 HUNKS = [
+    # ---- desk click-to-reach (click_target.h) ----
+    (CC, '#include "click_target.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"\n#include "click_target.h"'),
+
+    (CC, 'click_target::set_pending',
+     """  // 3D press
+  if (state->type==mjEVENT_PRESS && state->mouserect==3) {
+    // set perturbation
+    int newperturb = 0;""",
+     """  // 3D press
+  if (state->type==mjEVENT_PRESS && state->mouserect==3) {
+    // ALT+click = desk reach target (click_target.h). platform_ui_adapter
+    // SWAPS left<->right while Alt is held - invert to recover the physical
+    // button: reported RIGHT = physical LEFT (-> left arm), etc.
+    if (state->alt) {
+      int phys = state->button==mjBUTTON_RIGHT ? 0
+               : state->button==mjBUTTON_LEFT  ? 1 : 2;
+      click_target::set_pending(phys, state->x, state->y, state->rect[3]);
+      return;
+    }
+    // set perturbation
+    int newperturb = 0;"""),
+
+    (CC, 'click_target::take_pending',
+     """  if (pending_.select) {
+    // determine selection mode
+    int selmode;""",
+     """  // ALT-click desk-target resolution (same rect math as the stock select)
+  if (click_target::has_pending()) {
+    click_target::Click ck = click_target::take_pending();
+    if (m_ && d_ && ck.r.width > 0 && ck.r.height > 0) {
+      mjtNum selpnt[3];
+      int selgeom = -1, selflex = -1, selskin = -1;
+      int selbody = mjv_select(m_, d_, &this->opt,
+                               static_cast<mjtNum>(ck.r.width) / ck.r.height,
+                               (ck.x - ck.r.left) / ck.r.width,
+                               (ck.y - ck.r.bottom) / ck.r.height,
+                               &this->scn, selpnt, &selgeom, &selflex, &selskin);
+      if (selbody >= 0) {
+        click_target::resolve(m_, d_, selpnt, selgeom, ck.button);
+      }
+    }
+  }
+
+  if (pending_.select) {
+    // determine selection mode
+    int selmode;"""),
+
+
     (CC, '#include "arm_gui.h"',
      '#include "platform_ui_adapter.h"\n#include "array_safety.h"',
      '#include "platform_ui_adapter.h"\n#include "array_safety.h"\n'

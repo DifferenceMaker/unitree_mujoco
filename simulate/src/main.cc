@@ -30,6 +30,8 @@
 #include <sstream>
 #include <string>
 #include <sys/stat.h>
+
+#include "click_target.h"
 #include <thread>
 
 #include <mujoco/mujoco.h>
@@ -507,6 +509,10 @@ namespace
                 scripted_push.pending = false;
               }
             }
+
+            // desk reach-target balls: reflect the live arm-targets file
+            // (alt-click or hand-typed lines) at the current torso pose.
+            click_target::update_balls(m, d);
 
             // record cpu time at start of iteration
             const auto startCPU = mj::Simulate::Clock::now();
