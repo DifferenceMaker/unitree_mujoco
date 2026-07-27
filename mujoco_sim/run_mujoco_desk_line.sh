@@ -145,7 +145,9 @@ printf '%s\n' "$MS" > "$STAGE/CURRENT"
 echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
 
 # desk scene: the desk + click-to-reach markers must be in the sim
-if ! grep -q 'robot_scene: "scene_sym_soft07_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+# any *_desk scene is respected (the softness ladder: soft07/soft05/soft04/rigid);
+# only a NON-desk scene gets replaced by the default desk variant.
+if ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
   sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
   echo ">>> [scene] robot_scene -> scene_sym_soft07_desk.xml (desk + target balls)"
 fi
