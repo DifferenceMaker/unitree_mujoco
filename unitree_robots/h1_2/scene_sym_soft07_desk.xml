@@ -35,5 +35,8 @@
     <body name="target_ball_right" mocap="true" pos="0 0 -1">
       <geom name="target_ball_right_geom" type="sphere" size="0.035" rgba="0.1 0.3 1 0.85" contype="0" conaffinity="0" group="2" />
     </body>
+    <body name="anchor_ball" mocap="true" pos="0 0 -1">
+      <geom name="anchor_ball_geom" type="sphere" size="0.04" rgba="1 0.85 0.1 0.9" contype="0" conaffinity="0" group="2" />
+    </body>
   </worldbody>
 </mujoco>

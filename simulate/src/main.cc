@@ -32,6 +32,7 @@
 #include <sys/stat.h>
 
 #include "click_target.h"
+#include "anchor_pub.h"
 #include <thread>
 
 #include <mujoco/mujoco.h>
@@ -98,6 +99,8 @@ inline ElasticBand elastic_band;
 // Declared here so the bridge thread (which creates it) and user_key_cb (which
 // uses it) both see it. Initialized in UnitreeSdk2BridgeThread after DDS init.
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_arm_cmd_pub;
+// Anchor point publisher (rt/anchor_point): base-frame anchor for 90-obs policies.
+static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_anchor_pub;
 
 // Metrics zero command publisher (sim -> sidecar on rt/metrics_cmd). Lets a sim
 // keypress reset the sidecar's lean/touchdown counters from the GUI.
@@ -513,6 +516,21 @@ namespace
             // desk reach-target balls: reflect the live arm-targets file
             // (alt-click or hand-typed lines) at the current torso pose.
             click_target::update_balls(m, d);
+            // anchor: yellow ball + base-frame point on rt/anchor_point (~50 Hz)
+            {
+              double rel_b[3];
+              if (anchor_pub::step(m, d, rel_b)) {
+                static int anchor_cnt = 0;
+                if (++anchor_cnt >= 10 && g_anchor_pub) {
+                  anchor_cnt = 0;
+                  char js[96];
+                  std::snprintf(js, sizeof js, "{\"p\":[%.4f,%.4f,%.4f]}", rel_b[0], rel_b[1], rel_b[2]);
+                  std_msgs::msg::dds_::String_ amsg;
+                  amsg.data(js);
+                  g_anchor_pub->Write(amsg, 0);
+                }
+              }
+            }
 
             // record cpu time at start of iteration
             const auto startCPU = mj::Simulate::Clock::now();
@@ -714,6 +732,10 @@ void *UnitreeSdk2BridgeThread(void *arg)
       std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
           "rt/arm_pose_cmd");
   g_arm_cmd_pub->InitChannel();
+  g_anchor_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/anchor_point");
+  g_anchor_pub->InitChannel();
 
   // Keyboard FSM control: digits in the sim window -> rt/fsm_cmd -> controller
   // FSMRequest (key map shown in the HUD's "FSM keys:" line).
@@ -946,6 +968,7 @@ int main(int argc, char **argv)
         while (stat(flag.c_str(), &sb) != 0)
           std::this_thread::sleep_for(std::chrono::milliseconds(100));
         elastic_band.enable_ = false;
+        anchor_pub::engage_request() = true;   // plant the training anchor at the engage pose
         std::printf("[BAND] policy-engaged flag seen → elastic band released\n");
         std::fflush(stdout);
       });
