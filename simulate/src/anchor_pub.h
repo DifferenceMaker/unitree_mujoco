@@ -15,6 +15,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <random>
 
 #include <mujoco/mujoco.h>
 
@@ -47,6 +48,42 @@ inline double height_w() {
   return v;
 }
 
+// Manual anchor move (CTRL+ALT+click, see click_target.h): world x/y from the
+// clicked point, height kept at the configured height_w.
+inline void set_anchor_xy(double x, double y) {
+  anchor_w()[0] = x;
+  anchor_w()[1] = y;
+  anchor_w()[2] = height_w();
+  active() = true;
+  std::printf("[anchor] moved to (%.2f, %.2f, %.2f) by click\n", x, y, height_w());
+  std::fflush(stdout);
+}
+
+// Vision-jitter wander (ANCHOR_WANDER=1): every 1-2 s move the anchor by a
+// half-normal step (sigma 4 cm, clamp 10 cm) in a random direction — models
+// the real perception pipeline re-publishing the desk point every 1-2 s with
+// small re-estimates. Uses sim time (d->time), so pausing pauses it.
+inline void maybe_wander(const mjData* d) {
+  static bool enabled = [] {
+    const char* e = std::getenv("ANCHOR_WANDER");
+    return e && e[0] == '1';
+  }();
+  if (!enabled || !active()) return;
+  static std::mt19937 rng(12345);
+  static double next_t = 0;
+  if (d->time < next_t) return;
+  std::uniform_real_distribution<double> interval(1.0, 2.0), dir(0, 2 * M_PI);
+  std::normal_distribution<double> stepn(0.0, 0.04);
+  next_t = d->time + interval(rng);
+  double r = std::fabs(stepn(rng));
+  if (r > 0.10) r = 0.10;
+  double th = dir(rng);
+  anchor_w()[0] += r * std::cos(th);
+  anchor_w()[1] += r * std::sin(th);
+  if (r > 0.005)
+    std::printf("[anchor] wander %+.0f cm -> (%.2f, %.2f)\n", r * 100, anchor_w()[0], anchor_w()[1]);
+}
+
 // Call once per physics iteration under the sim mutex. Returns true and fills
 // rel_b (anchor in the BASE frame) while the anchor is active.
 inline bool step(const mjModel* m, mjData* d, double rel_b[3]) {
@@ -68,6 +105,7 @@ inline bool step(const mjModel* m, mjData* d, double rel_b[3]) {
     std::fflush(stdout);
   }
   if (!active()) return false;
+  maybe_wander(d);
   if (mocap_id >= 0) {
     d->mocap_pos[3 * mocap_id + 0] = anchor_w()[0];
     d->mocap_pos[3 * mocap_id + 1] = anchor_w()[1];

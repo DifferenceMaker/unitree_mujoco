@@ -35,6 +35,8 @@
 
 #include <mujoco/mujoco.h>
 
+#include "anchor_pub.h"
+
 namespace click_target {
 
 inline std::mutex& mu() { static std::mutex m; return m; }
@@ -89,6 +91,10 @@ inline void resolve(const mjModel* m, const mjData* d, const mjtNum selpnt[3],
   if (selgeom >= 0) {
     const char* gn = mj_id2name(m, mjOBJ_GEOM, selgeom);
     if (gn && std::strncmp(gn, "target_ball_", 12) == 0) return;
+  }
+  if (phys_button == 3) {          // CTRL+ALT+click: move the anchor here
+    anchor_pub::set_anchor_xy(selpnt[0], selpnt[1]);
+    return;
   }
   std::ostringstream line;
   if (phys_button == 2) {

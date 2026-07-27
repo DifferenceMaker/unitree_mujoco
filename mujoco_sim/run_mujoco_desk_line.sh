@@ -72,7 +72,7 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; METRICS_MODE="idle_quiet"; DEBUG=1
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
@@ -81,6 +81,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --policy)       POLICY="$2"; shift 2;;
   --no-arm-ready) ARM_READY=0; shift;;
   --arm-ready-sec) ARM_READY_SEC="$2"; shift 2;;
+  --anchor-wander) ANCHOR_WANDER=1; shift;;
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
@@ -261,9 +262,9 @@ fi
 if [[ "$PROFILE" == "teleop" ]]; then
   # teleop owns the terminal keys — detach the sim's stdin so its `push`
   # reader can't steal keystrokes from the teleop dispatcher.
-  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
+  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
 else
-  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+  ( cd "$MUJOCO/simulate" && ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
 fi
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"

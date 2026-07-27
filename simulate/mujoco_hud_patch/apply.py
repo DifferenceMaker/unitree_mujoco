@@ -45,7 +45,8 @@ HUNKS = [
     // SWAPS left<->right while Alt is held - invert to recover the physical
     // button: reported RIGHT = physical LEFT (-> left arm), etc.
     if (state->alt) {
-      int phys = state->button==mjBUTTON_RIGHT ? 0
+      int phys = state->control ? 3                       // ctrl+alt = move anchor
+               : state->button==mjBUTTON_RIGHT ? 0
                : state->button==mjBUTTON_LEFT  ? 1 : 2;
       click_target::set_pending(phys, state->x, state->y, state->rect[3]);
       return;
