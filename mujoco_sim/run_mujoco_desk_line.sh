@@ -156,8 +156,8 @@ echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/pol
 if [[ "$BODY" == "stock" ]]; then
   XML="$MUJOCO/unitree_robots/h1_2/h1_2_stock.xml"
   if ! grep -qE 'robot_scene: "scene_stock_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
-    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
-    echo ">>> [scene] robot_scene -> scene_stock_soft07_desk.xml (STOCK body: desk + target balls)"
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_cush75_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
   fi
 elif ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
   sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
