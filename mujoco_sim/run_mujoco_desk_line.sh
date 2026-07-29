@@ -68,17 +68,21 @@ SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
 XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches scene_sym_soft07_desk + the desk-line policies
+                                                 # (--stock rebinds XML + scene to the stock-CoM body below)
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
   --policy)       POLICY="$2"; shift 2;;
+  --stock)        BODY="stock"; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
+                                          # for policies trained WITHOUT the SYM tree, e.g. the
+                                          # entire dp2b batch (see session 2026-07-28 two-urdf trap)
   --no-arm-ready) ARM_READY=0; shift;;
   --arm-ready-sec) ARM_READY_SEC="$2"; shift 2;;
   --anchor-wander) ANCHOR_WANDER=1; shift;;
@@ -146,9 +150,16 @@ printf '%s\n' "$MS" > "$STAGE/CURRENT"
 echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
 
 # desk scene: the desk + click-to-reach markers must be in the sim
-# any *_desk scene is respected (the softness ladder: soft07/soft05/soft04/rigid);
-# only a NON-desk scene gets replaced by the default desk variant.
-if ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+# any *_desk scene OF THE REQUESTED BODY is respected (the softness ladder:
+# soft07/soft05/soft04/rigid); a NON-desk or wrong-body scene gets replaced by
+# that body's default desk variant. --stock selects the stock-CoM body scenes.
+if [[ "$BODY" == "stock" ]]; then
+  XML="$MUJOCO/unitree_robots/h1_2/h1_2_stock.xml"
+  if ! grep -qE 'robot_scene: "scene_stock_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_stock_soft07_desk.xml (STOCK body: desk + target balls)"
+  fi
+elif ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
   sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
   echo ">>> [scene] robot_scene -> scene_sym_soft07_desk.xml (desk + target balls)"
 fi
