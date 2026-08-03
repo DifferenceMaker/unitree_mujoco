@@ -31,6 +31,7 @@ Usage (monitor on the work PC, robot's DDS net; controller runs on pc4):
     # sim2sim: --iface lo ; print twice a second: --hz 2
 """
 import argparse
+from collections import Counter
 import threading
 import time
 
@@ -76,7 +77,15 @@ def main():
                 float(ms[ANK_ROLL_L].tau_est), float(ms[ANK_ROLL_R].tau_est),
                 abs(float(ms[KNEE_L].tau_est)), abs(float(ms[KNEE_R].tau_est)),
                 abs(float(ms[HIP_ROLL_L].tau_est)), abs(float(ms[HIP_ROLL_R].tau_est)),
-                max(max(ms[i].temperature) for i in range(args.n_motors)),
+                # temperature[0] = case/NTC (slow — what a hand feels);
+                # temperature[-1] = driver's WINDING/junction estimate (fast,
+                # load-following — the channel the thermal guard cares about).
+                # Track them separately + WHICH motor owns the winding max:
+                # a single anonymous max hops between motors and reads as noise
+                # (the "105C but the robot is cold" confusion, 2026-08-03).
+                max(float(ms[i].temperature[0]) for i in range(args.n_motors)),
+                max(float(ms[i].temperature[-1]) for i in range(args.n_motors)),
+                float(max(range(args.n_motors), key=lambda i: ms[i].temperature[-1])),
             )
         except Exception:
             return
@@ -88,7 +97,7 @@ def main():
     sub.Init(on_msg, 10)
     print(f"[tau] subscribed rt/lowstate on {args.iface} (domain {args.domain}); mass={args.mass}kg; "
           f"averaging every {1.0/args.hz:.2f}s. MEASURE ON A SETTLED POLICY. waiting for data...", flush=True)
-    print("  t | N    |  leanFwd leanLat |  ankP_L  ankP_R ->CoMx |  ankR_L  ankR_R ->CoMy* | knee LR | hipR LR | maxT",
+    print("  t | N    |  leanFwd leanLat |  ankP_L  ankP_R ->CoMx |  ankR_L  ankR_R ->CoMy* | knee LR | hipR LR | case/wind@motor",
           flush=True)
 
     period = 1.0 / args.hz
@@ -107,14 +116,15 @@ def main():
             t0 = time.monotonic()
         t = time.monotonic() - t0
         m = [sum(col) / n for col in zip(*rows)]
-        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, mt = m
+        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, tcase, twind, _ = m
+        hot = Counter(int(r[-1]) for r in rows).most_common(1)[0][0]
         comx = (pL + pR) / mg * 1000.0
         comy = (rL + rR) / mg * 1000.0
         peak_hr = max(peak_hr, hL, hR)
         flag = "  <== HIP-ROLL SQUEEZE" if max(hL, hR) > args.threshold else ""
         print(f"{t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
               f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
-              f"| {mt:.0f}C{flag}", flush=True)
+              f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}", flush=True)
 
 
 if __name__ == "__main__":
