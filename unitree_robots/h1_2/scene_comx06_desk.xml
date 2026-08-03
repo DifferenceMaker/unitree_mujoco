@@ -1,0 +1,45 @@
+<mujoco model="Unitree H1-2 comx06 desk">
+  <!-- comx06 body + RIGID floor (Isaac rigid-plane parity — the dp3/new-soles
+       training setup) + the desk & marker balls from scene_sym_rigid_desk.xml.
+       For desk-line policies of the comx06 era (dp3_anchor and onward). -->
+  <include file="h1_2_comx06.xml" />
+  <statistic center="1 0.7 1.5" extent="0.8" />
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.1 0.1 0.1" specular="0.9 0.9 0.9"/>
+    <rgba haze="0.15 0.25 0.35 1" />
+    <global azimuth="-140" elevation="-30" />
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="flat" rgb1="0 0 0" rgb2="0 0 0" width="512" height="3072" />
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4"
+      rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
+      reflectance="0.2" />
+  </asset>
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" />
+    <geom name="floor" size="0 0 0.05" type="plane" material="groundplane" solref="0.02 1" />
+
+    <!-- ===== DESK (real-life match): top face at z=1.00, robot-facing edge
+         ~0.35m in front of spawn (pelvis at x=0). Dimensions are PLACEHOLDERS
+         until measured: top 0.80(w,x) x 1.20(d,y) x 0.04. Full collision. -->
+    <body name="desk" pos="0.75 0 0">
+      <geom name="desk_top" type="box" size="0.40 0.60 0.02" pos="0 0 0.98" rgba="0.55 0.39 0.25 1" friction="1 0.05 0.05" />
+      <geom name="desk_leg_fl" type="box" size="0.025 0.025 0.48" pos="0.36 0.56 0.48" rgba="0.35 0.25 0.16 1" />
+      <geom name="desk_leg_fr" type="box" size="0.025 0.025 0.48" pos="0.36 -0.56 0.48" rgba="0.35 0.25 0.16 1" />
+      <geom name="desk_leg_bl" type="box" size="0.025 0.025 0.48" pos="-0.36 0.56 0.48" rgba="0.35 0.25 0.16 1" />
+      <geom name="desk_leg_br" type="box" size="0.025 0.025 0.48" pos="-0.36 -0.56 0.48" rgba="0.35 0.25 0.16 1" />
+    </body>
+    <!-- arm-target marker balls (driven from main.cc via mocap_pos; render-only,
+         no collision, invisible to clicks). red = left hand, blue = right. -->
+    <body name="target_ball_left" mocap="true" pos="0 0 -1">
+      <geom name="target_ball_left_geom" type="sphere" size="0.035" rgba="1 0.1 0.1 0.85" contype="0" conaffinity="0" group="2" />
+    </body>
+    <body name="target_ball_right" mocap="true" pos="0 0 -1">
+      <geom name="target_ball_right_geom" type="sphere" size="0.035" rgba="0.1 0.3 1 0.85" contype="0" conaffinity="0" group="2" />
+    </body>
+    <body name="anchor_ball" mocap="true" pos="0 0 -1">
+      <geom name="anchor_ball_geom" type="sphere" size="0.04" rgba="1 0.85 0.1 0.9" contype="0" conaffinity="0" group="2" />
+    </body>
+  </worldbody>
+</mujoco>

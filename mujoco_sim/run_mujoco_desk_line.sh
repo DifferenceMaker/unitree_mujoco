@@ -12,6 +12,13 @@
 #   bash run_mujoco_desk_line.sh --policy desk_fz6          # arms profile default
 #   bash run_mujoco_desk_line.sh --policy desk_boxing
 #   bash run_mujoco_desk_line.sh --policy desk_tilt arms-demo
+#   bash run_mujoco_desk_line.sh --policy dp3_anchor --comx06 balance   # comx06-era desk line
+#
+# BODY flags (default = SYM): --stock (dp2b batch), --comx06 (dp3_anchor and
+# every desk policy off the p12g/comx06 general line — rigid-floor desk scene).
+# 90-obs anchor policies work out of the box: the sim plants the training
+# anchor on band release (yellow ball, rt/anchor_point), Ctrl+Alt-click moves
+# it, --anchor-wander adds vision-style jitter.
 #
 # <name> matches a milestone dir (exact, or substring — newest wins):
 #   desk -> p12j_desk_2026-07-23        desk_fz6 -> p12j_desk_fz6_2026-07-23
@@ -83,6 +90,9 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --stock)        BODY="stock"; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
                                           # for policies trained WITHOUT the SYM tree, e.g. the
                                           # entire dp2b batch (see session 2026-07-28 two-urdf trap)
+  --comx06)       BODY="comx06"; shift;;  # comx06 body + RIGID floor (new-soles era, 2026-07-30+):
+                                          # dp3_anchor and every desk policy warmstarted off the
+                                          # p12g/comx06 general line trains on the Isaac rigid plane
   --no-arm-ready) ARM_READY=0; shift;;
   --arm-ready-sec) ARM_READY_SEC="$2"; shift 2;;
   --anchor-wander) ANCHOR_WANDER=1; shift;;
@@ -158,6 +168,12 @@ if [[ "$BODY" == "stock" ]]; then
   if ! grep -qE 'robot_scene: "scene_stock_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
     sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_cush75_desk.xml"/' "$MUJOCO/simulate/config.yaml"
     echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
+  fi
+elif [[ "$BODY" == "comx06" ]]; then
+  XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"
+  if ! grep -qE 'robot_scene: "scene_comx06[_a-z0-9]*desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_comx06_desk.xml (comx06 body, RIGID floor = Isaac parity)"
   fi
 elif ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
   sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"
