@@ -71,9 +71,17 @@ FALL_TILT_RAD = 1.0  # matches isaaclab::mdp::bad_orientation(env, 1.0)
 
 
 def find_default_xml() -> str:
-    # repos/unitree_rl_lab/deploy/robots/h1_2/tools/ -> repos/
-    repos = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 5))
-    return os.path.join(repos, "unitree_mujoco", "unitree_robots", "h1_2", "h1_2.xml")
+    # This file lives at repos/unitree_mujoco/mujoco_sim/tools/ -> 3 up = repos/.
+    # (The old walk assumed the unitree_rl_lab tools dir — 5 up — and pointed at
+    # the ARCHIVED h1_2.xml D-body; broke with "MJCF not found" 2026-08-04.)
+    repos = os.path.abspath(os.path.join(os.path.dirname(__file__), *[".."] * 3))
+    base = os.path.join(repos, "unitree_mujoco", "unitree_robots", "h1_2")
+    # current-era body first (comx06, 3D-soles era), then legacy fallbacks
+    for name in ("h1_2_comx06.xml", "h1_2_sym.xml", "h1_2.xml"):
+        p = os.path.join(base, name)
+        if os.path.exists(p):
+            return p
+    return os.path.join(base, "h1_2_comx06.xml")
 
 
 def quat_to_rotmat(q):

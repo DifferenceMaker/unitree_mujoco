@@ -92,7 +92,13 @@ def main():
         with lock:
             buf.append(row)
 
-    ChannelFactoryInitialize(args.domain, args.iface)
+    try:
+        ChannelFactoryInitialize(args.domain, args.iface)
+    except Exception:
+        import subprocess
+        ifaces = subprocess.run(["ls", "/sys/class/net"], capture_output=True, text=True).stdout.split()
+        raise SystemExit(f"[tau] DDS init failed on iface '{args.iface}' — available: {', '.join(ifaces)} "
+                         f"(robot LAN is usually enp6s0; sim is lo)")
     sub = ChannelSubscriber("rt/lowstate", LowState_)
     sub.Init(on_msg, 10)
     print(f"[tau] subscribed rt/lowstate on {args.iface} (domain {args.domain}); mass={args.mass}kg; "
