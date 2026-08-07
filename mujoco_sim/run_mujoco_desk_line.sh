@@ -38,7 +38,7 @@
 #              ('l x y z' | 'r x y z' | 'default')
 #   arms-demo  arms, with auto-cycling demo targets (hands-free eval)
 #   teleop     DEPLOYMENT REHEARSAL: the REAL ActionModule (colleague's IK
-#              stack, IK_ENGINE=ikpy) + his teleop keyboard driving the arms
+#              stack; sequences pin ERNEST, container has MoveIt — real-robot parity) + teleop keys
 #              while the balance policy stands. Type in THIS terminal:
 #              w/s a/d q/e = left hand x/y/z, i/k j/l u/o = roll/pitch/yaw,
 #              p = print pose, ESC = quit teleop. (sim `push` unavailable here —
