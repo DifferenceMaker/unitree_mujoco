@@ -59,6 +59,7 @@ echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DD
 # are gain-adapted; wrong arm gains invalidate the eval (2026-07-06 handoff).
 ( PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
   BRIDGE_GAINS_FROM_POLICY=/workspace/MovementModule/policy \
+  ARM_WISH_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_wish \
   BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
 sleep 2
 
@@ -71,6 +72,7 @@ if [ "$MODE" = "b" ]; then
   ( source /workspace/.venv/ActionModule/bin/activate
     PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
     ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
+    ARM_WISH_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_wish \
     python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
 elif [ "$MODE" = "c" ]; then
   echo ">>> [container] MODE C — REAL ActionModule (his MoveIt/ernest IK stack),"
