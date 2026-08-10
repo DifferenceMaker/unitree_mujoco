@@ -80,7 +80,7 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=25; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
@@ -331,11 +331,24 @@ fi
 # top, and ikpy has no collision awareness (colleague-confirmed limitation) —
 # so reaching from under the desk drags arms through it. Seed raised Cartesian
 # targets (hands ~ desk + 10 cm) once the stack is up; disable: --no-arm-ready.
+# SEEDED BEFORE THE STACK (2026-08-10): the old 25 s sleep raised the arms
+# AFTER MovementModule had already released the band and started gating, so a
+# 96-obs wish policy hung (no wish -> no engage) while the robot was already
+# free — it fell before engaging. The commander reads pre-existing lines on its
+# first poll (_file_lines_done starts at 0), so writing the targets NOW means
+# the arms are raised and the wish exists before the release cue.
+# --arm-ready-sec <n> restores a delayed seed (0 = immediate, the default).
 if [[ "$ARM_READY" == "1" && "$MODE" == "b" ]]; then
-  ( sleep "$ARM_READY_SEC"
+  _seed_arm_ready() {
     echo "l 0.30 0.25 0.10" >> "$SIM/logs/.arm_targets"
     echo "r 0.30 -0.25 0.10" >> "$SIM/logs/.arm_targets"
-    echo ">>> [arm-ready] raised start pose commanded (hands ~desk+10cm)" ) &
+    echo ">>> [arm-ready] raised start pose seeded (hands ~desk+10cm)"
+  }
+  if [[ "${ARM_READY_SEC:-0}" -le 0 ]]; then
+    _seed_arm_ready
+  else
+    ( sleep "$ARM_READY_SEC"; _seed_arm_ready ) &
+  fi
 fi
 
 if [[ "$MODE" = "ref" ]]; then
