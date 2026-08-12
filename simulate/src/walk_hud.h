@@ -65,6 +65,10 @@ inline void ensure_sub() {
 // Free-joint layout assumed at qpos 0 (h1_2 scenes): qpos[3..6] wxyz quat,
 // qvel[0..2] world linear, qvel[3..5] angular (local z ~ yaw rate upright).
 inline void update_actual(const mjModel* m, const mjData* d) {
+  // subscriber is created HERE (physics/bridge side, DDS factory guaranteed
+  // live) — creating it on the render thread crashed the sim at startup
+  // (SDK aborts pre-factory-init; not catchable as an exception).
+  ensure_sub();
   if (m->nq < 7 || m->nv < 6) return;
   const mjtNum* q = d->qpos + 3;
   const double yaw = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]),
@@ -95,7 +99,6 @@ inline void draw_bar(const mjrContext* con, int x, int y, int w, int h,
 
 // Render bottom-right; call from simulate.cc Render() (viewport = rect).
 inline void render(const mjrRect& rect, const mjrContext* con) {
-  ensure_sub();
   if (now_ms() - last_ms() > 2000) return;   // no teleop -> hidden
 
   const int w = 240, h = 12, gap = 26;
