@@ -64,6 +64,10 @@ inline void ensure_sub() {
 // Called from the bridge/physics side: actual base velocity in the YAW frame.
 // Free-joint layout assumed at qpos 0 (h1_2 scenes): qpos[3..6] wxyz quat,
 // qvel[0..2] world linear, qvel[3..5] angular (local z ~ yaw rate upright).
+// Display smoothing for the ACTUAL markers: raw qvel at physics rate is spiky
+// (every foot impact). ~100 ms EMA (alpha 0.02 at ~500 Hz) — display only.
+constexpr float ACT_EMA = 0.02f;
+
 inline void update_actual(const mjModel* m, const mjData* d) {
   // subscriber is created HERE (physics/bridge side, DDS factory guaranteed
   // live) — creating it on the render thread crashed the sim at startup
@@ -74,9 +78,12 @@ inline void update_actual(const mjModel* m, const mjData* d) {
   const double yaw = std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]),
                                 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3]));
   const double c = std::cos(yaw), s = std::sin(yaw);
-  act_vx() = static_cast<float>( c * d->qvel[0] + s * d->qvel[1]);
-  act_vy() = static_cast<float>(-s * d->qvel[0] + c * d->qvel[1]);
-  act_wz() = static_cast<float>(d->qvel[5]);
+  const float nvx = static_cast<float>( c * d->qvel[0] + s * d->qvel[1]);
+  const float nvy = static_cast<float>(-s * d->qvel[0] + c * d->qvel[1]);
+  const float nwz = static_cast<float>(d->qvel[5]);
+  act_vx() = act_vx() * (1.0f - ACT_EMA) + nvx * ACT_EMA;
+  act_vy() = act_vy() * (1.0f - ACT_EMA) + nvy * ACT_EMA;
+  act_wz() = act_wz() * (1.0f - ACT_EMA) + nwz * ACT_EMA;
 }
 
 inline void draw_bar(const mjrContext* con, int x, int y, int w, int h,
@@ -103,15 +110,19 @@ inline void render(const mjrRect& rect, const mjrContext* con) {
 
   const int w = 240, h = 12, gap = 26;
   const int x = rect.left + rect.width - w - 20;
-  int y = rect.bottom + 96;
+  int y = rect.bottom + 104;
 
-  draw_bar(con, x, y, w, h, cmd_wz(), act_wz(), WZ_LO, WZ_HI, 1.0f, 0.6f, 0.1f); y += gap;
-  draw_bar(con, x, y, w, h, cmd_vy(), act_vy(), VY_LO, VY_HI, 0.2f, 0.8f, 0.9f); y += gap;
-  draw_bar(con, x, y, w, h, cmd_vx(), act_vx(), VX_LO, VX_HI, 0.3f, 0.9f, 0.3f);
+  // DISPLAY convention is SCREEN-intuitive, not robot-frame: bar fill moving
+  // RIGHT = strafe right / clockwise yaw (robot-frame +y is LEFT and +wz is
+  // CCW, so vy/wz are sign-flipped FOR THE BARS ONLY; the numeric text below
+  // keeps the true signed values). vx: right = forward.
+  draw_bar(con, x, y, w, h, -cmd_wz(), -act_wz(), WZ_LO, WZ_HI, 1.0f, 0.6f, 0.1f); y += gap;
+  draw_bar(con, x, y, w, h, -cmd_vy(), -act_vy(), VY_LO, VY_HI, 0.2f, 0.8f, 0.9f); y += gap;
+  draw_bar(con, x, y, w, h,  cmd_vx(),  act_vx(), VX_LO, VX_HI, 0.3f, 0.9f, 0.3f);
 
   char txt[256];
   std::snprintf(txt, sizeof(txt),
-                "WALK CMD | actual\nvx %+0.2f | %+0.2f m/s\nvy %+0.2f | %+0.2f m/s\nwz %+0.2f | %+0.2f rad/s",
+                "WALK CMD | actual\nvx %+6.2f | %+6.2f m/s\nvy %+6.2f | %+6.2f m/s\nwz %+6.2f | %+6.2f rad/s",
                 cmd_vx().load(), act_vx().load(), cmd_vy().load(), act_vy().load(),
                 cmd_wz().load(), act_wz().load());
   mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMRIGHT, rect, txt, nullptr,
