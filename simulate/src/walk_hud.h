@@ -120,11 +120,17 @@ inline void render(const mjrRect& rect, const mjrContext* con) {
   draw_bar(con, x, y, w, h, -cmd_vy(), -act_vy(), VY_LO, VY_HI, 0.2f, 0.8f, 0.9f); y += gap;
   draw_bar(con, x, y, w, h,  cmd_vx(),  act_vx(), VX_LO, VX_HI, 0.3f, 0.9f, 0.3f);
 
-  char txt[256];
-  std::snprintf(txt, sizeof(txt),
-                "WALK CMD | actual\nvx %+6.2f | %+6.2f m/s\nvy %+6.2f | %+6.2f m/s\nwz %+6.2f | %+6.2f rad/s",
-                cmd_vx().load(), act_vx().load(), cmd_vy().load(), act_vy().load(),
-                cmd_wz().load(), act_wz().load());
+  // Text snapshot at 5 Hz: per-frame value changes read as flicker at 60 fps
+  // regardless of font. Bars stay full-rate; only the NUMBERS are held.
+  static char txt[256] = "";
+  static long txt_ms = 0;
+  if (now_ms() - txt_ms >= 200 || txt[0] == '\0') {
+    txt_ms = now_ms();
+    std::snprintf(txt, sizeof(txt),
+                  "WALK CMD | actual\nvx %+6.2f | %+6.2f m/s\nvy %+6.2f | %+6.2f m/s\nwz %+6.2f | %+6.2f rad/s",
+                  cmd_vx().load(), act_vx().load(), cmd_vy().load(), act_vy().load(),
+                  cmd_wz().load(), act_wz().load());
+  }
   mjr_overlay(mjFONT_NORMAL, mjGRID_BOTTOMRIGHT, rect, txt, nullptr,
               const_cast<mjrContext*>(con));
 }
