@@ -15,6 +15,7 @@
 
 #include "param.h"
 #include "physics_joystick.h"
+#include "walk_hud.h"
 
 #define MOTOR_SENSOR_NUM 3
 
@@ -213,6 +214,8 @@ public:
 
         // lowstate
         if(lowstate->trylock()) {
+            // walk HUD: actual yaw-frame base velocity (cmd-vs-actual bars).
+            walk_hud::update_actual(mj_model_, mj_data_);
             // stamp tick with sim time (ms) — the real robot's tick advances,
             // and BridgeModule derives its obs timestamp from it. Left at 0 the
             // stamp freezes at startup and every displayed obs_age grows

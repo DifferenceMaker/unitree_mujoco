@@ -29,6 +29,17 @@ H = os.path.join(MJ, "simulate.h")
 
 # (file, marker-already-applied, find, replace)
 HUNKS = [
+    # ---- walk teleop HUD (walk_hud.h): cmd-vs-actual velocity bars ----
+    (CC, '#include "walk_hud.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"\n#include "walk_hud.h"'),
+
+    (CC, 'walk_hud::render',
+     '''    std::string hud_fsm = policy_hud::get_fsm_list();''',
+     '''    // walk teleop: bottom-right cmd-vs-actual bars (auto-hides w/o teleop)
+    walk_hud::render(rect, &this->platform_ui->mjr_context());
+    std::string hud_fsm = policy_hud::get_fsm_list();'''),
+
     # ---- desk click-to-reach (click_target.h) ----
     (CC, '#include "click_target.h"',
      '#include "policy_hud.h"\n#include "arm_gui.h"',
