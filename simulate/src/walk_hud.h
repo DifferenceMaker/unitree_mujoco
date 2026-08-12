@@ -38,7 +38,13 @@ inline long now_ms() {
 
 // Subscribe rt/wirelesscontroller (velocity_commands mapping: vx=ly, vy=-lx, wz=-rx).
 inline void ensure_sub() {
-  static auto sub = [] {
+  // InitChannel() is REQUIRED or the subscriber never receives (the
+  // FsmCmdSubscriber pattern). Guarded + retried: render() can run before the
+  // bridge has initialized the DDS factory.
+  static std::shared_ptr<unitree::robot::ChannelSubscriber<unitree_go::msg::dds_::WirelessController_>> sub;
+  static long next_try = 0;
+  if (sub || now_ms() < next_try) return;
+  try {
     auto s = std::make_shared<unitree::robot::ChannelSubscriber<unitree_go::msg::dds_::WirelessController_>>(
         "rt/wirelesscontroller",
         [](const void* msg) {
@@ -48,9 +54,11 @@ inline void ensure_sub() {
           cmd_wz() = std::fmax(WZ_LO, std::fmin(WZ_HI, -m.rx()));
           last_ms() = now_ms();
         });
-    return s;
-  }();
-  (void)sub;
+    s->InitChannel();
+    sub = s;
+  } catch (...) {
+    next_try = now_ms() + 1000;   // factory not up yet — retry in 1 s
+  }
 }
 
 // Called from the bridge/physics side: actual base velocity in the YAW frame.
