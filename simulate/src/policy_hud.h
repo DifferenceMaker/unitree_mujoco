@@ -242,27 +242,16 @@ inline int& ledger_mode() {
 }
 inline void ledger_cycle() { ledger_mode() = (ledger_mode() + 1) % 3; }
 
-// Width (px) of the SIDE PANEL the ledger occupies. simulate.cc shrinks the
-// 3D scene viewport by this much BEFORE mjr_render, so the gauges render
-// ADJACENT to the scene — like the Isaac HUD panel — never on top of it.
-// 0 when hidden/stale (scene gets the full width back).
-inline int ledger_strip(const mjrContext* con) {
-  if (ledger_mode() == 0) return 0;
-  std::lock_guard<std::mutex> lk(mutex());
-  if (ledger_now_ms() - ledger_ms() > 2000.0) return 0;
-  if (ledger_rows().empty()) return 0;
-  const int ch = con->charHeight > 0 ? con->charHeight : 15;
-  const int cw = std::max(6, ch * 6 / 10);
-  return (20 + 14 + 9) * cw + 28;
-}
-
-// Draw the ledger INTO the side strip. `rect` = the ALREADY-SHRUNKEN scene
-// viewport, so the strip spans [rect.left+rect.width, window right edge).
-// Layout v5 (2026-08-21): each row is one mjr_overlay call with an explicit
-// pixel-rect viewport — the SAME coordinate system as mjr_rectangle, so text
-// and bars align by construction. name = overlay left, value = overlay2
-// right, center-zero bar between. Bars update at the publish rate (50 Hz);
-// NUMBERS are a 5 Hz snapshot (walk_hud flicker lesson).
+// Draw the ledger as a PANEL pinned to the scene's RIGHT edge, with its own
+// opaque backdrop. v6 (2026-08-21): the earlier viewport-shrink approach
+// broke mouse picking (MuJoCo's select math uses the UNshrunk uistate rect —
+// clicks registered left of the cursor) and left the freed strip as
+// undefined framebuffer pixels (black/invisible flicker). An overlay panel
+// touches neither: picking is untouched (same as the METRICS overlay) and
+// the backdrop makes the pixels deterministic. 'L' hides it when that screen
+// corner is needed. Each row is one mjr_overlay (explicit pixel-rect
+// viewport, same coordinate space as mjr_rectangle). Bars update at the
+// publish rate (50 Hz); NUMBERS are a 5 Hz snapshot.
 inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   if (ledger_mode() == 0) return;
   std::vector<LedgerRow> rows;
@@ -300,10 +289,19 @@ inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   const int row_h = ch + 6;
   const int name_w = 20 * cw, bar_w = 14 * cw, val_w = 9 * cw;
   const int row_w = name_w + bar_w + val_w;
-  const int x0 = rect.left + rect.width + 14;   // the strip, right of the scene
+  const int x0 = rect.left + rect.width - row_w - 14;  // pinned to scene right
 
-  int y_top = rect.bottom + rect.height - 10;   // strip top
+  int y_top = rect.bottom + rect.height - 10;
   const int y_floor = rect.bottom + 8;
+
+  // opaque backdrop for the whole panel (deterministic pixels — no more
+  // black/invisible flicker from undefined framebuffer content)
+  {
+    const int n_vis = static_cast<int>(rows.size());
+    const int panel_h = std::min(n_vis * row_h + 12, rect.height - 20);
+    mjrRect bg{x0 - 8, y_top - panel_h, row_w + 16, panel_h + 4};
+    mjr_rectangle(bg, 0.06f, 0.07f, 0.09f, 0.85f);
+  }
 
   for (size_t i = 0; i < rows.size(); ++i) {
     const int y = y_top - static_cast<int>(i + 1) * row_h;
