@@ -40,8 +40,15 @@ HUNKS = [
     walk_hud::render(rect, &this->platform_ui->mjr_context());
     std::string hud_fsm = policy_hud::get_fsm_list();'''),
 
-    # ---- reward LEDGER gauges (2026-08-21): top-left bar column, auto-hides
-    #      when the sidecar's --ledger stream stops ----
+    # ---- reward LEDGER gauges (2026-08-21): SIDE PANEL adjacent to the scene
+    #      (the scene viewport shrinks; gauges render in the freed strip —
+    #      Isaac-HUD style, never over the robot). 'L' cycles hidden/compact/full.
+    (CC, 'policy_hud::ledger_strip',
+     '''  mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());''',
+     '''  if (const int ledger_w = policy_hud::ledger_strip(&this->platform_ui->mjr_context()))
+    rect.width = mjMAX(200, rect.width - ledger_w);
+  mjr_render(rect, &this->scn, &this->platform_ui->mjr_context());'''),
+
     (CC, 'policy_hud::ledger_render',
      '''    walk_hud::render(rect, &this->platform_ui->mjr_context());''',
      '''    walk_hud::render(rect, &this->platform_ui->mjr_context());

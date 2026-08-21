@@ -538,34 +538,99 @@ namespace
               }
             }
 
-            // ground-truth base pose for the sidecar reward ledger (~50 Hz,
-            // same cadence trick as the anchor block above)
+            // ground-truth state for the sidecar reward ledger (~50 Hz).
+            // v3 (2026-08-21): + click-target ball positions (desk_reach),
+            // + per-body DESK-contact forces (undesired_contacts incl pelvis),
+            // + hand-vs-desk force (table/desk_hit), + foot positions and
+            // floor-contact forces (feet_slide / feet_too_near).
             {
               static int pose_cnt = 0;
               if (++pose_cnt >= 10 && g_sim_pose_pub) {
                 pose_cnt = 0;
                 static int fj = -1, lw_id = -2, rw_id = -2;
+                static int tl_id = -2, tr_id = -2, desk_id = -2;
+                static int fl_id = -2, fr_id = -2;
+                // undesired scope: pelvis + torso + all hip links + knees
+                static std::vector<int> und_ids;
+                static std::vector<int> hand_l_ids, hand_r_ids;
                 if (fj == -1) {
                   for (int j = 0; j < m->njnt; ++j)
                     if (m->jnt_type[j] == mjJNT_FREE) { fj = j; break; }
                   lw_id = mj_name2id(m, mjOBJ_BODY, "left_wrist_yaw_link");
                   rw_id = mj_name2id(m, mjOBJ_BODY, "right_wrist_yaw_link");
+                  tl_id = mj_name2id(m, mjOBJ_BODY, "target_ball_left");
+                  tr_id = mj_name2id(m, mjOBJ_BODY, "target_ball_right");
+                  desk_id = mj_name2id(m, mjOBJ_BODY, "desk");
+                  fl_id = mj_name2id(m, mjOBJ_BODY, "left_ankle_roll_link");
+                  fr_id = mj_name2id(m, mjOBJ_BODY, "right_ankle_roll_link");
+                  for (int b = 0; b < m->nbody; ++b) {
+                    const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+                    if (!bn) continue;
+                    const std::string s(bn);
+                    if (s == "pelvis" || s == "torso_link" ||
+                        s.find("hip") != std::string::npos ||
+                        s.find("knee") != std::string::npos)
+                      und_ids.push_back(b);
+                    const bool handish =
+                        s.find("wrist") != std::string::npos ||
+                        s.find("palm") != std::string::npos ||
+                        s.find("hand") != std::string::npos ||
+                        s.find("thumb") != std::string::npos ||
+                        s.find("index") != std::string::npos ||
+                        s.find("middle") != std::string::npos ||
+                        s.find("ring") != std::string::npos ||
+                        s.find("pinky") != std::string::npos ||
+                        s.find("little") != std::string::npos;
+                    if (handish && s.find("left") != std::string::npos) hand_l_ids.push_back(b);
+                    if (handish && (s.find("right") != std::string::npos ||
+                                    s[0] == 'R')) hand_r_ids.push_back(b);
+                  }
                 }
                 if (fj >= 0) {
+                  // per-body desk-contact force + foot floor-contact force
+                  std::vector<double> und_f(und_ids.size(), 0.0);
+                  double hand_f[2] = {0.0, 0.0}, foot_f[2] = {0.0, 0.0};
+                  for (int c = 0; c < d->ncon; ++c) {
+                    const int b1 = m->geom_bodyid[d->contact[c].geom1];
+                    const int b2 = m->geom_bodyid[d->contact[c].geom2];
+                    mjtNum f6[6];
+                    mj_contactForce(m, d, c, f6);
+                    const double fn = std::sqrt(f6[0]*f6[0] + f6[1]*f6[1] + f6[2]*f6[2]);
+                    const bool desk1 = (b1 == desk_id), desk2 = (b2 == desk_id);
+                    const int other = desk1 ? b2 : (desk2 ? b1 : -1);
+                    if (other >= 0) {
+                      for (size_t k = 0; k < und_ids.size(); ++k)
+                        if (und_ids[k] == other) und_f[k] += fn;
+                      for (int hb : hand_l_ids) if (hb == other) hand_f[0] += fn;
+                      for (int hb : hand_r_ids) if (hb == other) hand_f[1] += fn;
+                    }
+                    // feet vs anything (floor): world body id 0
+                    if (b1 == fl_id || b2 == fl_id) foot_f[0] += fn;
+                    if (b1 == fr_id || b2 == fr_id) foot_f[1] += fn;
+                  }
+                  double und_max = 0.0; int und_cnt = 0;
+                  for (double f : und_f) { if (f > 1.0) ++und_cnt; if (f > und_max) und_max = f; }
+
                   const int qa = m->jnt_qposadr[fj], va = m->jnt_dofadr[fj];
-                  char js[512];
+                  char js[1024];
                   int n = std::snprintf(js, sizeof js,
                       "{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
-                      "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f]",
+                      "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f],"
+                      "\"ucnt\":%d,\"umax\":%.1f,\"th\":[%.1f,%.1f],\"fc\":[%.1f,%.1f]",
                       d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
                       d->qpos[qa + 3], d->qpos[qa + 4], d->qpos[qa + 5], d->qpos[qa + 6],
                       d->qvel[va], d->qvel[va + 1], d->qvel[va + 2],
-                      d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5]);
-                  if (lw_id >= 0 && rw_id >= 0 && n > 0 && n < (int)sizeof js - 160)
-                    n += std::snprintf(js + n, sizeof js - n,
-                        ",\"lw\":[%.4f,%.4f,%.4f],\"rw\":[%.4f,%.4f,%.4f]",
-                        d->xpos[3 * lw_id], d->xpos[3 * lw_id + 1], d->xpos[3 * lw_id + 2],
-                        d->xpos[3 * rw_id], d->xpos[3 * rw_id + 1], d->xpos[3 * rw_id + 2]);
+                      d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5],
+                      und_cnt, und_max, hand_f[0], hand_f[1], foot_f[0], foot_f[1]);
+                  auto add_body = [&](const char* key, int bid) {
+                    if (bid >= 0 && n > 0 && n < (int)sizeof js - 96)
+                      n += std::snprintf(js + n, sizeof js - n,
+                          ",\"%s\":[%.4f,%.4f,%.4f]", key,
+                          d->xpos[3 * bid], d->xpos[3 * bid + 1], d->xpos[3 * bid + 2]);
+                  };
+                  add_body("lw", lw_id); add_body("rw", rw_id);
+                  add_body("fl", fl_id); add_body("fr", fr_id);
+                  add_body("tl", tl_id); add_body("tr", tr_id);
                   if (n > 0 && n < (int)sizeof js - 2)
                     std::snprintf(js + n, sizeof js - n, "}");
                   std_msgs::msg::dds_::String_ pmsg;
@@ -874,6 +939,10 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
       } else if (key==GLFW_KEY_8 || key==GLFW_KEY_DOWN) {
         elastic_band.length_ += 0.1;
       }
+    }
+    if (key==GLFW_KEY_L) {
+      // reward-ledger side panel: hidden -> compact -> full (policy_hud)
+      policy_hud::ledger_cycle();
     }
     if(key==GLFW_KEY_BACKSPACE) {
       mj_resetData(m, d);

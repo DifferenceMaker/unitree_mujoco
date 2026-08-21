@@ -234,16 +234,37 @@ inline void set_ledger(const std::string& field) {
   ledger_ms() = ledger_now_ms();
 }
 
-// Call from simulate.cc Render() (viewport = rect). LEFT column between the
-// POLICY status block (top-left) and the METRICS block (bottom-left).
-// Layout v4 (2026-08-21): each row is one mjr_overlay call with an explicit
+// Display mode, cycled with the 'L' key in the sim window (main.cc key cb):
+// 0 = hidden, 1 = compact (TOTAL + top-12 by |weight| + "SUM rest"), 2 = full.
+inline int& ledger_mode() {
+  static int m = 1;
+  return m;
+}
+inline void ledger_cycle() { ledger_mode() = (ledger_mode() + 1) % 3; }
+
+// Width (px) of the SIDE PANEL the ledger occupies. simulate.cc shrinks the
+// 3D scene viewport by this much BEFORE mjr_render, so the gauges render
+// ADJACENT to the scene — like the Isaac HUD panel — never on top of it.
+// 0 when hidden/stale (scene gets the full width back).
+inline int ledger_strip(const mjrContext* con) {
+  if (ledger_mode() == 0) return 0;
+  std::lock_guard<std::mutex> lk(mutex());
+  if (ledger_now_ms() - ledger_ms() > 2000.0) return 0;
+  if (ledger_rows().empty()) return 0;
+  const int ch = con->charHeight > 0 ? con->charHeight : 15;
+  const int cw = std::max(6, ch * 6 / 10);
+  return (20 + 14 + 9) * cw + 28;
+}
+
+// Draw the ledger INTO the side strip. `rect` = the ALREADY-SHRUNKEN scene
+// viewport, so the strip spans [rect.left+rect.width, window right edge).
+// Layout v5 (2026-08-21): each row is one mjr_overlay call with an explicit
 // pixel-rect viewport — the SAME coordinate system as mjr_rectangle, so text
-// and bars align by construction (mjr_text's normalized coords proved
-// unpredictable: names landed on the bars). name = overlay left column,
-// value = overlay2 right column, bar drawn into the row rect between them.
-// Bars update at the publish rate (50 Hz); NUMBERS are a 5 Hz snapshot
-// (walk_hud flicker lesson).
+// and bars align by construction. name = overlay left, value = overlay2
+// right, center-zero bar between. Bars update at the publish rate (50 Hz);
+// NUMBERS are a 5 Hz snapshot (walk_hud flicker lesson).
 inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
+  if (ledger_mode() == 0) return;
   std::vector<LedgerRow> rows;
   {
     std::lock_guard<std::mutex> lk(mutex());
@@ -251,6 +272,18 @@ inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
     rows = ledger_rows();
   }
   if (rows.empty()) return;
+
+  // compact: TOTAL + top-12 (sidecar order = |weight| desc) + "SUM rest"
+  if (ledger_mode() == 1 && rows.size() > 14) {
+    float rest = 0.f;
+    for (size_t i = 13; i < rows.size(); ++i) rest += rows[i].val;
+    rows.resize(13);
+    LedgerRow sum;
+    sum.name = "SUM rest";
+    sum.val = rest;
+    sum.frac = std::fmax(-1.f, std::fmin(1.f, rest / 10.f));
+    rows.push_back(sum);
+  }
 
   // 5 Hz numeric snapshot: hold displayed values, refresh 0.2s
   static std::vector<float> snap_vals;
@@ -267,10 +300,10 @@ inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   const int row_h = ch + 6;
   const int name_w = 20 * cw, bar_w = 14 * cw, val_w = 9 * cw;
   const int row_w = name_w + bar_w + val_w;
-  const int x0 = rect.left + 10;
+  const int x0 = rect.left + rect.width + 14;   // the strip, right of the scene
 
-  int y_top = rect.bottom + rect.height - 12 * (ch + 5);  // below POLICY block
-  const int y_floor = rect.bottom + 10 * (ch + 5);        // above METRICS block
+  int y_top = rect.bottom + rect.height - 10;   // strip top
+  const int y_floor = rect.bottom + 8;
 
   for (size_t i = 0; i < rows.size(); ++i) {
     const int y = y_top - static_cast<int>(i + 1) * row_h;
