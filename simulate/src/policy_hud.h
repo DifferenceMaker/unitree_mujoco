@@ -156,6 +156,15 @@ inline void set_metrics_from_json(const std::string& js) {
     out += "\nsteps L " + steps_l + "  R " + steps_r;
   if (!td_rate.empty()) out += "  (" + td_rate + "/s)";
   if (!ang_rms.empty()) out += "\ntorso_ang_vel rms " + ang_rms;
+  // Reward LEDGER (2026-08-21): free-text block from the sidecar's --ledger
+  // mode. '|'-separated lines (the flat JSON extractor can't carry '\n').
+  const std::string ledger = json_field(js, "ledger");
+  if (!ledger.empty()) {
+    std::string block = ledger;
+    for (auto& c : block)
+      if (c == '|') c = '\n';
+    out += "\n" + block;
+  }
   set_metrics(out);
 }
 

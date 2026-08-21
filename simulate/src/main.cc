@@ -106,6 +106,12 @@ static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::Str
 // keypress reset the sidecar's lean/touchdown counters from the GUI.
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_metrics_cmd_pub;
 
+// Ground-truth base pose publisher (rt/sim_base_pose): world-frame base state
+// + wrist positions for the sidecar reward LEDGER (2026-08-21). Sim2sim-only
+// privilege — the reward functions need world pose, which rt/lowstate lacks.
+// JSON: {"p":[xyz],"q":[wxyz],"v":[world lin],"w":[BODY ang],"lw":[xyz],"rw":[xyz]}
+static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_sim_pose_pub;
+
 // Scripted push (sim2sim harness): an instantaneous world-frame base velocity
 // change requested from the stdin command thread, applied to the free-joint
 // linear DoFs inside the physics lock. Free-joint translational qvel is
@@ -532,6 +538,43 @@ namespace
               }
             }
 
+            // ground-truth base pose for the sidecar reward ledger (~50 Hz,
+            // same cadence trick as the anchor block above)
+            {
+              static int pose_cnt = 0;
+              if (++pose_cnt >= 10 && g_sim_pose_pub) {
+                pose_cnt = 0;
+                static int fj = -1, lw_id = -2, rw_id = -2;
+                if (fj == -1) {
+                  for (int j = 0; j < m->njnt; ++j)
+                    if (m->jnt_type[j] == mjJNT_FREE) { fj = j; break; }
+                  lw_id = mj_name2id(m, mjOBJ_BODY, "left_wrist_yaw_link");
+                  rw_id = mj_name2id(m, mjOBJ_BODY, "right_wrist_yaw_link");
+                }
+                if (fj >= 0) {
+                  const int qa = m->jnt_qposadr[fj], va = m->jnt_dofadr[fj];
+                  char js[512];
+                  int n = std::snprintf(js, sizeof js,
+                      "{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
+                      "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f]",
+                      d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
+                      d->qpos[qa + 3], d->qpos[qa + 4], d->qpos[qa + 5], d->qpos[qa + 6],
+                      d->qvel[va], d->qvel[va + 1], d->qvel[va + 2],
+                      d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5]);
+                  if (lw_id >= 0 && rw_id >= 0 && n > 0 && n < (int)sizeof js - 160)
+                    n += std::snprintf(js + n, sizeof js - n,
+                        ",\"lw\":[%.4f,%.4f,%.4f],\"rw\":[%.4f,%.4f,%.4f]",
+                        d->xpos[3 * lw_id], d->xpos[3 * lw_id + 1], d->xpos[3 * lw_id + 2],
+                        d->xpos[3 * rw_id], d->xpos[3 * rw_id + 1], d->xpos[3 * rw_id + 2]);
+                  if (n > 0 && n < (int)sizeof js - 2)
+                    std::snprintf(js + n, sizeof js - n, "}");
+                  std_msgs::msg::dds_::String_ pmsg;
+                  pmsg.data(js);
+                  g_sim_pose_pub->Write(pmsg, 0);
+                }
+              }
+            }
+
             // record cpu time at start of iteration
             const auto startCPU = mj::Simulate::Clock::now();
 
@@ -736,6 +779,10 @@ void *UnitreeSdk2BridgeThread(void *arg)
       std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
           "rt/anchor_point");
   g_anchor_pub->InitChannel();
+  g_sim_pose_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/sim_base_pose");
+  g_sim_pose_pub->InitChannel();
 
   // Keyboard FSM control: digits in the sim window -> rt/fsm_cmd -> controller
   // FSMRequest (key map shown in the HUD's "FSM keys:" line).

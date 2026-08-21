@@ -80,7 +80,7 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"; RECORD=0; LEDGER=1
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
@@ -99,6 +99,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
+  --record)       RECORD=1; shift;;   # x11grab the sim window -> LOG_DIR/mujoco_rec_<stamp>.mp4, auto-stop on exit
+  --no-ledger)    LEDGER=0; shift;;   # disable the live reward-ledger overlay + tape
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
 esac; done
@@ -308,14 +310,54 @@ if ! kill -0 "$MJ_PID" 2>/dev/null; then
   exit 1
 fi
 
+# ── 1b. window recording (--record): x11grab the sim window, auto-stop on
+# sim exit (2026-08-21 — replaces manual screen recording; the mp4 also pairs
+# with the ledger tape for post-hoc reward analysis) ─────────────────────────
+if [[ "${RECORD:-0}" = "1" ]]; then
+  (
+    WID=""
+    for _ in $(seq 1 30); do
+      WID=$(wmctrl -l 2>/dev/null | grep -im1 "mujoco" | awk '{print $1}')
+      [[ -n "$WID" ]] && break
+      sleep 1
+    done
+    if [[ -z "$WID" ]]; then
+      echo ">>> [rec] MuJoCo window not found in 30s — recording skipped"
+      exit 0
+    fi
+    GEO=$(xwininfo -id "$WID")
+    RX=$(awk '/Absolute upper-left X/{print $NF}' <<<"$GEO")
+    RY=$(awk '/Absolute upper-left Y/{print $NF}' <<<"$GEO")
+    RW=$(awk '/Width:/{print $NF}' <<<"$GEO"); RW=$((RW - RW % 2))
+    RH=$(awk '/Height:/{print $NF}' <<<"$GEO"); RH=$((RH - RH % 2))
+    REC_FILE="$LOG_DIR/mujoco_rec_$STAMP.mp4"
+    echo ">>> [rec] recording ${RW}x${RH}+${RX}+${RY} -> $REC_FILE (stops with the sim)"
+    ffmpeg -loglevel error -y -f x11grab -framerate 30 -video_size "${RW}x${RH}" \
+        -i "${DISPLAY:-:0}+${RX},${RY}" -c:v libx264 -preset veryfast -crf 23 \
+        -pix_fmt yuv420p "$REC_FILE" &
+    FF_PID=$!
+    while kill -0 "$MJ_PID" 2>/dev/null && kill -0 "$FF_PID" 2>/dev/null; do sleep 1; done
+    kill -INT "$FF_PID" 2>/dev/null; wait "$FF_PID" 2>/dev/null
+    echo ">>> [rec] saved: $REC_FILE"
+  ) &
+fi
+
 # ── 2. metrics sidecar (host, tv env, headless → logfile) ───────────────────
 if [[ "$METRICS" = "1" ]]; then
   if [[ -x "$TV_PY" ]]; then
     rm -f "$METRICS_FIFO"; mkfifo "$METRICS_FIFO"
     sleep infinity > "$METRICS_FIFO" &   # hold the write end open so stdin doesn't EOF
     HOLD_PID=$!
+    # LIVE reward ledger (2026-08-21): auto-on when the staged policy carries
+    # params/env.yaml (weights parsed from it); disable with --no-ledger.
+    LEDGER_ARGS=()
+    if [[ "${LEDGER:-1}" = "1" && -f "$MILESTONES/$MS/params/env.yaml" ]]; then
+      LEDGER_ARGS=(--ledger "$MILESTONES/$MS/params/env.yaml")
+      echo ">>> [2] reward LEDGER on ($MS/params/env.yaml); tape lands in $LOG_DIR"
+    fi
+    LEDGER_TAPE_DIR="$LOG_DIR" \
     "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain "$SIM_DDS_DOMAIN" --xml "$XML" \
-        --mode "$METRICS_MODE" < "$METRICS_FIFO" > "$METRICS_LOG" 2>&1 &
+        --mode "$METRICS_MODE" "${LEDGER_ARGS[@]}" < "$METRICS_FIFO" > "$METRICS_LOG" 2>&1 &
     METRICS_PID=$!
     echo ">>> [2] balance_metrics headless (pid $METRICS_PID)"
     echo "    log:   $METRICS_LOG"
