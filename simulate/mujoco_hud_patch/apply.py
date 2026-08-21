@@ -47,6 +47,33 @@ HUNKS = [
      '''    walk_hud::render(rect, &this->platform_ui->mjr_context());
     policy_hud::ledger_render(rect, &this->platform_ui->mjr_context());'''),
 
+    # ---- in-sim recorder (sim_record.h): x11grab is BLACK under Wayland
+    #      compositors; readPixels at Render() end captures window+HUD ----
+    (CC, '#include "sim_record.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"',
+     '#include "policy_hud.h"\n#include "arm_gui.h"\n#include "sim_record.h"'),
+
+    (CC, 'sim_record::grab',
+     '''  // finalize
+  this->platform_ui->SwapBuffers();
+}''',
+     '''  // in-sim recording (--record / ARCHB_RECORD_FILE): grab the full window
+  sim_record::grab(this->uistate.rect[0], &this->platform_ui->mjr_context());
+
+  // finalize
+  this->platform_ui->SwapBuffers();
+}'''),
+
+    # ---- font scale floor 150 (2026-08-21): under X11/XWayland the reported
+    #      DPI is 96 -> fontscale 100 -> tiny blurry HUD text after the
+    #      compositor upscales the surface. Floor it at 150. ----
+    (CC, 'fontscale < 150',
+     '''  int fontscale = ComputeFontScale(*this->platform_ui);
+  this->font = fontscale/50 - 1;''',
+     '''  int fontscale = ComputeFontScale(*this->platform_ui);
+  if (fontscale < 150) fontscale = 150;  // XWayland reports 96dpi -> blurry 100
+  this->font = fontscale/50 - 1;'''),
+
     # ---- desk click-to-reach (click_target.h) ----
     (CC, '#include "click_target.h"',
      '#include "policy_hud.h"\n#include "arm_gui.h"',

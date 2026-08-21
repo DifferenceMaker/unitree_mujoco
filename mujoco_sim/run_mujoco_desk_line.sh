@@ -207,6 +207,7 @@ echo "============================================================"
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 MJ_LOG="$LOG_DIR/mujoco_$STAMP.log"
+RECORD_FILE="$LOG_DIR/mujoco_rec_$STAMP.mp4"
 METRICS_LOG="$LOG_DIR/balance_metrics_${MODE}_$STAMP.log"
 METRICS_FIFO="/tmp/archb_metrics.stdin"
 BAND_FLAG="$SIM/logs/.band_release"                            # host path (shared mount, gitignored)
@@ -291,13 +292,13 @@ fi
 if [[ "$PROFILE" == "teleop" ]]; then
   # teleop owns the terminal keys — detach the sim's stdin so its `push`
   # reader can't steal keystrokes from the teleop dispatcher.
-  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
+  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
 else
   # env -u WAYLAND_DISPLAY: force GLFW onto X11/XWayland — the native Wayland
 # backend SEGFAULTS in libwayland-client (3x on 2026-08-21, incl. 12:11 BEFORE
 # any sim changes: kernel "segfault ... in libwayland-client.so" at identical
 # offset) AND a native-Wayland window is invisible to wmctrl/x11grab (--record).
-( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
 fi
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
@@ -314,36 +315,11 @@ if ! kill -0 "$MJ_PID" 2>/dev/null; then
   exit 1
 fi
 
-# ── 1b. window recording (--record): x11grab the sim window, auto-stop on
-# sim exit (2026-08-21 — replaces manual screen recording; the mp4 also pairs
-# with the ledger tape for post-hoc reward analysis) ─────────────────────────
+# ── 1b. recording (--record): IN-SIM capture (sim_record.h via
+# ARCHB_RECORD_FILE) — x11grab records BLACK under a Wayland compositor;
+# readPixels in the render loop captures window+HUD, stops when the sim exits.
 if [[ "${RECORD:-0}" = "1" ]]; then
-  (
-    WID=""
-    for _ in $(seq 1 30); do
-      WID=$(wmctrl -l 2>/dev/null | grep -im1 "mujoco" | awk '{print $1}')
-      [[ -n "$WID" ]] && break
-      sleep 1
-    done
-    if [[ -z "$WID" ]]; then
-      echo ">>> [rec] MuJoCo window not found in 30s — recording skipped"
-      exit 0
-    fi
-    GEO=$(xwininfo -id "$WID")
-    RX=$(awk '/Absolute upper-left X/{print $NF}' <<<"$GEO")
-    RY=$(awk '/Absolute upper-left Y/{print $NF}' <<<"$GEO")
-    RW=$(awk '/Width:/{print $NF}' <<<"$GEO"); RW=$((RW - RW % 2))
-    RH=$(awk '/Height:/{print $NF}' <<<"$GEO"); RH=$((RH - RH % 2))
-    REC_FILE="$LOG_DIR/mujoco_rec_$STAMP.mp4"
-    echo ">>> [rec] recording ${RW}x${RH}+${RX}+${RY} -> $REC_FILE (stops with the sim)"
-    ffmpeg -loglevel error -y -f x11grab -framerate 30 -video_size "${RW}x${RH}" \
-        -i "${DISPLAY:-:0}+${RX},${RY}" -c:v libx264 -preset veryfast -crf 23 \
-        -pix_fmt yuv420p "$REC_FILE" &
-    FF_PID=$!
-    while kill -0 "$MJ_PID" 2>/dev/null && kill -0 "$FF_PID" 2>/dev/null; do sleep 1; done
-    kill -INT "$FF_PID" 2>/dev/null; wait "$FF_PID" 2>/dev/null
-    echo ">>> [rec] saved: $REC_FILE"
-  ) &
+  echo ">>> [rec] in-sim recording -> $RECORD_FILE (stops with the sim)"
 fi
 
 # ── 2. metrics sidecar (host, tv env, headless → logfile) ───────────────────
