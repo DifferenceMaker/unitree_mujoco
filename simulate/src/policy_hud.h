@@ -1,7 +1,13 @@
 #pragma once
 
+#include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <mutex>
 #include <string>
+#include <vector>
+
+#include <mujoco/mujoco.h>
 
 // Sim2sim on-screen HUD shared state. Three independently-written slots, each
 // fed by a different source and drawn by the MuJoCo render loop (simulate.cc):
@@ -114,6 +120,8 @@ inline std::string json_field(const std::string& js, const std::string& key) {
   return js.substr(p, (e == std::string::npos ? js.size() : e) - p);
 }
 
+inline void set_ledger(const std::string& field);  // defined below (ledger gauges)
+
 // Controller rt/policy_status JSON -> status slot.
 inline void set_from_json(const std::string& js) {
   const std::string policy = json_field(js, "policy");
@@ -156,15 +164,12 @@ inline void set_metrics_from_json(const std::string& js) {
     out += "\nsteps L " + steps_l + "  R " + steps_r;
   if (!td_rate.empty()) out += "  (" + td_rate + "/s)";
   if (!ang_rms.empty()) out += "\ntorso_ang_vel rms " + ang_rms;
-  // Reward LEDGER (2026-08-21): free-text block from the sidecar's --ledger
-  // mode. '|'-separated lines (the flat JSON extractor can't carry '\n').
+  // Reward LEDGER (2026-08-21, gauges v2): structured '|'-separated rows
+  // "name:value:frac" from the sidecar's --ledger mode. Parsed into
+  // ledger_rows() and drawn as walk_hud-style bars by ledger_render();
+  // NOT appended to this text block.
   const std::string ledger = json_field(js, "ledger");
-  if (!ledger.empty()) {
-    std::string block = ledger;
-    for (auto& c : block)
-      if (c == '|') c = '\n';
-    out += "\n" + block;
-  }
+  if (!ledger.empty()) set_ledger(ledger);
   set_metrics(out);
 }
 
@@ -176,6 +181,103 @@ inline void (*&fsm_publish_fn())(char) {
 }
 inline void request_fsm(char key) {
   if (fsm_publish_fn()) fsm_publish_fn()(key);
+}
+
+// ── Reward LEDGER gauges (2026-08-21) ───────────────────────────────────────
+// Sidecar --ledger publishes '|'-separated "name:value:frac" rows in a FIXED
+// order (sorted by |weight| at sidecar init — rows never switch places).
+// frac in [-1,1] normalizes value to the term's own scale (|weight|). Drawn
+// as center-zero bars + name/value text, top-left column, walk_hud style.
+struct LedgerRow {
+  std::string name;
+  float val = 0.f;
+  float frac = 0.f;
+};
+inline std::vector<LedgerRow>& ledger_rows() {
+  static std::vector<LedgerRow> v;
+  return v;
+}
+inline double& ledger_ms() {
+  static double t = 0.0;
+  return t;
+}
+inline double ledger_now_ms() {
+  return std::chrono::duration<double, std::milli>(
+             std::chrono::steady_clock::now().time_since_epoch())
+      .count();
+}
+
+inline void set_ledger(const std::string& field) {
+  std::vector<LedgerRow> rows;
+  size_t p = 0;
+  while (p < field.size()) {
+    size_t e = field.find('|', p);
+    if (e == std::string::npos) e = field.size();
+    const std::string item = field.substr(p, e - p);
+    p = e + 1;
+    const size_t c1 = item.find(':');
+    const size_t c2 = (c1 == std::string::npos) ? std::string::npos
+                                                : item.find(':', c1 + 1);
+    if (c1 == std::string::npos || c2 == std::string::npos) continue;
+    LedgerRow r;
+    r.name = item.substr(0, c1);
+    try {
+      r.val = std::stof(item.substr(c1 + 1, c2 - c1 - 1));
+      r.frac = std::stof(item.substr(c2 + 1));
+    } catch (...) {
+      continue;
+    }
+    rows.push_back(std::move(r));
+  }
+  std::lock_guard<std::mutex> lk(mutex());
+  ledger_rows().swap(rows);
+  ledger_ms() = ledger_now_ms();
+}
+
+// Call from simulate.cc Render() (viewport = rect). Top-left column.
+inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
+  std::vector<LedgerRow> rows;
+  {
+    std::lock_guard<std::mutex> lk(mutex());
+    if (ledger_now_ms() - ledger_ms() > 2000.0) return;  // sidecar gone -> hide
+    rows = ledger_rows();
+  }
+  if (rows.empty()) return;
+
+  const int name_w = 150, bar_w = 130, bar_h = 9, gap = 17, val_w = 62;
+  const int x0 = rect.left + 12;
+  int y = rect.bottom + rect.height - 40;  // top-left, below the top edge
+
+  for (const auto& r : rows) {
+    // name (left) + value (right of bar) as text; bar in the middle
+    const float ty = static_cast<float>(y) / rect.height;
+    mjr_text(mjFONT_SHADOW, r.name.c_str(), con,
+             static_cast<float>(x0) / rect.width, ty, 0.9f, 0.9f, 0.9f);
+    const int bx = x0 + name_w;
+    mjrRect track{bx, y - 1, bar_w, bar_h};
+    mjr_rectangle(track, 0.15f, 0.15f, 0.15f, 0.75f);
+    const int zero_px = bx + bar_w / 2;
+    float frac = std::fmax(-1.f, std::fmin(1.f, r.frac));
+    const int fill_px = static_cast<int>(std::fabs(frac) * (bar_w / 2));
+    if (fill_px > 0) {
+      mjrRect fill{frac >= 0 ? zero_px : zero_px - fill_px, y - 1,
+                   std::max(2, fill_px), bar_h};
+      if (frac >= 0)
+        mjr_rectangle(fill, 0.35f, 0.78f, 0.39f, 0.9f);   // income: green
+      else
+        mjr_rectangle(fill, 0.88f, 0.35f, 0.31f, 0.9f);   // penalty: red
+    }
+    mjrRect zero{zero_px - 1, y - 3, 2, bar_h + 4};
+    mjr_rectangle(zero, 0.55f, 0.55f, 0.55f, 0.9f);
+    char vtxt[32];
+    std::snprintf(vtxt, sizeof vtxt, "%+7.2f", r.val);
+    mjr_text(mjFONT_SHADOW, vtxt, con,
+             static_cast<float>(bx + bar_w + 8) / rect.width, ty,
+             0.85f, 0.85f, 0.85f);
+    (void)val_w;
+    y -= gap;
+    if (y < rect.bottom + 200) break;  // don't collide with the METRICS block
+  }
 }
 
 }  // namespace policy_hud

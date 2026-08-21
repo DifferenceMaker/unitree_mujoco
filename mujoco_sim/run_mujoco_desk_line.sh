@@ -291,13 +291,13 @@ fi
 if [[ "$PROFILE" == "teleop" ]]; then
   # teleop owns the terminal keys — detach the sim's stdin so its `push`
   # reader can't steal keystrokes from the teleop dispatcher.
-  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
+  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
 else
   # env -u WAYLAND_DISPLAY: force GLFW onto X11/XWayland — the native Wayland
 # backend SEGFAULTS in libwayland-client (3x on 2026-08-21, incl. 12:11 BEFORE
 # any sim changes: kernel "segfault ... in libwayland-client.so" at identical
 # offset) AND a native-Wayland window is invisible to wmctrl/x11grab (--record).
-( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
 fi
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"

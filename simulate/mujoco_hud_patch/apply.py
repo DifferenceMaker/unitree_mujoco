@@ -40,6 +40,13 @@ HUNKS = [
     walk_hud::render(rect, &this->platform_ui->mjr_context());
     std::string hud_fsm = policy_hud::get_fsm_list();'''),
 
+    # ---- reward LEDGER gauges (2026-08-21): top-left bar column, auto-hides
+    #      when the sidecar's --ledger stream stops ----
+    (CC, 'policy_hud::ledger_render',
+     '''    walk_hud::render(rect, &this->platform_ui->mjr_context());''',
+     '''    walk_hud::render(rect, &this->platform_ui->mjr_context());
+    policy_hud::ledger_render(rect, &this->platform_ui->mjr_context());'''),
+
     # ---- desk click-to-reach (click_target.h) ----
     (CC, '#include "click_target.h"',
      '#include "policy_hud.h"\n#include "arm_gui.h"',
