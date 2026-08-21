@@ -945,6 +945,16 @@ void user_key_cb(GLFWwindow* window, int key, int scancode, int act, int mods) {
 // run event loop
 int main(int argc, char **argv)
 {
+#if defined(GLFW_PLATFORM_X11)
+  // Force the X11/XWayland backend (2026-08-21): GLFW's Wayland backend
+  // SEGFAULTS in libwayland-client after minutes of running (5 identical
+  // kernel traces), and a native-Wayland window is invisible to
+  // wmctrl/x11grab (--record). Neither unsetting WAYLAND_DISPLAY nor a
+  // GLFW_PLATFORM env var helps — wl_display_connect(NULL) falls back to the
+  // XDG_RUNTIME_DIR/wayland-0 socket, and the env var is not a GLFW API.
+  // The init HINT is the only reliable switch (GLFW >= 3.4).
+  glfwInitHint(GLFW_PLATFORM, GLFW_PLATFORM_X11);
+#endif
 
   // display an error if running on macOS under Rosetta 2
 #if defined(__APPLE__) && defined(__AVX__)

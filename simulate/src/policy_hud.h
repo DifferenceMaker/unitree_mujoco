@@ -234,7 +234,10 @@ inline void set_ledger(const std::string& field) {
   ledger_ms() = ledger_now_ms();
 }
 
-// Call from simulate.cc Render() (viewport = rect). Top-left column.
+// Call from simulate.cc Render() (viewport = rect). LEFT column, positioned
+// between the POLICY status block (top-left) and the METRICS block
+// (bottom-left); spacing derived from the font metrics (operator layout
+// feedback 2026-08-21).
 inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   std::vector<LedgerRow> rows;
   {
@@ -244,39 +247,45 @@ inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   }
   if (rows.empty()) return;
 
-  const int name_w = 150, bar_w = 130, bar_h = 9, gap = 17, val_w = 62;
+  const int ch = con->charHeight > 0 ? con->charHeight : 15;  // text px height
+  const int cw = std::max(6, ch * 6 / 10);                    // ~avg char px
+  const int gap = ch + 6;                 // row pitch from font height
+  const int name_w = 19 * cw;             // name column
+  const int bar_w = 16 * cw, bar_h = ch - 4;
   const int x0 = rect.left + 12;
-  int y = rect.bottom + rect.height - 40;  // top-left, below the top edge
+
+  // vertical placement: below the POLICY status block (~11 text lines from
+  // the top), rows going DOWN, stopping above the METRICS block.
+  int y = rect.bottom + rect.height - 11 * (ch + 5) - gap;   // first row (TOTAL)
+  const int y_floor = rect.bottom + 12 * (ch + 5);           // METRICS clearance
 
   for (const auto& r : rows) {
-    // name (left) + value (right of bar) as text; bar in the middle
-    const float ty = static_cast<float>(y) / rect.height;
-    mjr_text(mjFONT_SHADOW, r.name.c_str(), con,
-             static_cast<float>(x0) / rect.width, ty, 0.9f, 0.9f, 0.9f);
+    if (y < y_floor) break;
+    const float tx = static_cast<float>(x0 - rect.left) / rect.width;
+    const float ty = static_cast<float>(y - rect.bottom) / rect.height;
+    mjr_text(mjFONT_SHADOW, r.name.c_str(), con, tx, ty, 0.92f, 0.92f, 0.92f);
     const int bx = x0 + name_w;
-    mjrRect track{bx, y - 1, bar_w, bar_h};
+    mjrRect track{bx, y, bar_w, bar_h};
     mjr_rectangle(track, 0.15f, 0.15f, 0.15f, 0.75f);
     const int zero_px = bx + bar_w / 2;
-    float frac = std::fmax(-1.f, std::fmin(1.f, r.frac));
+    const float frac = std::fmax(-1.f, std::fmin(1.f, r.frac));
     const int fill_px = static_cast<int>(std::fabs(frac) * (bar_w / 2));
     if (fill_px > 0) {
-      mjrRect fill{frac >= 0 ? zero_px : zero_px - fill_px, y - 1,
+      mjrRect fill{frac >= 0.f ? zero_px : zero_px - fill_px, y,
                    std::max(2, fill_px), bar_h};
-      if (frac >= 0)
+      if (frac >= 0.f)
         mjr_rectangle(fill, 0.35f, 0.78f, 0.39f, 0.9f);   // income: green
       else
         mjr_rectangle(fill, 0.88f, 0.35f, 0.31f, 0.9f);   // penalty: red
     }
-    mjrRect zero{zero_px - 1, y - 3, 2, bar_h + 4};
+    mjrRect zero{zero_px - 1, y - 2, 2, bar_h + 4};
     mjr_rectangle(zero, 0.55f, 0.55f, 0.55f, 0.9f);
     char vtxt[32];
     std::snprintf(vtxt, sizeof vtxt, "%+7.2f", r.val);
     mjr_text(mjFONT_SHADOW, vtxt, con,
-             static_cast<float>(bx + bar_w + 8) / rect.width, ty,
+             static_cast<float>(bx + bar_w + 8 - rect.left) / rect.width, ty,
              0.85f, 0.85f, 0.85f);
-    (void)val_w;
     y -= gap;
-    if (y < rect.bottom + 200) break;  // don't collide with the METRICS block
   }
 }
 
