@@ -234,10 +234,15 @@ inline void set_ledger(const std::string& field) {
   ledger_ms() = ledger_now_ms();
 }
 
-// Call from simulate.cc Render() (viewport = rect). LEFT column, positioned
-// between the POLICY status block (top-left) and the METRICS block
-// (bottom-left); spacing derived from the font metrics (operator layout
-// feedback 2026-08-21).
+// Call from simulate.cc Render() (viewport = rect). LEFT column between the
+// POLICY status block (top-left) and the METRICS block (bottom-left).
+// Layout v4 (2026-08-21): each row is one mjr_overlay call with an explicit
+// pixel-rect viewport — the SAME coordinate system as mjr_rectangle, so text
+// and bars align by construction (mjr_text's normalized coords proved
+// unpredictable: names landed on the bars). name = overlay left column,
+// value = overlay2 right column, bar drawn into the row rect between them.
+// Bars update at the publish rate (50 Hz); NUMBERS are a 5 Hz snapshot
+// (walk_hud flicker lesson).
 inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   std::vector<LedgerRow> rows;
   {
@@ -247,45 +252,54 @@ inline void ledger_render(const mjrRect& rect, const mjrContext* con) {
   }
   if (rows.empty()) return;
 
-  const int ch = con->charHeight > 0 ? con->charHeight : 15;  // text px height
-  const int cw = std::max(6, ch * 6 / 10);                    // ~avg char px
-  const int gap = ch + 6;                 // row pitch from font height
-  const int name_w = 19 * cw;             // name column
-  const int bar_w = 16 * cw, bar_h = ch - 4;
-  const int x0 = rect.left + 12;
+  // 5 Hz numeric snapshot: hold displayed values, refresh 0.2s
+  static std::vector<float> snap_vals;
+  static double snap_ms = 0.0;
+  const double now = ledger_now_ms();
+  if (now - snap_ms > 200.0 || snap_vals.size() != rows.size()) {
+    snap_vals.resize(rows.size());
+    for (size_t i = 0; i < rows.size(); ++i) snap_vals[i] = rows[i].val;
+    snap_ms = now;
+  }
 
-  // vertical placement: below the POLICY status block (~11 text lines from
-  // the top), rows going DOWN, stopping above the METRICS block.
-  int y = rect.bottom + rect.height - 11 * (ch + 5) - gap;   // first row (TOTAL)
-  const int y_floor = rect.bottom + 12 * (ch + 5);           // METRICS clearance
+  const int ch = con->charHeight > 0 ? con->charHeight : 15;
+  const int cw = std::max(6, ch * 6 / 10);
+  const int row_h = ch + 6;
+  const int name_w = 20 * cw, bar_w = 14 * cw, val_w = 9 * cw;
+  const int row_w = name_w + bar_w + val_w;
+  const int x0 = rect.left + 10;
 
-  for (const auto& r : rows) {
+  int y_top = rect.bottom + rect.height - 12 * (ch + 5);  // below POLICY block
+  const int y_floor = rect.bottom + 10 * (ch + 5);        // above METRICS block
+
+  for (size_t i = 0; i < rows.size(); ++i) {
+    const int y = y_top - static_cast<int>(i + 1) * row_h;
     if (y < y_floor) break;
-    const float tx = static_cast<float>(x0 - rect.left) / rect.width;
-    const float ty = static_cast<float>(y - rect.bottom) / rect.height;
-    mjr_text(mjFONT_SHADOW, r.name.c_str(), con, tx, ty, 0.92f, 0.92f, 0.92f);
+    const LedgerRow& r = rows[i];
+    char vtxt[32];
+    std::snprintf(vtxt, sizeof vtxt, "%+8.2f", snap_vals[i]);
+    // one overlay per row: its viewport rect IS the row in framebuffer px —
+    // name renders top-left, value top-right, dark bg strip for free.
+    mjrRect rowrect{x0, y, row_w, row_h};
+    mjr_overlay(mjFONT_NORMAL, mjGRID_TOPLEFT, rowrect, r.name.c_str(), vtxt, con);
+    // bar drawn over the strip, between the name and value columns
     const int bx = x0 + name_w;
-    mjrRect track{bx, y, bar_w, bar_h};
-    mjr_rectangle(track, 0.15f, 0.15f, 0.15f, 0.75f);
+    const int by = y + 3, bar_h = row_h - 8;
+    mjrRect track{bx, by, bar_w, bar_h};
+    mjr_rectangle(track, 0.13f, 0.13f, 0.13f, 0.85f);
     const int zero_px = bx + bar_w / 2;
     const float frac = std::fmax(-1.f, std::fmin(1.f, r.frac));
     const int fill_px = static_cast<int>(std::fabs(frac) * (bar_w / 2));
     if (fill_px > 0) {
-      mjrRect fill{frac >= 0.f ? zero_px : zero_px - fill_px, y,
+      mjrRect fill{frac >= 0.f ? zero_px : zero_px - fill_px, by,
                    std::max(2, fill_px), bar_h};
       if (frac >= 0.f)
-        mjr_rectangle(fill, 0.35f, 0.78f, 0.39f, 0.9f);   // income: green
+        mjr_rectangle(fill, 0.35f, 0.78f, 0.39f, 0.95f);   // income: green
       else
-        mjr_rectangle(fill, 0.88f, 0.35f, 0.31f, 0.9f);   // penalty: red
+        mjr_rectangle(fill, 0.88f, 0.35f, 0.31f, 0.95f);   // penalty: red
     }
-    mjrRect zero{zero_px - 1, y - 2, 2, bar_h + 4};
-    mjr_rectangle(zero, 0.55f, 0.55f, 0.55f, 0.9f);
-    char vtxt[32];
-    std::snprintf(vtxt, sizeof vtxt, "%+7.2f", r.val);
-    mjr_text(mjFONT_SHADOW, vtxt, con,
-             static_cast<float>(bx + bar_w + 8 - rect.left) / rect.width, ty,
-             0.85f, 0.85f, 0.85f);
-    y -= gap;
+    mjrRect zero{zero_px - 1, by - 2, 2, bar_h + 4};
+    mjr_rectangle(zero, 0.6f, 0.6f, 0.6f, 0.95f);
   }
 }
 
