@@ -79,6 +79,15 @@ elif [ "$MODE" = "c" ]; then
   echo "      launched FOREGROUND below so THIS terminal's keyboard drives teleop."
   need_venv ActionModule                    # official venv (pin+casadi Pinocchio IK, ikpy, …)
   ln -sfn /workspace/.global /global               # ActionModule hardcodes /global/... paths
+elif [ "$MODE" = "w" ]; then
+  echo ">>> [container] MODE W — WALK: keyboard velocity teleop"
+  echo "      (host 'keys' terminal -> FIFO -> walk_teleop -> /MovementModule/cmd_vel;"
+  echo "       arrows = vx/vy, q/e = yaw, space = zero, tab = sticky)"
+  need_venv MovementModule
+  ( source /workspace/.venv/MovementModule/bin/activate
+    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+    TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.teleop_keys \
+    python3 /workspace/MovementModule/Utils/walk_teleop.py ) & PIDS+=($!)
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
