@@ -148,6 +148,14 @@ resolve_ms() {  # exact dir > exact job-name boundary (*_<name>_<date>) > newest
   [[ -n "$m" ]] && basename "$m"
 }
 MS="$(resolve_ms "$POLICY")"
+# FALLBACK ROOT (2026-08-25): pod-harvested milestones exist only in the repo
+# archive (aspired-isaac-lab/milestone_checkpoints carries exported/ + params/
+# via git) — not under this machine's logs/milestones. Same layout, so retry there.
+if [[ -z "$MS" || ! -d "$MILESTONES/$MS" ]]; then
+  MILESTONES="$REPOS/aspired-isaac-lab/milestone_checkpoints"
+  MS="$(resolve_ms "$POLICY")"
+  [[ -n "$MS" ]] && echo ">>> [policy] resolved from the repo archive: $MILESTONES/$MS"
+fi
 [[ -n "$MS" && -d "$MILESTONES/$MS" ]] || { echo "FATAL: no milestone matches --policy '$POLICY' under $MILESTONES"; exit 2; }
 for f in exported/policy.onnx params/deploy.yaml; do
   [[ -f "$MILESTONES/$MS/$f" ]] || { echo "FATAL: $MS missing $f (harvest/export incomplete)"; exit 2; }
