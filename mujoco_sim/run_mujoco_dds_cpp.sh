@@ -34,4 +34,4 @@ echo ">>> [dds_cpp] shadow project $SHADOW"
 echo ">>> [dds_cpp] slot $SLOT -> $MS  (hardware config untouched)"
 echo ">>> [dds_cpp] gamepad: LT+up = FixStand, then the $SLOT combo (see config.yaml) engages the policy"
 export CTRL_BIN="$SHADOW/build/h1_2_ctrl"
-exec bash "$(dirname "$0")/run_mujoco_sim.sh" ref
+bash "$(dirname "$0")/run_mujoco_sim.sh" ref   # no exec: the launcher process stays alive for fleetdeck's status check
