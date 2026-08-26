@@ -99,7 +99,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
-  --record)       RECORD=1; shift;;   # x11grab the sim window -> LOG_DIR/mujoco_rec_<stamp>.mp4, auto-stop on exit
+  --record)       RECORD=1; shift;;
+  --record-file)  RECORD=1; RECORD_FILE_OPT="$2"; shift 2;;   # fleetdeck: record straight into the milestone folder   # x11grab the sim window -> LOG_DIR/mujoco_rec_<stamp>.mp4, auto-stop on exit
   --no-ledger)    LEDGER=0; shift;;   # disable the live reward-ledger overlay + tape
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
@@ -216,6 +217,7 @@ LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 MJ_LOG="$LOG_DIR/mujoco_$STAMP.log"
 RECORD_FILE="$LOG_DIR/mujoco_rec_$STAMP.mp4"
+[[ -n "${RECORD_FILE_OPT:-}" ]] && { RECORD_FILE="$RECORD_FILE_OPT"; mkdir -p "$(dirname "$RECORD_FILE")"; }
 METRICS_LOG="$LOG_DIR/balance_metrics_${MODE}_$STAMP.log"
 METRICS_FIFO="/tmp/archb_metrics.stdin"
 BAND_FLAG="$SIM/logs/.band_release"                            # host path (shared mount, gitignored)

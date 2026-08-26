@@ -39,6 +39,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --policy) POLICY="$2"; shift 2;;
   --quiet)  DEBUG=0; shift;;
   --record) RECORD=1; shift;;
+  --record-file) RECORD=1; RECORD_FILE_OPT="$2"; shift 2;;   # fleetdeck: record straight into the milestone folder
   -h|--help) sed -n '2,24p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: walk | keys | stop)"; exit 1;;
 esac; done
@@ -99,6 +100,7 @@ LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 MJ_LOG="$LOG_DIR/mujoco_walk_$STAMP.log"
 RECORD_FILE="$LOG_DIR/mujoco_walk_rec_$STAMP.mp4"
+[[ -n "${RECORD_FILE_OPT:-}" ]] && { RECORD_FILE="$RECORD_FILE_OPT"; mkdir -p "$(dirname "$RECORD_FILE")"; }
 BAND_FLAG="$SIM/logs/.band_release"
 BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"
 CONTAINER="archb_walk_$$"
