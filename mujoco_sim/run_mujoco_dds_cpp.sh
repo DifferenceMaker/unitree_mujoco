@@ -25,9 +25,14 @@ for f in exported/policy.onnx params/deploy.yaml; do [[ -f "$MS/$f" ]] || { echo
 SHADOW="/tmp/fdk_dds/$(basename "$MS")"; rm -rf "$SHADOW"; mkdir -p "$SHADOW/build" "$SHADOW/config"
 cp "$PROJ/build/h1_2_ctrl" "$SHADOW/build/h1_2_ctrl"
 # point ONLY the chosen slot's policy_dir at the milestone (absolute path)
-awk -v slot="$SLOT" -v ms="$MS" '
+# chosen slot -> the milestone (absolute); EVERY OTHER slot's relative policy_dir is
+# absolutized against the real project dir — h1_2_ctrl resolves them against the
+# binary's location, which in the /tmp shadow points at nothing (2026-08-27 crash:
+# State_Balance_orient iterated /tmp/fdk_dds/<slug>/../../../logs/... and aborted).
+awk -v slot="$SLOT" -v ms="$MS" -v proj="$PROJ" '
   /^  [A-Za-z_]+:/ { in_slot = ($1 == slot":") }
   in_slot && /^    policy_dir:/ { sub(/policy_dir:.*/, "policy_dir: " ms "   # fleetdeck dds_cpp test"); }
+  !in_slot && /^    policy_dir:[ ]*[^\/]/ { sub(/policy_dir:[ ]*/, "policy_dir: " proj "/"); }
   { print }' "$PROJ/config/config.yaml" > "$SHADOW/config/config.yaml"
 grep -n "fleetdeck dds_cpp test" "$SHADOW/config/config.yaml" >/dev/null || { echo "FATAL: slot '$SLOT' has no policy_dir line in config.yaml"; exit 2; }
 echo ">>> [dds_cpp] shadow project $SHADOW"
