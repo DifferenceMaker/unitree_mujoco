@@ -106,6 +106,7 @@ BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"
 CONTAINER="archb_walk_$$"
 
 cleanup() {
+  [[ -n "${WC_PID:-}" ]] && kill "$WC_PID" 2>/dev/null
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "${MJ_PID:-}" ]] && kill "$MJ_PID" 2>/dev/null
   rm -f "$BAND_FLAG"
@@ -134,6 +135,10 @@ fi
   echo ""; echo ">>> [watchdog] sim died — tearing down the stack"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 ) &
 
+# walk_hud gauge feeder: host-side mirror of walk_teleop's printed cmd -> rt/wirelesscontroller
+# (the container has no unitree_sdk2py; walk_hud fills from this topic, tick = measured)
+( sleep 6; python3 "$SIM/tools/wc_mirror.py" "$LOG_DIR/stack_walk_$STAMP.log" 1 lo ) > "$LOG_DIR/wc_mirror_$STAMP.log" 2>&1 &
+WC_PID=$!
 echo ">>> [2] REAL Arch B stack (BridgeModule --sim + MovementModule walk kind + walk_teleop)"
 echo "    drive it:   bash $SIM/run_mujoco_walk_line.sh keys      (second terminal)"
 echo "    stack log:  $LOG_DIR/stack_walk_$STAMP.log"
