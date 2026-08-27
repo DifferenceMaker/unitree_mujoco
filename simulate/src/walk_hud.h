@@ -110,7 +110,9 @@ inline void render(const mjrRect& rect, const mjrContext* con) {
 
   const int w = 240, h = 12, gap = 26;
   const int x = rect.left + rect.width - w - 20;
-  int y = rect.bottom + 104;
+  // 150: clear of the 4-line BOTTOMRIGHT text block at 150% font (operator
+  // 2026-08-27: bars overlapped the numeric text)
+  int y = rect.bottom + 150;
 
   // DISPLAY convention is SCREEN-intuitive, not robot-frame: bar fill moving
   // RIGHT = strafe right / clockwise yaw (robot-frame +y is LEFT and +wz is
