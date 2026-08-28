@@ -92,13 +92,26 @@ else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
 
-if [ "${ARCHB_LEAN_TELEOP:-0}" = "1" ]; then
-  echo ">>> [container] LEAN TELEOP — host 'lean' terminal -> FIFO -> lean_teleop -> /MovementModule/lean_cmd"
-  need_venv MovementModule
-  ( source /workspace/.venv/MovementModule/bin/activate
-    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
-    TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.lean_keys \
-    python3 /workspace/MovementModule/Utils/lean_teleop.py ) & PIDS+=($!)
+if [ "${ARCHB_LEAN:-0}" = "1" ]; then
+  # Desk6/6b lean-command policy: the sim's 'lean rad' slider writes .lean_cmd
+  # (ARCHB_LEAN_FILE) -> lean_relay (ActionModule venv) -> /ActionModule/robot_lean
+  # -> MovementModule obs. ARCHB_LEAN_KEYS=1 instead starts the FIFO keyboard
+  # teleop (host 'lean' terminal) — never both: two producers on one topic.
+  need_venv ActionModule
+  if [ "${ARCHB_LEAN_KEYS:-0}" = "1" ]; then
+    echo ">>> [container] LEAN KEYS — host 'lean' terminal -> FIFO -> lean_teleop -> /ActionModule/robot_lean"
+    need_venv MovementModule
+    ( source /workspace/.venv/MovementModule/bin/activate
+      PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+      TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.lean_keys \
+      python3 /workspace/MovementModule/Utils/lean_teleop.py ) & PIDS+=($!)
+  else
+    echo ">>> [container] LEAN RELAY — MuJoCo 'lean rad' slider (.lean_cmd) -> lean_relay -> /ActionModule/robot_lean"
+    ( source /workspace/.venv/ActionModule/bin/activate
+      PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+      LEAN_CMD_FILE=/unitree_mujoco/mujoco_sim/logs/.lean_cmd \
+      python3 /workspace/ActionModule/Utils/lean_relay.py ) & PIDS+=($!)
+  fi
 fi
 
 echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"

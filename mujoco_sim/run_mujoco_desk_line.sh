@@ -116,7 +116,7 @@ case "$PROFILE" in
   teleop)    MODE="c"; DOCKER_TTY="-it";;     # keys arrive via the FIFO ('keys' terminal)
   lean)
     # LEAN KEYS (Desk6/6b lean-command class, 2026-08-28): a second terminal that
-    # drives /MovementModule/lean_cmd through lean_teleop.py in the container
+    # drives /ActionModule/robot_lean through lean_teleop.py in the container (needs ARCHB_LEAN_KEYS=1 at launch)
     # (own FIFO — never share the arm-teleop FIFO, two readers split bytes).
     LFIFO="$SIM/logs/.lean_keys"
     [[ -p "$LFIFO" ]] || mkfifo "$LFIFO"
@@ -197,8 +197,9 @@ cp "$MILESTONES/$MS/MILESTONE.md"         "$STAGE/$MS/" 2>/dev/null || true
 printf '%s\n' "$MS" > "$STAGE/CURRENT"
 LEAN_TELEOP=0
 if grep -q "lean_command" "$STAGE/$MS/deploy.yaml" 2>/dev/null; then
-  LEAN_TELEOP=1; rm -f "$SIM/logs/.lean_keys"; mkfifo "$SIM/logs/.lean_keys"
-  echo ">>> [lean] lean-command policy: lean_teleop starts in the container — drive it from a 2nd terminal: bash run_mujoco_desk_line.sh lean"
+  LEAN_TELEOP=1; rm -f "$SIM/logs/.lean_keys" "$SIM/logs/.lean_cmd"; mkfifo "$SIM/logs/.lean_keys"; echo '{"lean":0.0}' > "$SIM/logs/.lean_cmd"
+  echo ">>> [lean] lean-command policy: the 'lean rad' slider in the MuJoCo Arm Cmd panel -> .lean_cmd -> lean_relay (ActionModule) -> /ActionModule/robot_lean -> MovementModule"
+  echo ">>> [lean] keyboard alternative: ARCHB_LEAN_KEYS=1 bash run_mujoco_desk_line.sh ... then 'bash run_mujoco_desk_line.sh lean' in a 2nd terminal"
 fi
 echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
 
@@ -334,13 +335,13 @@ fi
 if [[ "$PROFILE" == "teleop" ]]; then
   # teleop owns the terminal keys — detach the sim's stdin so its `push`
   # reader can't steal keystrokes from the teleop dispatcher.
-  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
+  ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" ARCHB_LEAN_FILE="$SIM/logs/.lean_cmd" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo < /dev/null ) >"$MJ_LOG" 2>&1 &
 else
   # env -u WAYLAND_DISPLAY: force GLFW onto X11/XWayland — the native Wayland
 # backend SEGFAULTS in libwayland-client (3x on 2026-08-21, incl. 12:11 BEFORE
 # any sim changes: kernel "segfault ... in libwayland-client.so" at identical
 # offset) AND a native-Wayland window is invisible to wmctrl/x11grab (--record).
-( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
+( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ANCHOR_WANDER="$ANCHOR_WANDER" ARCHB_LEAN_FILE="$SIM/logs/.lean_cmd" "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo ) >"$MJ_LOG" 2>&1 &
 fi
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG  (disable the elastic band in the sim window for free-standing balance)"
@@ -450,7 +451,7 @@ else
     -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}"
     -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
     -e ARM_IK_DEMO="$ARM_DEMO"
-    -e ARCHB_LEAN_TELEOP="${LEAN_TELEOP:-0}"
+    -e ARCHB_LEAN="${LEAN_TELEOP:-0}" -e ARCHB_LEAN_KEYS="${ARCHB_LEAN_KEYS:-0}"
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
     -v "$ASPIRED:/workspace" -v "$STAGE:/workspace/MovementModule/policy"
     -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python"

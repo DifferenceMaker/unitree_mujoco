@@ -28,6 +28,9 @@
 #include <mutex>
 #include <new>
 #include <sstream>
+#include <fstream>
+#include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <sys/stat.h>
 
@@ -101,6 +104,8 @@ inline ElasticBand elastic_band;
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_arm_cmd_pub;
 // Anchor point publisher (rt/anchor_point): base-frame anchor for 90-obs policies.
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_anchor_pub;
+// Lean command publisher (rt/lean_cmd): {"lean": rad} from the Lean slider — Desk6/6b lean class.
+static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_lean_pub;
 
 // Metrics zero command publisher (sim -> sidecar on rt/metrics_cmd). Lets a sim
 // keypress reset the sidecar's lean/touchdown counters from the GUI.
@@ -844,6 +849,10 @@ void *UnitreeSdk2BridgeThread(void *arg)
       std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
           "rt/anchor_point");
   g_anchor_pub->InitChannel();
+  g_lean_pub =
+      std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+          "rt/lean_cmd");
+  g_lean_pub->InitChannel();
   g_sim_pose_pub =
       std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
           "rt/sim_base_pose");
@@ -925,6 +934,25 @@ static void publish_arm_pose(const std::array<float, 14> &pose, float transition
   msg.data(js.str());
   g_arm_cmd_pub->Write(msg, 0);
   std::cout << "[ARM_CMD] published preset arm pose (transition " << transition_s << "s)" << std::endl;
+}
+
+static void publish_lean(float lean_rad) {
+  std::ostringstream js;
+  js << "{\"lean\":" << lean_rad << "}";
+  // FILE path (ARCHB_LEAN_FILE, shared mount): the ActionModule venv in the arch-B
+  // container has no unitree_sdk2py, so lean_relay.py polls this file — the same
+  // mechanism as .arm_targets/.arm_wish. Atomic write (tmp + rename).
+  if (const char* lf = std::getenv("ARCHB_LEAN_FILE"); lf && *lf) {
+    const std::string tmp = std::string(lf) + ".tmp";
+    { std::ofstream f(tmp); f << js.str() << "\n"; }
+    std::rename(tmp.c_str(), lf);
+  }
+  if (g_lean_pub) {
+    std_msgs::msg::dds_::String_ msg;
+    msg.data(js.str());
+    g_lean_pub->Write(msg, 0);
+  }
+  std::cout << "[LEAN_CMD] lean " << lean_rad << " rad (file+dds)" << std::endl;
 }
 
 // user keyboard callback
@@ -1107,6 +1135,7 @@ int main(int argc, char **argv)
   // Feature D: route the Arm Cmd sliders' publishes through the same arm-pose
   // publisher the keyboard presets use (no-ops until the bridge thread inits it).
   arm_gui::publish_fn() = publish_arm_pose;
+  arm_gui::lean_publish_fn() = publish_lean;    // Lean slider -> rt/lean_cmd
   // start simulation UI loop (blocking call)
   glfwSetKeyCallback(static_cast<mj::GlfwAdapter*>(sim->platform_ui.get())->window_,user_key_cb);
   sim->RenderLoop();

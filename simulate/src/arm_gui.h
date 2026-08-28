@@ -48,4 +48,21 @@ inline void publish_from_sliders() {
   if (publish_fn()) publish_fn()(pose, static_cast<float>(s[4]));
 }
 
+
+// ── LEAN COMMAND (2026-08-28, Desk6/6b lean-command policies) ──────────────
+// One slider: commanded pelvis pitch in RADIANS, forward-positive, trained range
+// U(-0.10, +0.35). Travels sim -> DDS rt/lean_cmd -> ActionModule lean_relay ->
+// ROS2 /ActionModule/robot_lean -> MovementModule obs slot "lean_command".
+inline double& lean_slider() {
+  static double v = 0.0;
+  return v;
+}
+inline std::function<void(float)>& lean_publish_fn() {
+  static std::function<void(float)> fn;
+  return fn;
+}
+inline bool is_lean_slider(const void* p) { return p == static_cast<const void*>(&lean_slider()); }
+inline void publish_lean_from_slider() {
+  if (lean_publish_fn()) lean_publish_fn()(static_cast<float>(lean_slider()));
+}
 }  // namespace arm_gui

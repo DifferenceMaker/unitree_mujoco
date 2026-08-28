@@ -14,7 +14,8 @@ It is idempotent: each hunk is skipped if already present.
 What it adds (all DEBUG/sim2sim-only, no effect on physics):
   simulate.cc : include policy_hud.h + arm_gui.h; policy/payload/metrics HUD
                 overlay in Render(); "Arm Cmd" slider section (MakeArmSection,
-                registered in MakeUiSections) + its publish hook in UiEvent.
+                registered in MakeUiSections) + its publish hook in UiEvent;
+                "lean rad" slider (Desk6/6b lean command) in the same section.
   simulate.h  : default Vertical Sync off (vsync = 0).
 The companion headers (policy_hud.h, arm_gui.h) live in simulate/src/ and ARE
 tracked by this repo.
@@ -202,6 +203,12 @@ void MakeUiSections(mj::Simulate* sim, const mjModel* m, const mjData* d) {'''),
 
   // shortcut not handled by UI'''),
 
+    (CC, 'arm_gui::lean_slider()',
+     '    {mjITEM_SLIDERNUM, "slew s",   2, arm_gui::sliders().data()+4, "0 5"},\n    {mjITEM_END}\n  };\n  mjui_add(&sim->ui1, defArm);',
+     '    {mjITEM_SLIDERNUM, "slew s",   2, arm_gui::sliders().data()+4, "0 5"},\n    {mjITEM_SLIDERNUM, "lean rad", 2, &arm_gui::lean_slider(),      "-0.10 0.35"},\n    {mjITEM_END}\n  };\n  mjui_add(&sim->ui1, defArm);'),
+    (CC, 'arm_gui::is_lean_slider(it->pdata)',
+     '    if (it && arm_gui::owns(it->pdata)) {\n      arm_gui::publish_from_sliders();\n    }\n',
+     '    if (it && arm_gui::owns(it->pdata)) {\n      arm_gui::publish_from_sliders();\n    }\n    // Lean slider (Desk6/6b lean-command policies): publish on any edit.\n    if (it && arm_gui::is_lean_slider(it->pdata)) {\n      arm_gui::publish_lean_from_slider();\n    }\n'),
     (H, 'int vsync = 0;',
      '  int vsync = 1;',
      '  int vsync = 0;  // off by default (uncapped frame rate; toggle in the Rendering UI)'),
