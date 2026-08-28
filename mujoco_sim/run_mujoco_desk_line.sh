@@ -82,7 +82,7 @@ DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 # ── profile + options ────────────────────────────────────────────────────────
 PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"; BODY_EXPLICIT=0; RECORD=0; LEDGER=1
 while [[ $# -gt 0 ]]; do case "$1" in
-  balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
+  balance|arms|arms-demo|teleop|ref|stop|keys|lean) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
@@ -113,6 +113,17 @@ case "$PROFILE" in
   arms)      MODE="b";;
   arms-demo) MODE="b"; ARM_DEMO=1;;
   teleop)    MODE="c"; DOCKER_TTY="-it";;     # keys arrive via the FIFO ('keys' terminal)
+  lean)
+    # LEAN KEYS (Desk6/6b lean-command class, 2026-08-28): a second terminal that
+    # drives /MovementModule/lean_cmd through lean_teleop.py in the container
+    # (own FIFO — never share the arm-teleop FIFO, two readers split bytes).
+    LFIFO="$SIM/logs/.lean_keys"
+    [[ -p "$LFIFO" ]] || mkfifo "$LFIFO"
+    echo "LEAN KEYS — w/s = lean forward/back 0.05 rad, 0/space = upright, f = max forward, ESC = quit"
+    echo "  (the rig must have been launched with a lean-class policy, e.g. --policy dp6b_leancmd)"
+    stty -icanon min 1 time 0 -echo; trap 'stty sane' EXIT INT TERM
+    python3 "$SIM/tools/teleop_keys_feed.py" "$LFIFO"
+    exit 0;;
   keys)
     # Dedicated teleop key terminal: raw single-key reads forwarded to the
     # FIFO the in-container teleop dispatcher reads (TELEOP_INPUT). Run this
@@ -181,6 +192,11 @@ cp "$MILESTONES/$MS/params/deploy.yaml"   "$STAGE/$MS/deploy.yaml"
 cp "$MILESTONES/$MS/overrides.json"       "$STAGE/$MS/" 2>/dev/null || true
 cp "$MILESTONES/$MS/MILESTONE.md"         "$STAGE/$MS/" 2>/dev/null || true
 printf '%s\n' "$MS" > "$STAGE/CURRENT"
+LEAN_TELEOP=0
+if grep -q "lean_command" "$STAGE/$MS/deploy.yaml" 2>/dev/null; then
+  LEAN_TELEOP=1; rm -f "$SIM/logs/.lean_keys"; mkfifo "$SIM/logs/.lean_keys"
+  echo ">>> [lean] lean-command policy: lean_teleop starts in the container — drive it from a 2nd terminal: bash run_mujoco_desk_line.sh lean"
+fi
 echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
 
 # desk scene: the desk + click-to-reach markers must be in the sim
@@ -431,6 +447,7 @@ else
     -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}"
     -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
     -e ARM_IK_DEMO="$ARM_DEMO"
+    -e ARCHB_LEAN_TELEOP="${LEAN_TELEOP:-0}"
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
     -v "$ASPIRED:/workspace" -v "$STAGE:/workspace/MovementModule/policy"
     -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python"

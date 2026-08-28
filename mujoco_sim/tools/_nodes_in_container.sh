@@ -92,6 +92,15 @@ else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi
 
+if [ "${ARCHB_LEAN_TELEOP:-0}" = "1" ]; then
+  echo ">>> [container] LEAN TELEOP — host 'lean' terminal -> FIFO -> lean_teleop -> /MovementModule/lean_cmd"
+  need_venv MovementModule
+  ( source /workspace/.venv/MovementModule/bin/activate
+    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+    TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.lean_keys \
+    python3 /workspace/MovementModule/Utils/lean_teleop.py ) & PIDS+=($!)
+fi
+
 echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"
 need_venv MovementModule                    # onnxruntime lives here (silent system-python fallback = cryptic crash)
 ( source /workspace/.venv/MovementModule/bin/activate
