@@ -80,17 +80,17 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"; RECORD=0; LEDGER=1
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"; BODY_EXPLICIT=0; RECORD=0; LEDGER=1
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
   --mode-b) echo "NOTE: --mode-b is now the 'arms' profile"; PROFILE="arms"; shift;;
   --ref)    PROFILE="ref"; shift;;
   --policy)       POLICY="$2"; shift 2;;
-  --stock)        BODY="stock"; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
+  --stock)        BODY="stock"; BODY_EXPLICIT=1; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
                                           # for policies trained WITHOUT the SYM tree, e.g. the
                                           # entire dp2b batch (see session 2026-07-28 two-urdf trap)
-  --comx06)       BODY="comx06"; shift;;  # comx06 body + RIGID floor (new-soles era, 2026-07-30+):
+  --comx06)       BODY="comx06"; BODY_EXPLICIT=1; shift;;  # comx06 body + RIGID floor (new-soles era, 2026-07-30+):
                                           # dp3_anchor and every desk policy warmstarted off the
                                           # p12g/comx06 general line trains on the Isaac rigid plane
   --no-arm-ready) ARM_READY=0; shift;;
@@ -161,6 +161,19 @@ fi
 for f in exported/policy.onnx params/deploy.yaml; do
   [[ -f "$MILESTONES/$MS/$f" ]] || { echo "FATAL: $MS missing $f (harvest/export incomplete)"; exit 2; }
 done
+# BODY AUTO-DETECT (2026-08-28, operator caught "scene=scene_sym_soft07_desk" under
+# dp6b): the SYM + shoe-era soft07 default is a legacy trap — every desk/balance
+# policy since dp3/p12g trains on h1_2_comx06 + a rigid plane. With no explicit body
+# flag, read the training URDF from the staged milestone's params/env.yaml.
+if [[ $BODY_EXPLICIT -eq 0 && -f "$MILESTONES/$MS/params/env.yaml" ]]; then
+  if grep -q "h1_2_comx06" "$MILESTONES/$MS/params/env.yaml"; then
+    BODY="comx06"; echo ">>> [body] env.yaml names h1_2_comx06 -> --comx06 (rigid floor) AUTO"
+  elif grep -q "h1_2_stock" "$MILESTONES/$MS/params/env.yaml"; then
+    BODY="stock";  echo ">>> [body] env.yaml names h1_2_stock -> --stock AUTO"
+  else
+    echo ">>> [body] WARNING: could not identify the training body from env.yaml ($(grep -o 'h1_2[a-z0-9_]*\.urdf' "$MILESTONES/$MS/params/env.yaml" | sort -u | tr '\n' ' ')) — keeping legacy SYM + soft07; pass --comx06/--stock explicitly"
+  fi
+fi
 STAGE="$SIM/logs/.desk_policy_stage"
 rm -rf "$STAGE"; mkdir -p "$STAGE/$MS"
 cp "$MILESTONES/$MS/exported/policy.onnx" "$STAGE/$MS/policy.onnx"
