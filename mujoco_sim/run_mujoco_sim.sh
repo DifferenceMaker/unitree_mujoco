@@ -180,6 +180,7 @@ cleanup() {
   echo ""; echo ">>> cleaning up..."
   [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null
   [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }  # → RUN SUMMARY into log
+  [[ -n "${FIFO_HOLD_PID:-}" ]] && kill "$FIFO_HOLD_PID" 2>/dev/null
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "$CTRL_PID" ]] && kill "$CTRL_PID" 2>/dev/null || true
   [[ -n "$MJ_PID"  ]] && kill "$MJ_PID"  2>/dev/null || true
@@ -225,7 +226,8 @@ fi
 if [[ "$METRICS" = "1" ]]; then
   if [[ -x "$TV_PY" ]]; then
     rm -f "$METRICS_FIFO"; mkfifo "$METRICS_FIFO"
-    sleep infinity > "$METRICS_FIFO" &   # hold the write end open so stdin doesn't EOF
+    # FIFO write-end holder: stderr detached + killed in cleanup, else the fleetdeck console never sees EOF (2026-08-28)
+    sleep infinity > "$METRICS_FIFO" 2>/dev/null & FIFO_HOLD_PID=$!
     HOLD_PID=$!
     "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain "$SIM_DDS_DOMAIN" --xml "$XML" \
         --mode "$METRICS_MODE" < "$METRICS_FIFO" > "$METRICS_LOG" 2>&1 &
