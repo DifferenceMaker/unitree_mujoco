@@ -325,6 +325,10 @@ trap cleanup EXIT INT TERM
 # ── 1. MuJoCo (host) ────────────────────────────────────────────────────────
 SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
 ulimit -c unlimited 2>/dev/null   # capture a core if the sim segfaults (lands in simulate/)
+if [[ "${BRIDGE_TAU_CAP_FRAC:-0}" == "0" ]]; then
+  echo ">>> [TEMP] BridgeModule torque cap OFF (BRIDGE_TAU_CAP_FRAC=0) — operator 2026-08-28: 'remove the cap just this time' to test whether the"
+  echo ">>>        0.6x clamp was limiting the dp6b lean; RESTORE the 0.6 default when asked (it is a hardware-safety analogue)."
+fi
 echo ">>> [1] launching unitree_mujoco (h1_2, scene=$SCENE) on lo, domain $SIM_DDS_DOMAIN..."
 rm -f "$BAND_FLAG"   # clean slate so a stale flag can't pre-release the band
 if [[ "$PROFILE" == "teleop" ]]; then
@@ -451,6 +455,7 @@ else
     -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}"
     -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
     -e ARM_IK_DEMO="$ARM_DEMO"
+    -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0}"
     -e ARCHB_LEAN="${LEAN_TELEOP:-0}" -e ARCHB_LEAN_KEYS="${ARCHB_LEAN_KEYS:-0}"
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
     -v "$ASPIRED:/workspace" -v "$STAGE:/workspace/MovementModule/policy"
