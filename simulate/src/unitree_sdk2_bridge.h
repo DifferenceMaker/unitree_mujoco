@@ -10,6 +10,7 @@
 #include <unitree/idl/hg/IMUState_.hpp>
 
 #include <iostream>
+#include <cstring>
 #include <random>
 #include <cmath>
 
@@ -118,7 +119,21 @@ protected:
 
     void _check_sensor()
     {
-        num_motor_ = mj_model_->nu;
+        // BODY motors only (2026-08-28, grasp rig): actuators whose name carries a
+        // namespace prefix ("rh:drv_index" — the attached Inspire hand's finger
+        // drivers) are NOT lowstate/lowcmd motors: the real hand is a separate
+        // Modbus device, and the sim's grasp_sim.h drives those actuators itself.
+        // They are appended AFTER the 27 body actuators, so the positional
+        // motor<->sensor map below (sensordata[i], [i+n], [i+2n]) stays intact.
+        num_motor_ = 0;
+        for (int a = 0; a < mj_model_->nu; ++a) {
+            const char* an = mj_id2name(mj_model_, mjOBJ_ACTUATOR, a);
+            if (an && std::strchr(an, ':')) break;
+            ++num_motor_;
+        }
+        if (num_motor_ != mj_model_->nu)
+            std::cout << "[bridge] " << num_motor_ << " body motors on lowstate/lowcmd, "
+                      << (mj_model_->nu - num_motor_) << " namespaced actuators left to the sim" << std::endl;
         dim_motor_sensor_ = MOTOR_SENSOR_NUM * num_motor_;
     
         // Find sensor addresses by name

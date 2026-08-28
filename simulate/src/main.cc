@@ -45,6 +45,7 @@
 #include "param.h"
 #include "policy_hud.h"
 #include "arm_gui.h"
+#include "grasp_sim.h"
 #include <array>
 #include <unitree/idl/ros2/String_.hpp>
 
@@ -527,6 +528,8 @@ namespace
             // desk reach-target balls: reflect the live arm-targets file
             // (alt-click or hand-typed lines) at the current torso pose.
             click_target::update_balls(m, d);
+            // grasp rig: finger servos from the Inspire emulator + hand/object state out
+            grasp_sim::step(m, d);
             // anchor: yellow ball + base-frame point on rt/anchor_point (~50 Hz)
             {
               double rel_b[3];
@@ -858,6 +861,27 @@ void *UnitreeSdk2BridgeThread(void *arg)
           "rt/sim_base_pose");
   g_sim_pose_pub->InitChannel();
 
+  // GRASP RIG (ARCHB_GRASP=1): hand state out / closure commands in (see grasp_sim.h)
+  if (grasp_sim::enabled()) {
+    static auto grasp_state_pub =
+        std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>(
+            "rt/sim_hand/state");
+    grasp_state_pub->InitChannel();
+    grasp_sim::publish_fn() = [](const std::string& js) {
+      std_msgs::msg::dds_::String_ msg;
+      msg.data(js);
+      grasp_state_pub->Write(msg, 0);
+    };
+    static auto grasp_cmd_sub =
+        std::make_shared<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>>(
+            "rt/sim_hand/cmd", [](const void *msg) {
+              grasp_sim::set_cmd_json(
+                  reinterpret_cast<const std_msgs::msg::dds_::String_ *>(msg)->data());
+            });
+    grasp_cmd_sub->InitChannel();
+    std::cout << "[GRASP] rt/sim_hand/state + rt/sim_hand/cmd channels up" << std::endl;
+  }
+
   // Keyboard FSM control: digits in the sim window -> rt/fsm_cmd -> controller
   // FSMRequest (key map shown in the HUD's "FSM keys:" line).
   static auto fsm_cmd_pub =
@@ -1085,6 +1109,11 @@ int main(int argc, char **argv)
   std::filesystem::path proj_dir = std::filesystem::path(getExecutableDir()).parent_path();
   param::config.load_from_yaml(proj_dir / "config.yaml");
   param::helper(argc, argv);
+  if (const char* g = std::getenv("ARCHB_GRASP"); g && g[0] == '1') grasp_sim::enabled() = true;
+  if (const char* nb = std::getenv("ARCHB_NO_BAND"); nb && nb[0] == '1') {
+    param::config.enable_elastic_band = 0;   // welded-pelvis scenes: qpos[0..2] is NOT the base
+    std::cout << "[SIM] elastic band disabled (ARCHB_NO_BAND=1)" << std::endl;
+  }
 
   // apply the elastic-band (suspension harness) config to the global band
   if (param::config.band_anchor.size() == 3)

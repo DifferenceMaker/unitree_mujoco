@@ -1,0 +1,38 @@
+{
+ "object": "cube",
+ "object_height": 0.055,
+ "gap": 0.03,
+ "arm_pose": [
+  -0.3782,
+  0.109,
+  0.2756,
+  1.1317,
+  -1.3104,
+  0.3114,
+  -0.8009
+ ],
+ "palm_pos": [
+  0.4302961883580363,
+  -0.11562474383959877,
+  0.9872188022655104
+ ],
+ "palm_quat_wxyz": [
+  -0.492089847277263,
+  0.5128813639514489,
+  -0.5104279639127203,
+  -0.48400783296745936
+ ],
+ "table_top_z": 0.9022188022655103,
+ "object_pos": [
+  0.4302961883580363,
+  -0.11562474383959877,
+  0.9297188022655103
+ ],
+ "drivers": {
+  "kp": 30.0,
+  "kv": 1.0,
+  "force_limit_Nm": 1.5
+ },
+ "env_yaml": "/home/aspired-comp-2/Projects/robot_projects/repos/aspired-isaac-lab/milestone_checkpoints/gr7b_clean_smooth_2026-08-26/params/env.yaml",
+ "scene": "/home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/unitree_robots/h1_2/scene_comx06.xml"
+}

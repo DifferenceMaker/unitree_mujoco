@@ -53,6 +53,28 @@ PIDS=()
 cleanup() { [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1; echo ">>> [container] stopping nodes"; kill "${PIDS[@]}" 2>/dev/null; wait 2>/dev/null; }
 trap cleanup EXIT INT TERM
 
+if [ "$MODE" = "g" ]; then
+  # ── GRASP RIG (2026-08-28) ─────────────────────────────────────────────────
+  # The REAL hand path: BridgeModule's finger_manager talks Modbus-TCP to the
+  # Inspire emulator (BridgeModule/Utils/inspire_sim_emu.py <-> sim rt/sim_hand/*)
+  # at BRIDGE_HAND_IP_R=127.0.0.1. Both run from the OFFICIAL BridgeModule venv
+  # (pymodbus lives there; the container's system python has none). The emulator
+  # must LISTEN before finger_manager's 5x2 s connect retries run out.
+  need_venv BridgeModule
+  echo ">>> [container] GRASP: Inspire Modbus emulator (side r, 127.0.0.1:6000) from .venv/BridgeModule"
+  ( source /workspace/.venv/BridgeModule/bin/activate
+    python3 -c "import unitree_sdk2py, pymodbus" 2>/dev/null || pip install -q -e /unitree_sdk2_python 2>/dev/null
+    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" INSPIRE_EMU_SIDE=r SIM_DDS_DOMAIN="${BRIDGE_DDS_DOMAIN:-1}" \
+    python3 /workspace/BridgeModule/Utils/inspire_sim_emu.py ) & PIDS+=($!)
+  sleep 2
+  echo ">>> [container] GRASP: REAL BridgeModule (BRIDGE_SIM=1 + BRIDGE_SIM_HANDS=${BRIDGE_SIM_HANDS:-R}) from .venv/BridgeModule"
+  ( source /workspace/.venv/BridgeModule/bin/activate
+    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+    BRIDGE_GAINS_FROM_POLICY=/workspace/MovementModule/policy \
+    BRIDGE_SIM=1 BRIDGE_SIM_HANDS="${BRIDGE_SIM_HANDS:-R}" BRIDGE_HAND_IP_R="${BRIDGE_HAND_IP_R:-127.0.0.1}" \
+    python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
+  sleep 2
+else
 echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DDS domain ${BRIDGE_DDS_DOMAIN:-0})"
 # BRIDGE_GAINS_FROM_POLICY: Bridge reads ALL 27 PD gains (arms included) from
 # the ACTIVE policy's deploy.yaml (MovementModule/policy/CURRENT) — policies
@@ -62,6 +84,7 @@ echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DD
   ARM_WISH_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_wish \
   BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)
 sleep 2
+fi
 
 if [ "$MODE" = "b" ]; then
   echo ">>> [container] MODE B — arm_ik_commander (red/blue dot Cartesian targets"
@@ -114,11 +137,39 @@ if [ "${ARCHB_LEAN:-0}" = "1" ]; then
   fi
 fi
 
+if [ "$MODE" = "g" ]; then
+  # GRASP RIG: no MovementModule (torso + right arm only, pelvis welded in the scene).
+  # VisualModule stand-in (object_pose_relay: sim truth -> /VisualModule/object_* with
+  # the 1-2 s hold + noise) and the REAL ActionModule, whose GraspPolicy runner
+  # (robot/grasp.py) drives the arm + hand through the ARM OVERRIDE handover.
+  need_venv ActionModule
+  ln -sfn /workspace/.global /global
+  echo ">>> [container] GRASP: object_pose_relay (VisualModule stand-in, hold U(${VISION_HOLD_MIN:-1.0},${VISION_HOLD_MAX:-2.0}) s)"
+  ( source /workspace/.venv/ActionModule/bin/activate
+    PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+    python3 /workspace/ActionModule/Utils/object_pose_relay.py ) & PIDS+=($!)
+  echo ">>> [container] GRASP: REAL ActionModule (AM_ARM_OVERRIDE=1, AM_GRASP_POLICY=${AM_GRASP_POLICY:-<CURRENT>})"
+  ( source /workspace/.venv/ActionModule/bin/activate
+    PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+    AM_ARM_OVERRIDE=1 python3 /workspace/ActionModule/main/main.py --debug-dev ) & PIDS+=($!)   # --debug-dev: Conductor/sequence lines visible
+  ( # dispatch only once ActionModule is READY (its latched /ActionModule/ready Int32) — a fixed
+    # sleep raced the MoveIt/IK startup and the --once publish was lost (first smoke, 2026-08-28)
+    # the message can only land once ActionModule's /ActionModule/run SUBSCRIBER exists
+    # (main.py creates it after the BridgeModule handshake + Conductor/IK startup, ~20-60 s)
+    for i in $(seq 1 240); do
+      if ros2 topic info /ActionModule/run 2>/dev/null | grep -q "Subscription count: [1-9]"; then break; fi
+      sleep 1
+    done
+    sleep "${ARCHB_GRASP_SEQ_DELAY:-3}"
+    echo ">>> [container] GRASP: /ActionModule/run has a subscriber after ~${i}s — dispatching the sequence (<- 'cube_task.rl_grasp')"
+    ros2 topic pub --once /ActionModule/run std_msgs/String "data: cube_task.rl_grasp" >/dev/null 2>&1 ) &
+else
 echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"
 need_venv MovementModule                    # onnxruntime lives here (silent system-python fallback = cryptic crash)
 ( source /workspace/.venv/MovementModule/bin/activate
   PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
   python3 /workspace/MovementModule/main/main.py ) & PIDS+=($!)
+fi
 
 if [ "$MODE" = "c" ]; then
   # ActionModule runs FOREGROUND as this tty's owner: teleop's /dev/tty raw-mode

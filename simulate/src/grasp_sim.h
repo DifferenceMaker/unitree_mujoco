@@ -1,0 +1,253 @@
+#pragma once
+// grasp_sim.h — GRASP RIG (2026-08-28): Inspire RIGHT-hand emulation + object/torso
+// pose feed, for testing the gr-line grasp policies THROUGH the arch-B stack.
+//
+// The real hand is a separate Modbus-TCP device (BridgeModule/finger_manager ->
+// inspire_sdkpy), not a lowstate/lowcmd motor. So in the sim the 6 finger DRIVER
+// actuators (rh:drv_<finger>, position servos built by
+// aspired-isaac-lab/scripts/tools/build_grasp_scene.py, followers coupled by
+// <equality>) are driven HERE, from closure commands that arrive on
+// rt/sim_hand/cmd (JSON {"closure":[6], "speed":s}) — published by the Inspire
+// Modbus emulator (Aspired BridgeModule/Utils/inspire_sim_emu.py) that the REAL
+// finger_manager talks to over 127.0.0.1:6000. Closure = 0 open .. 1 closed,
+// FINGER_ORDER little/ring/middle/index/thumb_bend/thumb_rot (= Inspire angle_set
+// slot order). The hand state goes back the same way: rt/sim_hand/state JSON
+// with measured closure(6), the 17 tactile pad contact forces BY PAD LINK NAME
+// (the emulator maps names -> Modbus taxel registers; never by index — the
+// right-hand pad order trap, finger_mapping.POLICY_PAD_LINK_ORDER), plus the
+// world poses of the object, torso_link and the palm pad (ground truth for the
+// vision stand-in object_pose_relay.py, which adds the 1-2 s hold + noise).
+// The same JSON is mirrored to ARCHB_GRASP_FILE (atomic rename) because the
+// ActionModule venv has no unitree_sdk2py (same mechanism as .lean_cmd).
+//
+// Enabled by ARCHB_GRASP=1 (main.cc). Silent no-op when the scene has no
+// rh:drv_* actuators.
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <fstream>
+#include <functional>
+#include <mutex>
+#include <string>
+#include <vector>
+
+#include <mujoco/mujoco.h>
+
+namespace grasp_sim {
+
+inline bool& enabled() { static bool e = false; return e; }
+inline std::function<void(const std::string&)>& publish_fn() {
+  static std::function<void(const std::string&)> f; return f;
+}
+
+struct State {
+  bool init = false, ok = false;
+  int drv_act[6] = {-1, -1, -1, -1, -1, -1};
+  int drv_jnt[6] = {-1, -1, -1, -1, -1, -1};
+  double lo[6] = {0}, hi[6] = {0};
+  // The vendor URDF's 17 force_sensor pad LINKS hang on fixed joints, which the
+  // MuJoCo import fuses into the phalanx bodies — so a pad is a mesh GEOM (mesh
+  // name rh:right_<x>_force_sensor[_n]), not a body. Contacts are matched per geom.
+  std::vector<int> pad_geom;          // 17 pad geoms
+  std::vector<std::string> pad_name;  // namespace stripped: right_palm_force_sensor, ...
+  std::vector<int> geom2pad;          // ngeom -> pad idx or -1
+  int obj_body = -1, torso_body = -1, palm_geom = -1;
+  double obj_z0 = 0.0;
+  std::mutex mtx;
+  double target[6] = {0, 0, 0, 0, 0, 0};    // commanded closure
+  double applied[6] = {0, 0, 0, 0, 0, 0};   // slewed closure actually sent to the servo
+  double slew = 2.5;                        // closure/s: Inspire full travel ~0.4 s at speed 1000
+  int pub_cnt = 0, print_cnt = 0;
+  int cmd_count = 0;
+};
+inline State& st() { static State s; return s; }
+
+static const char* kDrivers[6] = {"little", "ring", "middle", "index", "thumb_bend", "thumb_rot"};
+
+inline void init(const mjModel* m) {
+  State& s = st();
+  s.init = true;
+  for (int i = 0; i < 6; ++i) {
+    const std::string an = std::string("rh:drv_") + kDrivers[i];
+    s.drv_act[i] = mj_name2id(m, mjOBJ_ACTUATOR, an.c_str());
+    if (s.drv_act[i] < 0) { std::printf("[GRASP] no actuator %s — hand emulation OFF\n", an.c_str()); return; }
+    s.drv_jnt[i] = m->actuator_trnid[2 * s.drv_act[i]];
+    s.lo[i] = m->jnt_range[2 * s.drv_jnt[i]];
+    s.hi[i] = m->jnt_range[2 * s.drv_jnt[i] + 1];
+  }
+  s.geom2pad.assign(m->ngeom, -1);
+  for (int g = 0; g < m->ngeom; ++g) {
+    if (m->geom_type[g] != mjGEOM_MESH) continue;
+    const char* mn = mj_id2name(m, mjOBJ_MESH, m->geom_dataid[g]);
+    if (!mn) continue;
+    std::string n(mn);
+    if (n.find("force_sensor") == std::string::npos) continue;
+    const size_t c = n.find(':');
+    if (c != std::string::npos) n = n.substr(c + 1);
+    if (n.find("palm_force_sensor") != std::string::npos) s.palm_geom = g;
+    s.geom2pad[g] = (int)s.pad_geom.size();
+    s.pad_geom.push_back(g);
+    s.pad_name.push_back(n);
+  }
+  s.obj_body = mj_name2id(m, mjOBJ_BODY, "obj:object");   // attached with the "obj:" prefix by build_grasp_scene.py
+  if (s.obj_body < 0) s.obj_body = mj_name2id(m, mjOBJ_BODY, "object");
+  s.torso_body = mj_name2id(m, mjOBJ_BODY, "torso_link");
+  s.ok = s.obj_body >= 0 && s.torso_body >= 0 && s.palm_geom >= 0 && s.pad_geom.size() == 17;
+  std::printf("[GRASP] hand emulation %s: 6 drivers, %zu pad geoms, object body %d, torso body %d, palm geom %d\n",
+              s.ok ? "ON" : "INCOMPLETE (check scene)", s.pad_geom.size(), s.obj_body, s.torso_body, s.palm_geom);
+  std::fflush(stdout);
+}
+
+// {"closure":[c0..c5]} (+ optional "speed": 0..1 fraction of the max slew)
+inline void set_cmd_json(const std::string& js) {
+  State& s = st();
+  const size_t k = js.find("\"closure\"");
+  if (k == std::string::npos) return;
+  const size_t a = js.find('[', k);
+  if (a == std::string::npos) return;
+  double v[6];
+  const char* p = js.c_str() + a + 1;
+  for (int i = 0; i < 6; ++i) {
+    char* end = nullptr;
+    v[i] = std::strtod(p, &end);
+    if (end == p) return;
+    p = end;
+    while (*p == ',' || *p == ' ') ++p;
+  }
+  double speed = -1.0;
+  const size_t sk = js.find("\"speed\"");
+  if (sk != std::string::npos) {
+    const size_t colon = js.find(':', sk);
+    if (colon != std::string::npos) speed = std::strtod(js.c_str() + colon + 1, nullptr);
+  }
+  std::lock_guard<std::mutex> lk(s.mtx);
+  for (int i = 0; i < 6; ++i) s.target[i] = std::min(1.0, std::max(0.0, v[i]));
+  if (speed > 0.0) s.slew = 2.5 * std::min(1.0, speed);
+  ++s.cmd_count;
+}
+
+inline void write_file_atomic(const char* path, const std::string& body) {
+  const std::string tmp = std::string(path) + ".tmp";
+  { std::ofstream f(tmp); f << body << "\n"; }
+  std::rename(tmp.c_str(), path);
+}
+
+// SPAWN HOLD: the welded-pelvis scene has no balance policy and no elastic band; until
+// the Bridge's first lowcmd arrives (~10 s: emulator + Bridge start) the 27 body joints
+// would hang unactuated (arm swings into the legs, torso yaw drifts) and the Bridge
+// then latches THAT pose as its startup hold. So hold every body joint at its spawn
+// value with a PD through qfrc_applied (no race with the bridge's ctrl writes) while
+// all 27 body ctrls are exactly zero — i.e. no lowcmd has been applied yet.
+inline void spawn_hold(const mjModel* m, mjData* d) {
+  static bool released = false;
+  static std::vector<double> q0;
+  static const char* hs = std::getenv("ARCHB_SPAWN_HOLD");
+  if (released || (hs && hs[0] == '0')) return;
+  const int nbody_act = 27 <= m->nu ? 27 : m->nu;
+  bool any_ctrl = false;
+  for (int a = 0; a < nbody_act; ++a) if (d->ctrl[a] != 0.0) { any_ctrl = true; break; }
+  if (any_ctrl) {
+    released = true;
+    for (int a = 0; a < nbody_act; ++a) { const int dof = m->jnt_dofadr[m->actuator_trnid[2 * a]]; d->qfrc_applied[dof] = 0.0; }
+    std::printf("[GRASP] lowcmd flowing at t=%.2f s — spawn hold released to the Bridge\n", d->time);
+    std::fflush(stdout);
+    return;
+  }
+  if (q0.empty()) {
+    q0.resize(nbody_act);
+    for (int a = 0; a < nbody_act; ++a) q0[a] = d->qpos[m->jnt_qposadr[m->actuator_trnid[2 * a]]];
+  }
+  for (int a = 0; a < nbody_act; ++a) {
+    const int j = m->actuator_trnid[2 * a];
+    const int qa = m->jnt_qposadr[j], va = m->jnt_dofadr[j];
+    const double lim = m->actuator_ctrlrange[2 * a + 1] > 0 ? m->actuator_ctrlrange[2 * a + 1] : 100.0;
+    double f = 300.0 * (q0[a] - d->qpos[qa]) - 5.0 * d->qvel[va];
+    d->qfrc_applied[va] = std::max(-lim, std::min(lim, f));
+  }
+}
+
+// Per physics step (call BEFORE mj_step, under the sim mutex).
+inline void step(const mjModel* m, mjData* d) {
+  if (!enabled()) return;
+  State& s = st();
+  if (!s.init) init(m);
+  spawn_hold(m, d);
+  if (s.drv_act[0] < 0) return;
+  const double dt = m->opt.timestep;
+  double meas[6];
+  {
+    std::lock_guard<std::mutex> lk(s.mtx);
+    for (int i = 0; i < 6; ++i) {
+      const double dmax = s.slew * dt;
+      const double e = s.target[i] - s.applied[i];
+      s.applied[i] += std::max(-dmax, std::min(dmax, e));
+      d->ctrl[s.drv_act[i]] = s.lo[i] + s.applied[i] * (s.hi[i] - s.lo[i]);
+      const double q = d->qpos[m->jnt_qposadr[s.drv_jnt[i]]];
+      meas[i] = std::min(1.0, std::max(0.0, (q - s.lo[i]) / std::max(1e-6, s.hi[i] - s.lo[i])));
+    }
+  }
+  // 100 Hz state publish (timestep 0.002 -> every 5 steps)
+  const int every = std::max(1, (int)std::lround(0.01 / dt));
+  if (++s.pub_cnt < every) return;
+  s.pub_cnt = 0;
+  if (!s.ok) return;
+  // tactile: contact normal-force magnitude summed per pad body
+  std::vector<double> pad_f(s.pad_geom.size(), 0.0);
+  for (int c = 0; c < d->ncon; ++c) {
+    const int p1 = s.geom2pad[d->contact[c].geom1], p2 = s.geom2pad[d->contact[c].geom2];
+    if (p1 < 0 && p2 < 0) continue;
+    mjtNum f6[6];
+    mj_contactForce(m, d, c, f6);
+    const double fn = std::sqrt(f6[0] * f6[0] + f6[1] * f6[1] + f6[2] * f6[2]);
+    if (p1 >= 0) pad_f[p1] += fn;
+    if (p2 >= 0) pad_f[p2] += fn;
+  }
+  if (s.obj_z0 == 0.0) s.obj_z0 = d->xpos[3 * s.obj_body + 2];
+  char js[4096];
+  int n = std::snprintf(js, sizeof js, "{\"t\":%.3f,\"closure\":[%.4f,%.4f,%.4f,%.4f,%.4f,%.4f],"
+                        "\"cmd\":[%.3f,%.3f,%.3f,%.3f,%.3f,%.3f],\"pads\":{",
+                        d->time, meas[0], meas[1], meas[2], meas[3], meas[4], meas[5],
+                        s.applied[0], s.applied[1], s.applied[2], s.applied[3], s.applied[4], s.applied[5]);
+  for (size_t i = 0; i < s.pad_geom.size() && n > 0 && n < (int)sizeof js - 64; ++i)
+    n += std::snprintf(js + n, sizeof js - n, "%s\"%s\":%.3f", i ? "," : "", s.pad_name[i].c_str(), pad_f[i]);
+  auto add_pose = [&](const char* key, int bid) {
+    if (n > 0 && n < (int)sizeof js - 160)
+      n += std::snprintf(js + n, sizeof js - n,
+                         ",\"%s\":{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f]}", key,
+                         d->xpos[3 * bid], d->xpos[3 * bid + 1], d->xpos[3 * bid + 2],
+                         d->xquat[4 * bid], d->xquat[4 * bid + 1], d->xquat[4 * bid + 2], d->xquat[4 * bid + 3]);
+  };
+  if (n > 0 && n < (int)sizeof js - 4) n += std::snprintf(js + n, sizeof js - n, "}");
+  add_pose("obj", s.obj_body); add_pose("torso", s.torso_body);
+  {  // palm pad GEOM pose (the Isaac palm frame = the fused pad link frame; the mesh origin is identity)
+    mjtNum q[4];
+    mju_mat2Quat(q, d->geom_xmat + 9 * s.palm_geom);
+    if (n > 0 && n < (int)sizeof js - 160)
+      n += std::snprintf(js + n, sizeof js - n,
+                         ",\"palm\":{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f]}",
+                         d->geom_xpos[3 * s.palm_geom], d->geom_xpos[3 * s.palm_geom + 1], d->geom_xpos[3 * s.palm_geom + 2],
+                         q[0], q[1], q[2], q[3]);
+  }
+  if (n > 0 && n < (int)sizeof js - 48)
+    n += std::snprintf(js + n, sizeof js - n, ",\"obj_lift\":%.4f,\"ncmd\":%d}", d->xpos[3 * s.obj_body + 2] - s.obj_z0, s.cmd_count);
+  const std::string out(js);
+  if (publish_fn()) publish_fn()(out);
+  static const char* gf = std::getenv("ARCHB_GRASP_FILE");
+  if (gf && *gf && (s.print_cnt % 2 == 0)) write_file_atomic(gf, out);   // 50 Hz file mirror
+  if (++s.print_cnt >= 100) {   // 1 Hz console line
+    s.print_cnt = 0;
+    double pmax = 0.0; for (double f : pad_f) pmax = std::max(pmax, f);
+    std::printf("[GRASP] closure cmd [%.2f %.2f %.2f %.2f %.2f %.2f] meas [%.2f %.2f %.2f %.2f %.2f %.2f] "
+                "pad max %.1f N  palm (%.3f,%.3f,%.3f) obj (%.3f,%.3f,%.3f) lift %+.3f m  (cmds %d)\n",
+                s.applied[0], s.applied[1], s.applied[2], s.applied[3], s.applied[4], s.applied[5],
+                meas[0], meas[1], meas[2], meas[3], meas[4], meas[5], pmax,
+                d->geom_xpos[3 * s.palm_geom], d->geom_xpos[3 * s.palm_geom + 1], d->geom_xpos[3 * s.palm_geom + 2],
+                d->xpos[3 * s.obj_body], d->xpos[3 * s.obj_body + 1], d->xpos[3 * s.obj_body + 2],
+                d->xpos[3 * s.obj_body + 2] - s.obj_z0, s.cmd_count);
+    std::fflush(stdout);
+  }
+}
+
+}  // namespace grasp_sim
