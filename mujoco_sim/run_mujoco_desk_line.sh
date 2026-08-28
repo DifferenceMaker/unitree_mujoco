@@ -14,7 +14,8 @@
 #   bash run_mujoco_desk_line.sh --policy desk_tilt arms-demo
 #   bash run_mujoco_desk_line.sh --policy dp3_anchor --comx06 balance   # comx06-era desk line
 #
-# BODY flags (default = SYM): --stock (dp2b batch), --comx06 (dp3_anchor and
+# BODY flags (default = comx06 since 2026-08-28; the SYM default was the shoe-era
+# leftover that config.yaml had already abandoned on 2026-07-30): --stock (dp2b batch), --comx06 (dp3_anchor and
 # every desk policy off the p12g/comx06 general line — rigid-floor desk scene).
 # 90-obs anchor policies work out of the box: the sim plants the training
 # anchor on band release (yellow ball, rt/anchor_point), Ctrl+Alt-click moves
@@ -80,7 +81,7 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
-PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="sym"; BODY_EXPLICIT=0; RECORD=0; LEDGER=1
+PROFILE="arms"; METRICS=1; POLICY="desk_fz6"; ARM_READY=1; ARM_READY_SEC=0; ANCHOR_WANDER=0; METRICS_MODE="idle_quiet"; DEBUG=1; BODY="comx06"; BODY_EXPLICIT=0; RECORD=0; LEDGER=1
 while [[ $# -gt 0 ]]; do case "$1" in
   balance|arms|arms-demo|teleop|ref|stop|keys|lean) PROFILE="$1"; shift;;
   --mode-a) echo "NOTE: --mode-a is now the 'balance' profile"; PROFILE="balance"; shift;;
@@ -181,8 +182,10 @@ if [[ $BODY_EXPLICIT -eq 0 && -f "$MILESTONES/$MS/params/env.yaml" ]]; then
     BODY="comx06"; echo ">>> [body] env.yaml names h1_2_comx06 -> --comx06 (rigid floor) AUTO"
   elif grep -q "h1_2_stock" "$MILESTONES/$MS/params/env.yaml"; then
     BODY="stock";  echo ">>> [body] env.yaml names h1_2_stock -> --stock AUTO"
+  elif grep -q "h1_2_sym\|h1_2\.urdf" "$MILESTONES/$MS/params/env.yaml"; then
+    BODY="sym";    echo ">>> [body] env.yaml names the SYM-era body -> legacy SYM + soft07 AUTO (shoe-era policy)"
   else
-    echo ">>> [body] WARNING: could not identify the training body from env.yaml ($(grep -o 'h1_2[a-z0-9_]*\.urdf' "$MILESTONES/$MS/params/env.yaml" | sort -u | tr '\n' ' ')) — keeping legacy SYM + soft07; pass --comx06/--stock explicitly"
+    echo ">>> [body] WARNING: could not identify the training body from env.yaml ($(grep -o 'h1_2[a-z0-9_]*\.urdf' "$MILESTONES/$MS/params/env.yaml" | sort -u | tr '\n' ' ')) — using the comx06 DEFAULT; pass --stock explicitly if this is a dp2b-era policy"
   fi
 fi
 STAGE="$SIM/logs/.desk_policy_stage"
