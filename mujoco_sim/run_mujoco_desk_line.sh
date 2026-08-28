@@ -306,12 +306,14 @@ for _m in "${_need[@]}"; do
   fi
 done
 
-CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""; WATCHDOG_PID=""
+CONTAINER="archb_sim_$$"; MJ_PID=""; METRICS_PID=""; CTRL_PID=""; WATCHDOG_PID=""; FIFO_HOLD_PID=""
 cleanup() {
   [[ -n "${_CLEANED:-}" ]] && return; _CLEANED=1   # run once: Ctrl+C fires INT then EXIT
   echo ""; echo ">>> cleaning up..."
   [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null
   [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }  # → RUN SUMMARY into log
+  [[ -n "${FIFO_HOLD_PID:-}" ]] && kill "$FIFO_HOLD_PID" 2>/dev/null
+  pkill -f "sleep infinity" -P $$ 2>/dev/null || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "$CTRL_PID" ]] && kill "$CTRL_PID" 2>/dev/null || true
   [[ -n "$MJ_PID"  ]] && kill "$MJ_PID"  2>/dev/null || true
@@ -373,7 +375,11 @@ fi
 if [[ "$METRICS" = "1" ]]; then
   if [[ -x "$TV_PY" ]]; then
     rm -f "$METRICS_FIFO"; mkfifo "$METRICS_FIFO"
-    sleep infinity > "$METRICS_FIFO" &   # hold the write end open so stdin doesn't EOF
+    # hold the FIFO write end open so the sidecar's stdin doesn't EOF. stderr MUST be
+    # detached (2>/dev/null) and the holder killed in cleanup: with the console's stderr
+    # inherited, this immortal `sleep` kept fleetdeck's console pipe open after
+    # `>>> done.` — the "console doesn't close" bug (2026-08-28).
+    sleep infinity > "$METRICS_FIFO" 2>/dev/null & FIFO_HOLD_PID=$!
     HOLD_PID=$!
     # LIVE reward ledger (2026-08-21): auto-on when the staged policy carries
     # params/env.yaml (weights parsed from it); disable with --no-ledger.
