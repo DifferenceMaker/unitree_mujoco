@@ -33,6 +33,8 @@
 #include <string>
 #include <vector>
 
+#include <sys/stat.h>
+
 #include <mujoco/mujoco.h>
 
 namespace grasp_sim {
@@ -53,7 +55,8 @@ struct State {
   std::vector<int> pad_geom;          // 17 pad geoms
   std::vector<std::string> pad_name;  // namespace stripped: right_palm_force_sensor, ...
   std::vector<int> geom2pad;          // ngeom -> pad idx or -1
-  int obj_body = -1, torso_body = -1, palm_geom = -1;
+  int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1;
+  double place_mtime = 0.0;
   double obj_z0 = 0.0;
   std::mutex mtx;
   double target[6] = {0, 0, 0, 0, 0, 0};    // commanded closure
@@ -93,6 +96,8 @@ inline void init(const mjModel* m) {
   }
   s.obj_body = mj_name2id(m, mjOBJ_BODY, "obj:object");   // attached with the "obj:" prefix by build_grasp_scene.py
   if (s.obj_body < 0) s.obj_body = mj_name2id(m, mjOBJ_BODY, "object");
+  s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "obj:object_free");
+  if (s.obj_jnt < 0) s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "object_free");
   s.torso_body = mj_name2id(m, mjOBJ_BODY, "torso_link");
   s.ok = s.obj_body >= 0 && s.torso_body >= 0 && s.palm_geom >= 0 && s.pad_geom.size() == 17;
   std::printf("[GRASP] hand emulation %s: 6 drivers, %zu pad geoms, object body %d, torso body %d, palm geom %d\n",
@@ -186,6 +191,34 @@ inline void step(const mjModel* m, mjData* d) {
       d->ctrl[s.drv_act[i]] = s.lo[i] + s.applied[i] * (s.hi[i] - s.lo[i]);
       const double q = d->qpos[m->jnt_qposadr[s.drv_jnt[i]]];
       meas[i] = std::min(1.0, std::max(0.0, (q - s.lo[i]) / std::max(1e-6, s.hi[i] - s.lo[i])));
+    }
+  }
+  // PLACE-OBJECT command (ARCHB_GRASP_PLACE_FILE, written by the rl_grasp sequence,
+  // AM_GRASP_HOVER=place): teleport the object under the LIVE palm pad — Isaac's
+  // palm_track reset semantics reproduced at HANDOVER time. This puts the object
+  // exactly where the (sagged) palm actually is, i.e. the state the policy trained
+  // from, instead of asking an absolute-target policy to cross the sag gap; it also
+  // undoes any pre-handover nudge (2026-08-31 run: the IK approach swept the cube
+  // 11 cm sideways). xy = palm pad, z kept (the object stays on the table).
+  {
+    static const char* pf = std::getenv("ARCHB_GRASP_PLACE_FILE");
+    if (pf && *pf && s.obj_jnt >= 0 && s.palm_geom >= 0) {
+      struct stat sb;
+      if (stat(pf, &sb) == 0) {
+        const double mt = (double)sb.st_mtime;
+        if (s.place_mtime != 0.0 && mt > s.place_mtime) {
+          const int qa = m->jnt_qposadr[s.obj_jnt], va = m->jnt_dofadr[s.obj_jnt];
+          d->qpos[qa] = d->geom_xpos[3 * s.palm_geom];
+          d->qpos[qa + 1] = d->geom_xpos[3 * s.palm_geom + 1];
+          for (int k = 0; k < 6; ++k) d->qvel[va + k] = 0.0;
+          std::printf("[GRASP] PLACE: object teleported under the live palm (%.3f, %.3f), z kept %.3f\n",
+                      d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2]);
+          std::fflush(stdout);
+        }
+        s.place_mtime = mt;
+      } else {
+        s.place_mtime = 1.0;   // file absent yet: arm on first appearance too
+      }
     }
   }
   // 100 Hz state publish (timestep 0.002 -> every 5 steps)

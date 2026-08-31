@@ -74,7 +74,7 @@ sweep_leftovers() {
     docker rm -f $strays >/dev/null 2>&1
   fi
   pkill -f "$MJ_BIN" 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"
-  rm -f "$GRASP_FILE" "$GRASP_FILE.tmp"
+  rm -f "$GRASP_FILE" "$GRASP_FILE.tmp" "$SIM/logs/.grasp_place_object"
 }
 if [[ "$PROFILE" == "stop" ]]; then
   echo ">>> STOP: tearing down any running/leftover sim stack..."; sweep_leftovers; echo ">>> done — environment clean."; exit 0
@@ -209,6 +209,7 @@ echo ">>> [1] launching unitree_mujoco (scene=$SCENE_NAME via -s, band OFF, ARCH
 start_sim() {
   ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 \
       ARCHB_GRASP=1 ARCHB_NO_BAND=1 ARCHB_GRASP_FILE="$GRASP_FILE" \
+    ARCHB_GRASP_PLACE_FILE="$SIM/logs/.grasp_place_object" \
       ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" \
       "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo -s "$SCENE_NAME" ) >>"$MJ_LOG" 2>&1 &
   MJ_PID=$!
@@ -242,6 +243,7 @@ DOCKER_CMD=(docker run --rm --name "$CONTAINER" --network host --ipc=host
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}"
   -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
   -e AM_GRASP_POLICY="$MS" -e AM_ARM_OVERRIDE=1
+  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-place}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
   -e GRASP_SIM_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_sim_state
   -e VISION_HOLD_MIN="$VISION_HOLD_MIN" -e VISION_HOLD_MAX="$VISION_HOLD_MAX"
   -e ARCHB_GRASP_SEQ_DELAY="$SEQ_DELAY"
