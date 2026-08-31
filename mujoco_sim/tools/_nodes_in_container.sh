@@ -28,12 +28,20 @@ echo " ARCHITECTURE B v2 (REAL modules: BridgeModule --sim + MovementModule)"
 echo "   MODE ${MODE}  (a = arms-hold fallback, b = ActionModule IK arms)"
 echo "============================================================"
 
-echo ">>> [container] installing unitree_sdk2py for BridgeModule"
-# Deliberately NOT from .venv/BridgeModule: the -e install uses the LOCAL
-# /unitree_sdk2_python mount (incl. any local sim patches), matching what the
-# sim has always run against.
-pip install -e /unitree_sdk2_python -q 2>/dev/null || pip install unitree_sdk2py -q 2>/dev/null || true
-python3 -c "import unitree_sdk2py" 2>/dev/null || { echo "FATAL: unitree_sdk2py unavailable"; exit 2; }
+# unitree_sdk2py for BridgeModule — OFFLINE FIRST (2026-08-31: the old per-launch
+# `pip install -e` needed the NETWORK every time (ephemeral container) and a dead
+# uplink hung the whole rig at ">>> installing unitree_sdk2py"). The local
+# /unitree_sdk2_python mount (incl. local sim patches) provides the package and the
+# BridgeModule venv's site-packages provide its deps (cyclonedds) — no pip at all.
+SDK_PYTHONPATH="/unitree_sdk2_python:/workspace/.venv/BridgeModule/lib/python3.10/site-packages"
+if PYTHONPATH="$SDK_PYTHONPATH" python3 -c "import unitree_sdk2py" 2>/dev/null; then
+  echo ">>> [container] unitree_sdk2py OFFLINE (local mount + .venv/BridgeModule deps)"
+else
+  echo ">>> [container] offline SDK path failed — pip install (needs network, 60 s cap)"
+  SDK_PYTHONPATH=""
+  timeout 60 pip install -e /unitree_sdk2_python -q 2>/dev/null || timeout 60 pip install unitree_sdk2py -q 2>/dev/null || true
+  python3 -c "import unitree_sdk2py" 2>/dev/null || { echo "FATAL: unitree_sdk2py unavailable (no offline path, no network)"; exit 2; }
+fi
 
 # MovementModule/ActionModule run from their OFFICIAL venvs (.venv/<module>,
 # created from each module's requirements.txt by the repo's own setup chain).
@@ -79,7 +87,7 @@ echo ">>> [container] starting REAL BridgeModule (BRIDGE_SIM=1, iface lo, SDK-DD
 # BRIDGE_GAINS_FROM_POLICY: Bridge reads ALL 27 PD gains (arms included) from
 # the ACTIVE policy's deploy.yaml (MovementModule/policy/CURRENT) — policies
 # are gain-adapted; wrong arm gains invalidate the eval (2026-07-06 handoff).
-( PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
+( PYTHONPATH="/workspace/.global${SDK_PYTHONPATH:+:$SDK_PYTHONPATH}:${PYTHONPATH:-}" \
   BRIDGE_GAINS_FROM_POLICY=/workspace/MovementModule/policy \
   ARM_WISH_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_wish \
   BRIDGE_SIM=1 python3 /workspace/BridgeModule/main/main.py lo ) & PIDS+=($!)

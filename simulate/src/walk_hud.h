@@ -19,7 +19,7 @@
 namespace walk_hud {
 
 // lm2 walk deploy contract (display clamps; the controller clamps identically)
-constexpr float VX_LO = -0.3f, VX_HI = 1.0f;
+constexpr float VX_LO = -0.8f, VX_HI = 1.5f;   // LM5-C walk contract (lm5e: lin_vel_x -0.8..1.5)
 constexpr float VY_LO = -0.3f, VY_HI = 0.3f;
 constexpr float WZ_LO = -0.5f, WZ_HI = 0.5f;
 
