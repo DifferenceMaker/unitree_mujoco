@@ -55,7 +55,7 @@ struct State {
   std::vector<int> pad_geom;          // 17 pad geoms
   std::vector<std::string> pad_name;  // namespace stripped: right_palm_force_sensor, ...
   std::vector<int> geom2pad;          // ngeom -> pad idx or -1
-  int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1;
+  int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1, table_body = -1;
   double place_mtime = 0.0;
   double obj_z0 = 0.0;
   std::mutex mtx;
@@ -99,6 +99,8 @@ inline void init(const mjModel* m) {
   s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "obj:object_free");
   if (s.obj_jnt < 0) s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "object_free");
   s.torso_body = mj_name2id(m, mjOBJ_BODY, "torso_link");
+  s.table_body = mj_name2id(m, mjOBJ_BODY, "tbl:table");
+  if (s.table_body < 0) s.table_body = mj_name2id(m, mjOBJ_BODY, "table");
   s.ok = s.obj_body >= 0 && s.torso_body >= 0 && s.palm_geom >= 0 && s.pad_geom.size() == 17;
   std::printf("[GRASP] hand emulation %s: 6 drivers, %zu pad geoms, object body %d, torso body %d, palm geom %d\n",
               s.ok ? "ON" : "INCOMPLETE (check scene)", s.pad_geom.size(), s.obj_body, s.torso_body, s.palm_geom);
@@ -254,6 +256,7 @@ inline void step(const mjModel* m, mjData* d) {
   };
   if (n > 0 && n < (int)sizeof js - 4) n += std::snprintf(js + n, sizeof js - n, "}");
   add_pose("obj", s.obj_body); add_pose("torso", s.torso_body);
+  if (s.table_body >= 0) add_pose("table", s.table_body);   // the MoveIt planning scene needs it (relay -> /collision_object)
   {  // palm pad GEOM pose (the Isaac palm frame = the fused pad link frame; the mesh origin is identity)
     mjtNum q[4];
     mju_mat2Quat(q, d->geom_xmat + 9 * s.palm_geom);

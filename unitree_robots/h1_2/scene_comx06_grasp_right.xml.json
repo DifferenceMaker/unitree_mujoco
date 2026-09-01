@@ -33,6 +33,6 @@
   "kv": 1.0,
   "force_limit_Nm": 1.5
  },
- "env_yaml": "/home/aspired-comp-2/Projects/robot_projects/repos/aspired-isaac-lab/milestone_checkpoints/gr7b_clean_smooth_2026-08-26/params/env.yaml",
+ "env_yaml": "milestone_checkpoints/gr7b_clean_smooth_2026-08-26/params/env.yaml",
  "scene": "/home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/unitree_robots/h1_2/scene_comx06.xml"
 }
