@@ -55,6 +55,7 @@ struct State {
   std::vector<int> pad_geom;          // 17 pad geoms
   std::vector<std::string> pad_name;  // namespace stripped: right_palm_force_sensor, ...
   std::vector<int> geom2pad;          // ngeom -> pad idx or -1
+  std::vector<char> geom_is_hand;     // geom belongs to an rh:* body (self-touch mask)
   int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1, table_body = -1;
   double place_mtime = 0.0;
   double obj_z0 = 0.0;
@@ -81,6 +82,11 @@ inline void init(const mjModel* m) {
     s.hi[i] = m->jnt_range[2 * s.drv_jnt[i] + 1];
   }
   s.geom2pad.assign(m->ngeom, -1);
+  s.geom_is_hand.assign(m->ngeom, 0);
+  for (int g = 0; g < m->ngeom; ++g) {
+    const char* bn = mj_id2name(m, mjOBJ_BODY, m->geom_bodyid[g]);
+    if (bn && std::strncmp(bn, "rh:", 3) == 0) s.geom_is_hand[g] = 1;
+  }
   for (int g = 0; g < m->ngeom; ++g) {
     if (m->geom_type[g] != mjGEOM_MESH) continue;
     const char* mn = mj_id2name(m, mjOBJ_MESH, m->geom_dataid[g]);
@@ -229,9 +235,15 @@ inline void step(const mjModel* m, mjData* d) {
   s.pub_cnt = 0;
   if (!s.ok) return;
   // tactile: contact normal-force magnitude summed per pad body
+  // SELF-TOUCH EXCLUDED (2026-09-01): with real inter-finger collisions a closed
+  // fist reads ~17 N on the pads and the policy (trained with self_collision=False
+  // — pads only ever felt object/world contact) slams the fingers shut on phantom
+  // "contact". Count a contact only when at least one geom is NOT part of the hand.
   std::vector<double> pad_f(s.pad_geom.size(), 0.0);
   for (int c = 0; c < d->ncon; ++c) {
-    const int p1 = s.geom2pad[d->contact[c].geom1], p2 = s.geom2pad[d->contact[c].geom2];
+    const int g1 = d->contact[c].geom1, g2 = d->contact[c].geom2;
+    if (s.geom_is_hand[g1] && s.geom_is_hand[g2]) continue;   // finger-on-finger: invisible to the pads
+    const int p1 = s.geom2pad[g1], p2 = s.geom2pad[g2];
     if (p1 < 0 && p2 < 0) continue;
     mjtNum f6[6];
     mj_contactForce(m, d, c, f6);
