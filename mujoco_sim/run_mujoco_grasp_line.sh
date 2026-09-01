@@ -199,7 +199,8 @@ cleanup() {
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "$MJ_PID" ]] && kill "$MJ_PID" 2>/dev/null || true
   rm -f "$GRASP_FILE" "$GRASP_FILE.tmp"
-  echo ">>> sim log: $MJ_LOG"
+  echo ">>> sim log (mujoco tab):      $MJ_LOG"
+  echo ">>> stack log (FULL console — Bridge/GraspPolicy/rl_grasp/emulator/relay): $LOG_DIR/stack_grasp_$STAMP.log"
   echo ">>> done."
 }
 trap cleanup EXIT INT TERM
