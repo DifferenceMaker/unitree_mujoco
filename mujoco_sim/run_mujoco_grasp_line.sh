@@ -244,7 +244,7 @@ DOCKER_CMD=(docker run --rm --name "$CONTAINER" --network host --ipc=host
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}"
   -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
   -e AM_GRASP_POLICY="$MS" -e AM_ARM_OVERRIDE=1
-  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
+  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
   -e GRASP_SIM_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_sim_state
   -e VISION_HOLD_MIN="$VISION_HOLD_MIN" -e VISION_HOLD_MAX="$VISION_HOLD_MAX"
   -e ARCHB_GRASP_SEQ_DELAY="$SEQ_DELAY"
