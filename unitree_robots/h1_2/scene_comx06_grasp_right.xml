@@ -400,12 +400,12 @@
     <general name="right_wrist_roll_joint" joint="right_wrist_roll_joint" ctrlrange="-19 19"/>
     <general name="right_wrist_pitch_joint" joint="right_wrist_pitch_joint" ctrlrange="-19 19"/>
     <general name="right_wrist_yaw_joint" joint="right_wrist_yaw_joint" ctrlrange="-19 19"/>
-    <general name="rh:drv_little" joint="rh:right_little_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
-    <general name="rh:drv_ring" joint="rh:right_ring_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
-    <general name="rh:drv_middle" joint="rh:right_middle_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
-    <general name="rh:drv_index" joint="rh:right_index_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
-    <general name="rh:drv_thumb_bend" joint="rh:right_thumb_2_joint" ctrllimited="true" ctrlrange="0 0.5864" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
-    <general name="rh:drv_thumb_rot" joint="rh:right_thumb_1_joint" ctrllimited="true" ctrlrange="0 1.1641" forcelimited="true" forcerange="-1.5 1.5" biastype="affine" gainprm="30" biasprm="0 -30 -1"/>
+    <general name="rh:drv_little" joint="rh:right_little_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
+    <general name="rh:drv_ring" joint="rh:right_ring_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
+    <general name="rh:drv_middle" joint="rh:right_middle_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
+    <general name="rh:drv_index" joint="rh:right_index_1_joint" ctrllimited="true" ctrlrange="0 1.4381" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
+    <general name="rh:drv_thumb_bend" joint="rh:right_thumb_2_joint" ctrllimited="true" ctrlrange="0 0.5864" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
+    <general name="rh:drv_thumb_rot" joint="rh:right_thumb_1_joint" ctrllimited="true" ctrlrange="0 1.1641" forcelimited="true" forcerange="-30 30" biastype="affine" gainprm="10" biasprm="0 -10 -0.2"/>
   </actuator>
 
   <sensor>

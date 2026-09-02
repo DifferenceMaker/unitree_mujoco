@@ -29,9 +29,9 @@
   0.9297188022655103
  ],
  "drivers": {
-  "kp": 30.0,
-  "kv": 1.0,
-  "force_limit_Nm": 1.5
+  "kp": 10.0,
+  "kv": 0.2,
+  "force_limit_Nm": 30.0
  },
  "env_yaml": "milestone_checkpoints/gr7b_clean_smooth_2026-08-26/params/env.yaml",
  "scene": "/home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/unitree_robots/h1_2/scene_comx06.xml"
