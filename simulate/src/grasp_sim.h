@@ -59,6 +59,8 @@ struct State {
   int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1, table_body = -1;
   int belief_mocap = -1, belief_geom = -1;   // vision-belief ghost (mocap marker)
   double belief_mtime = 0.0, belief_flash_t = -1.0;
+  double retract_mtime = 0.0;
+  bool retracted = false;
   double place_mtime = 0.0;
   double obj_z0 = 0.0;
   std::mutex mtx;
@@ -237,6 +239,35 @@ inline void step(const mjModel* m, mjData* d) {
       const double age = d->time - s.belief_flash_t;
       const float a = age < 0.35 ? 0.95f : (age < 1.5 ? 0.45f : 0.22f);
       m->geom_rgba[4 * s.belief_geom + 3] = a;   // alpha pulse: bright on update, dim while held
+    }
+  }
+
+  // SUPPORT RETRACT (2026-09-03, diagnostic): the TRAINING world's table VANISHES
+  // 0.3-1.0 s after the approach (grasp_mdp.retract_support teleports the platform
+  // far below — the policy learned to CATCH a released cube, not to pick one off a
+  // solid table; the rig's permanent table made its close-fast reflex punt the
+  // cube). When rl_grasp writes ARCHB_GRASP_RETRACT_FILE (AM_GRASP_RETRACT=1),
+  // kill the table's collisions and ghost it visually — trained physics on demand.
+  if (!s.retracted) {
+    static const char* rf = std::getenv("ARCHB_GRASP_RETRACT_FILE");
+    if (rf && rf[0]) {
+      struct stat rst {};
+      if (stat(rf, &rst) == 0) {
+        const double rmt = (double)rst.st_mtime + (double)rst.st_mtim.tv_nsec * 1e-9;
+        if (s.retract_mtime == 0.0) s.retract_mtime = rmt;   // stale file at boot: arm only
+        else if (rmt > s.retract_mtime) {
+          for (int g = 0; g < m->ngeom; ++g) {
+            const char* bn = mj_id2name(m, mjOBJ_BODY, m->geom_bodyid[g]);
+            if (bn && std::strncmp(bn, "tbl:", 4) == 0) {
+              m->geom_contype[g] = 0;
+              m->geom_conaffinity[g] = 0;
+              m->geom_rgba[4 * g + 3] = 0.15f;
+            }
+          }
+          s.retracted = true;
+          std::printf("[GRASP] SUPPORT RETRACTED — table collisions OFF (training reset semantics)\n");
+        }
+      }
     }
   }
 
