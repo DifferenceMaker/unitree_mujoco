@@ -125,7 +125,7 @@ fi
 case "$OBJECT" in
   tube) OBJ_H="0.130"; OBJ_FWD="0.09"; OBJ_BOX="0.19 0.19 0.13"; HOVER_GAP_DEF="0.04";;
   ring) OBJ_H="0.020"; OBJ_FWD="0.071"; OBJ_BOX="0.20 0.20 0.02"; HOVER_GAP_DEF="0.065";;
-  *)    OBJ_H="0.055"; OBJ_FWD="0";    OBJ_BOX="0.09 0.06 0.055"; HOVER_GAP_DEF="0.06";;
+  *)    OBJ_H="0.055"; OBJ_FWD="0";    OBJ_BOX="0.09 0.06 0.055"; HOVER_GAP_DEF="0.04";;
 esac
 
 # ── CONTRACT GATE + deploy.yaml staging (trained default pose patched in) ───
@@ -221,6 +221,7 @@ cleanup() {
   [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "$MJ_PID" ]] && kill "$MJ_PID" 2>/dev/null || true
+  [[ -n "${LEDGER_PID:-}" ]] && kill "$LEDGER_PID" 2>/dev/null || true
   rm -f "$GRASP_FILE" "$GRASP_FILE.tmp"
   echo ">>> sim log (mujoco tab):      $MJ_LOG"
   echo ">>> stack log (FULL console — Bridge/GraspPolicy/rl_grasp/emulator/relay): $LOG_DIR/stack_grasp_$STAMP.log"
@@ -252,6 +253,14 @@ if ! kill -0 "$MJ_PID" 2>/dev/null; then
   echo "ERROR: MuJoCo exited during startup 3x — see $MJ_LOG"; tail -5 "$MJ_LOG" | sed 's/^/    /'; exit 1
 fi
 [[ "${RECORD:-0}" = "1" ]] && echo ">>> [rec] in-sim recording -> $RECORD_FILE (stops with the sim)"
+
+# ── 1b. GRASP REWARD LEDGER (host sidecar): live per-term recomputation from
+# rt/sim_hand/state + rt/lowstate, published on rt/balance_metrics — the sim's
+# existing ledger panel renders it (same key/cycling as the balance line).
+SIM_DDS_DOMAIN=$SIM_DDS_DOMAIN SIM_DDS_NIC=lo "$TV_PY" "$SIM/tools/grasp_reward_ledger.py" \
+  "$STAGE/$MS/env.yaml" "$STAGE/$MS/deploy.yaml" >>"$LOG_DIR/grasp_ledger_$STAMP.log" 2>&1 &
+LEDGER_PID=$!
+echo ">>> [ledger] grasp reward HUD sidecar up (pid $LEDGER_PID, log grasp_ledger_$STAMP.log) — cycle the panel with the sim's ledger key"
 
 # ── 2. container: Bridge (+ real finger_manager) + emulator + relay + ActionModule
 ( while kill -0 "$MJ_PID" 2>/dev/null; do sleep 2; done
