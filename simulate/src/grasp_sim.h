@@ -279,9 +279,21 @@ inline void step(const mjModel* m, mjData* d) {
   // — pads only ever felt object/world contact) slams the fingers shut on phantom
   // "contact". Count a contact only when at least one geom is NOT part of the hand.
   std::vector<double> pad_f(s.pad_geom.size(), 0.0);
+  double hit_table = 0.0, hit_robot = 0.0;   // hand-vs-table / hand-vs-robot-body force sums (penalty HUD)
   for (int c = 0; c < d->ncon; ++c) {
     const int g1 = d->contact[c].geom1, g2 = d->contact[c].geom2;
     if (s.geom_is_hand[g1] && s.geom_is_hand[g2]) continue;   // finger-on-finger: invisible to the pads
+    // penalty aggregates: any HAND geom against the table / another robot body
+    if (s.geom_is_hand[g1] != s.geom_is_hand[g2]) {
+      const int go = s.geom_is_hand[g1] ? g2 : g1;            // the non-hand geom
+      const char* bn = mj_id2name(m, mjOBJ_BODY, m->geom_bodyid[go]);
+      if (bn) {
+        mjtNum ff6[6]; mj_contactForce(m, d, c, ff6);
+        const double fnc = std::abs(ff6[0]);
+        if (std::strncmp(bn, "tbl:", 4) == 0) hit_table += fnc;
+        else if (std::strncmp(bn, "obj:", 4) != 0 && m->geom_bodyid[go] != 0) hit_robot += fnc;
+      }
+    }
     const int p1 = s.geom2pad[g1], p2 = s.geom2pad[g2];
     if (p1 < 0 && p2 < 0) continue;
     mjtNum f6[6];
@@ -318,7 +330,7 @@ inline void step(const mjModel* m, mjData* d) {
                          q[0], q[1], q[2], q[3]);
   }
   if (n > 0 && n < (int)sizeof js - 48)
-    n += std::snprintf(js + n, sizeof js - n, ",\"obj_lift\":%.4f,\"ncmd\":%d}", d->xpos[3 * s.obj_body + 2] - s.obj_z0, s.cmd_count);
+    n += std::snprintf(js + n, sizeof js - n, ",\"obj_lift\":%.4f,\"hit_table\":%.2f,\"hit_robot\":%.2f,\"ncmd\":%d}", d->xpos[3 * s.obj_body + 2] - s.obj_z0, hit_table, hit_robot, s.cmd_count);
   const std::string out(js);
   if (publish_fn()) publish_fn()(out);
   static const char* gf = std::getenv("ARCHB_GRASP_FILE");

@@ -70,7 +70,11 @@ class GraspLedger:
                            ("cube_orientation_hold", "orient"),
                            ("cube_hold_above", "hold_above"), ("approach_cube", "approach"),
                            ("quiet_hold", "quiet"), ("park_keep", "park"),
-                           ("pad_arrangement", "pads")):
+                           ("pad_arrangement", "pads"),
+                           ("table_hit", "table_hit"), ("torso_hit", "torso_hit"),
+                           (f"{pre}_slide", "slide"), ("cube_slide", "slide"),
+                           ("action_rate", "action_rate"), ("arm_smooth", "arm_smooth"),
+                           ("finger_smooth", "finger_smooth")):
             w = wt(t)
             if w is not None and generic not in {v[1] for v in self.terms.values()}:
                 self.terms[t] = (w, generic)
@@ -88,10 +92,12 @@ class GraspLedger:
         self.park = [float(x) for x in re.findall(r"- (-?[\d.eE+]+)", m.group(1))] if m else None
         self._order = sorted(self.terms, key=lambda t: -abs(self.terms[t][0]))
         self._ref_q = None
+        self._prev_obj = None; self._prev_t = None
+        self._prev_dq = None; self._prev_cmd = None; self._prev_fcmd = None
         print(f"[grasp_ledger] object={self.obj}; terms: " +
               ", ".join(f"{t}({self.terms[t][0]:+g})" for t in self._order), flush=True)
 
-    def tick(self, st, arm_q, arm_dq):
+    def tick(self, st, arm_q, arm_dq, arm_cmd=None):
         obj = np.asarray(st["obj"]["p"]); palm = np.asarray(st["palm"]["p"])
         pads = np.asarray(list(st["pads"].values()), dtype=float)
         touching = 1.0 if pads.sum() > 1.0 else 0.0
@@ -125,20 +131,48 @@ class GraspLedger:
                     v = math.exp(-dev / self.p["park_sigma"] ** 2)
             elif g == "pads":
                 v = float((pads > 0.5).sum()) / 6.0
+            elif g == "table_hit":
+                v = 1.0 if float(st.get("hit_table", 0.0)) > 1.0 else 0.0
+            elif g == "torso_hit":
+                v = 1.0 if float(st.get("hit_robot", 0.0)) > 1.0 else 0.0
+            elif g == "slide":
+                v = 0.0
+                if self._prev_obj is not None and self._prev_t is not None:
+                    dt = max(1e-3, time.monotonic() - self._prev_t)
+                    v = float(np.linalg.norm(obj[:2] - self._prev_obj[:2]) / dt) * touching
+            elif g == "action_rate":
+                v = 0.0
+                if arm_cmd is not None and self._prev_cmd is not None:
+                    v = float(np.sum(np.square(np.asarray(arm_cmd) - self._prev_cmd)))
+            elif g == "arm_smooth":
+                v = 0.0
+                if arm_dq is not None and self._prev_dq is not None:
+                    prod = np.asarray(arm_dq) * self._prev_dq
+                    v = float(np.sum(np.abs(np.asarray(arm_dq))[prod < 0]))   # velocity reversals
+            elif g == "finger_smooth":
+                cmd6 = np.asarray(st.get("cmd", [0.0] * 6), dtype=float)
+                v = float(np.sum(np.square(cmd6 - self._prev_fcmd))) if self._prev_fcmd is not None else 0.0
+                self._prev_fcmd = cmd6
             else:
                 v = 0.0
             vals[t] = v * w
+        self._prev_obj = obj.copy(); self._prev_t = time.monotonic()
+        if arm_dq is not None:
+            self._prev_dq = np.asarray(arm_dq)
+        if arm_cmd is not None:
+            self._prev_cmd = np.asarray(arm_cmd)
         return vals
 
-    def hud_field(self, vals, top=10):
+    def hud_field(self, vals, top=14):
         total = sum(vals.values())
         rows = [f"TOTAL:{total:+.2f}:{max(-1.0, min(1.0, total / 60.0)):+.3f}"]
         for t in self._order[:top]:
             if t not in vals:
                 continue
             w = abs(self.terms[t][0]) or 1.0
-            disp = (t + "~") if t in ("quiet_hold", "park_keep", "pad_arrangement",
-                                      "cube_orientation_hold") or "orientation" in t else t
+            disp = (t + "~") if (t in ("quiet_hold", "park_keep", "pad_arrangement")
+                                 or "orientation" in t or "hit" in t or "slide" in t
+                                 or t in ("action_rate", "arm_smooth", "finger_smooth")) else t
             frac = max(-1.0, min(1.0, vals[t] / w))
             rows.append(f"{disp[:18]}:{vals[t]:+.2f}:{frac:+.3f}")
         return "|".join(rows)
@@ -151,7 +185,7 @@ def main():
     deploy_yaml = sys.argv[2]
     ChannelFactoryInitialize(dom, nic)
     led = GraspLedger(env_yaml, deploy_yaml)
-    state = {"st": None, "arm_q": None, "arm_dq": None}
+    state = {"st": None, "arm_q": None, "arm_dq": None, "arm_cmd": None}
 
     def on_state(msg):
         try:
@@ -163,8 +197,16 @@ def main():
         state["arm_q"] = [m.motor_state[i].q for i in range(20, 27)]
         state["arm_dq"] = [m.motor_state[i].dq for i in range(20, 27)]
 
+    def on_cmd(m):
+        state["arm_cmd"] = [m.motor_cmd[i].q for i in range(20, 27)]
+
     ChannelSubscriber("rt/sim_hand/state", String_).Init(on_state, 10)
     ChannelSubscriber("rt/lowstate", LowState_).Init(on_low, 10)
+    try:
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_
+        ChannelSubscriber("rt/lowcmd", LowCmd_).Init(on_cmd, 10)
+    except Exception as e:
+        print(f"[grasp_ledger] no lowcmd sub ({e}) — action_rate~ stays 0", flush=True)
     pub = ChannelPublisher("rt/balance_metrics", String_)
     pub.Init()
     print(f"[grasp_ledger] publishing the grasp reward ledger on rt/balance_metrics "
@@ -174,7 +216,7 @@ def main():
         if state["st"] is None:
             continue
         try:
-            vals = led.tick(state["st"], state["arm_q"], state["arm_dq"])
+            vals = led.tick(state["st"], state["arm_q"], state["arm_dq"], state["arm_cmd"])
             pub.Write(String_(data='{"ledger":"%s"}' % led.hud_field(vals)))
         except Exception as e:
             print(f"[grasp_ledger] tick error: {e}", flush=True)
