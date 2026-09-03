@@ -44,7 +44,7 @@ SCENE_NAME="scene_comx06_grasp_right.xml"
 SCENE_XML="$MUJOCO/unitree_robots/h1_2/$SCENE_NAME"
 SIM_DDS_DOMAIN=1
 
-POLICY=""; OBJECT="cube"; GAP="0.03"; RECORD=0; RECORD_FILE_OPT=""; DEBUG=1; PROFILE="run"
+POLICY=""; OBJECT="auto"; GAP="0.03"; RECORD=0; RECORD_FILE_OPT=""; DEBUG=1; PROFILE="run"
 VISION_HOLD_MIN="${VISION_HOLD_MIN:-1.0}"; VISION_HOLD_MAX="${VISION_HOLD_MAX:-2.0}"; SEQ_DELAY="${ARCHB_GRASP_SEQ_DELAY:-3}"
 while [[ $# -gt 0 ]]; do case "$1" in
   stop)           PROFILE="stop"; shift;;
@@ -104,6 +104,29 @@ for f in exported/policy.onnx params/deploy.yaml params/env.yaml; do
   [[ -f "$MILESTONES/$MS/$f" ]] || { echo "FATAL: $MS missing $f"; exit 2; }
 done
 MSDIR="$MILESTONES/$MS"
+
+# ── OBJECT auto-detect (2026-09-03, tube rig): read the training object from the
+# milestone's own env.yaml — the same one-button flow as the cube; --object wins.
+if [[ "$OBJECT" == "auto" ]]; then
+  OBJECT=$(python3 - "$MSDIR/params/env.yaml" <<'PY'
+import sys, re
+s = open(sys.argv[1]).read()
+if "tube_d180" in s: print("tube")
+elif "ring_d180" in s: print("ring")
+else: print("cube")
+PY
+)
+  echo ">>> [object] auto-detected from env.yaml: $OBJECT"
+fi
+# per-object container knobs: object height (hover z + table math), the palm->
+# object-center forward offset (the tube trains with the palm at the NEAR RIM —
+# object_xy_offset (0.09, 0)), planner collision box, hover gap default inside
+# the trained band (cube U[0.02,0.08] -> 0.06; tube U[0.02,0.04] -> 0.04).
+case "$OBJECT" in
+  tube) OBJ_H="0.130"; OBJ_FWD="0.09"; OBJ_BOX="0.19 0.19 0.13"; HOVER_GAP_DEF="0.04";;
+  ring) OBJ_H="0.020"; OBJ_FWD="0.071"; OBJ_BOX="0.20 0.20 0.02"; HOVER_GAP_DEF="0.065";;
+  *)    OBJ_H="0.055"; OBJ_FWD="0";    OBJ_BOX="0.09 0.06 0.055"; HOVER_GAP_DEF="0.06";;
+esac
 
 # ── CONTRACT GATE + deploy.yaml staging (trained default pose patched in) ───
 rm -rf "$STAGE"; mkdir -p "$STAGE/$MS"
@@ -244,7 +267,7 @@ DOCKER_CMD=(docker run --rm --name "$CONTAINER" --network host --ipc=host
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}"
   -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
   -e AM_GRASP_POLICY="$MS" -e AM_ARM_OVERRIDE=1
-  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e AM_GRASP_GRAV_FF_FADE="${AM_GRASP_GRAV_FF_FADE:-1.0}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
+  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_CUBE_HEIGHT="${AM_GRASP_CUBE_HEIGHT:-$OBJ_H}" -e AM_GRASP_OBJ_FWD_OFFSET="${AM_GRASP_OBJ_FWD_OFFSET:-$OBJ_FWD}" -e AM_GRASP_HOVER_GAP="${AM_GRASP_HOVER_GAP:-$HOVER_GAP_DEF}" -e GRASP_OBJ_BOX="${GRASP_OBJ_BOX:-$OBJ_BOX}" -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e AM_GRASP_GRAV_FF_FADE="${AM_GRASP_GRAV_FF_FADE:-1.0}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
   -e GRASP_SIM_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_sim_state
   -e VISION_HOLD_MIN="$VISION_HOLD_MIN" -e VISION_HOLD_MAX="$VISION_HOLD_MAX"
   -e ARCHB_GRASP_SEQ_DELAY="$SEQ_DELAY"
