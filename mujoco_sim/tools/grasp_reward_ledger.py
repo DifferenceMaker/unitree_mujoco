@@ -141,9 +141,15 @@ class GraspLedger:
                     dt = max(1e-3, time.monotonic() - self._prev_t)
                     v = float(np.linalg.norm(obj[:2] - self._prev_obj[:2]) / dt) * touching
             elif g == "action_rate":
+                # Isaac's action_rate = per-POLICY-STEP (50 Hz) target diffs; our
+                # lowcmd samples are 1 kHz slewed ramps read at 20 Hz, so raw diffs
+                # underestimate ~100x (operator: "doesn't seem calculated correctly").
+                # Normalize: rate = diff/dt, then the 0.02 s Isaac-step equivalent.
                 v = 0.0
-                if arm_cmd is not None and self._prev_cmd is not None:
-                    v = float(np.sum(np.square(np.asarray(arm_cmd) - self._prev_cmd)))
+                if arm_cmd is not None and self._prev_cmd is not None and self._prev_t is not None:
+                    dt = max(1e-3, time.monotonic() - self._prev_t)
+                    rate = (np.asarray(arm_cmd) - self._prev_cmd) / dt
+                    v = float(np.sum(np.square(rate * 0.02)))
             elif g == "arm_smooth":
                 v = 0.0
                 if arm_dq is not None and self._prev_dq is not None:
