@@ -57,6 +57,8 @@ struct State {
   std::vector<int> geom2pad;          // ngeom -> pad idx or -1
   std::vector<char> geom_is_hand;     // geom belongs to an rh:* body (self-touch mask)
   int obj_body = -1, obj_jnt = -1, torso_body = -1, palm_geom = -1, table_body = -1;
+  int belief_mocap = -1, belief_geom = -1;   // vision-belief ghost (mocap marker)
+  double belief_mtime = 0.0, belief_flash_t = -1.0;
   double place_mtime = 0.0;
   double obj_z0 = 0.0;
   std::mutex mtx;
@@ -105,6 +107,11 @@ inline void init(const mjModel* m) {
   s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "obj:object_free");
   if (s.obj_jnt < 0) s.obj_jnt = mj_name2id(m, mjOBJ_JOINT, "object_free");
   s.torso_body = mj_name2id(m, mjOBJ_BODY, "torso_link");
+  {
+    int bb = mj_name2id(m, mjOBJ_BODY, "belief");
+    if (bb >= 0) s.belief_mocap = m->body_mocapid[bb];
+    s.belief_geom = mj_name2id(m, mjOBJ_GEOM, "belief_marker");
+  }
   s.table_body = mj_name2id(m, mjOBJ_BODY, "tbl:table");
   if (s.table_body < 0) s.table_body = mj_name2id(m, mjOBJ_BODY, "table");
   s.ok = s.obj_body >= 0 && s.torso_body >= 0 && s.palm_geom >= 0 && s.pad_geom.size() == 17;
@@ -201,6 +208,38 @@ inline void step(const mjModel* m, mjData* d) {
       meas[i] = std::min(1.0, std::max(0.0, (q - s.lo[i]) / std::max(1e-6, s.hi[i] - s.lo[i])));
     }
   }
+  // BELIEF GHOST (2026-09-03): the relay writes each vision SAMPLE's believed
+  // WORLD position to GRASP_BELIEF_FILE; render it as a small marker that
+  // FLASHES bright on update and dims while the sample is held — the visible
+  // gap between what the policy believes and where the object is.
+  if (s.belief_mocap >= 0) {
+    static const char* bf = std::getenv("ARCHB_GRASP_BELIEF_FILE");
+    const char* bpath = bf && bf[0] ? bf : "logs/.grasp_belief";
+    struct stat bst {};
+    if (stat(bpath, &bst) == 0) {
+      const double bmt = (double)bst.st_mtime + (double)bst.st_mtim.tv_nsec * 1e-9;
+      if (bmt > s.belief_mtime) {
+        s.belief_mtime = bmt;
+        std::FILE* fp = std::fopen(bpath, "r");
+        if (fp) {
+          double bx, by, bz;
+          if (std::fscanf(fp, "%lf %lf %lf", &bx, &by, &bz) == 3) {
+            d->mocap_pos[3 * s.belief_mocap + 0] = bx;
+            d->mocap_pos[3 * s.belief_mocap + 1] = by;
+            d->mocap_pos[3 * s.belief_mocap + 2] = bz;
+            s.belief_flash_t = d->time;
+          }
+          std::fclose(fp);
+        }
+      }
+    }
+    if (s.belief_geom >= 0 && s.belief_flash_t >= 0.0) {
+      const double age = d->time - s.belief_flash_t;
+      const float a = age < 0.35 ? 0.95f : (age < 1.5 ? 0.45f : 0.22f);
+      m->geom_rgba[4 * s.belief_geom + 3] = a;   // alpha pulse: bright on update, dim while held
+    }
+  }
+
   // PLACE-OBJECT command (ARCHB_GRASP_PLACE_FILE, written by the rl_grasp sequence,
   // AM_GRASP_HOVER=place): teleport the object under the LIVE palm pad — Isaac's
   // palm_track reset semantics reproduced at HANDOVER time. This puts the object

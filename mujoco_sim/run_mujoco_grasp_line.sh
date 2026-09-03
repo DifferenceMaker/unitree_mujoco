@@ -234,6 +234,7 @@ start_sim() {
   ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 \
       ARCHB_GRASP=1 ARCHB_NO_BAND=1 ARCHB_GRASP_FILE="$GRASP_FILE" \
     ARCHB_GRASP_PLACE_FILE="$SIM/logs/.grasp_place_object" \
+    ARCHB_GRASP_BELIEF_FILE="$SIM/logs/.grasp_belief" \
       ARCHB_RECORD_FILE="$([[ ${RECORD:-0} = 1 ]] && echo "$RECORD_FILE")" \
       "$MJ_BIN" -r h1_2 -i "$SIM_DDS_DOMAIN" -n lo -s "$SCENE_NAME" ) >>"$MJ_LOG" 2>&1 &
   MJ_PID=$!
