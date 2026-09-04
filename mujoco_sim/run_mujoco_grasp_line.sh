@@ -170,6 +170,18 @@ jp = env["scene"]["robot"]["init_state"]["joint_pos"]
 names = list(dep["actions"]["arm"]["joint_names"])
 off = [float(jp[n]) for n in names]
 dep["actions"]["arm"]["offset"] = off
+# RIG META (2026-09-04, operator: "gains of the trained policy should be read
+# dynamically and applied at launch time"): the TRAINED arm PD gains and the
+# gravity-free contract, read from the milestone's own env.yaml — the launcher
+# sources this file for its defaults (env vars still override).
+act = env["scene"]["robot"]["actuators"].get("arm", {}) or {}
+kp = act.get("stiffness", 40.0); kd = act.get("damping", 3.0)
+kp = float(kp) if not isinstance(kp, dict) else 40.0
+kd = float(kd) if not isinstance(kd, dict) else 3.0
+gravfree = "disable_robot_gravity" in open(os.path.join(ms, "params/env.yaml")).read()
+with open(os.path.join(stage, "rig_meta.env"), "w") as f:
+    f.write(f"TRAINED_ARM_KP={kp}\nTRAINED_ARM_KD={kd}\nTRAINED_GRAVFREE={1 if gravfree else 0}\n")
+print(f"RIG META: trained arm gains kp {kp} / kd {kd}" + (" | GRAVITY-FREE contract (tau_ff must be HELD ON)" if gravfree else ""))
 shutil.copy(os.path.join(ms, "exported/policy.onnx"), os.path.join(stage, "policy.onnx"))
 for f in ("overrides.json", "MILESTONE.md"):
     if os.path.exists(os.path.join(ms, f)): shutil.copy(os.path.join(ms, f), stage)
@@ -190,7 +202,20 @@ echo ">>> [policy] staged $MS -> $STAGE (container sees it as ActionModule/polic
 # (legs/torso = config.py values, arms = training) as the Bridge's gain source. On the REAL
 # robot the same thing must happen: the active MM policy's arm gains, or a grasp-line CURRENT.
 STAGE_MM="$SIM/logs/.grasp_gains_stage"; rm -rf "$STAGE_MM"; mkdir -p "$STAGE_MM/$MS"
-ARM_KP="${ARCHB_GRASP_ARM_KP:-40}"; ARM_KD="${ARCHB_GRASP_ARM_KD:-3}"
+# TRAINED gains + gravity contract from the milestone itself (rig_meta.env,
+# written by the gate above). gr8d_gains trained 60/4 and was silently armed
+# 40/3 on 2026-09-04 — the verdict was void; never again. Env vars override.
+TRAINED_ARM_KP=40; TRAINED_ARM_KD=3; TRAINED_GRAVFREE=0
+[ -f "$STAGE/$MS/rig_meta.env" ] && . "$STAGE/$MS/rig_meta.env"
+ARM_KP="${ARCHB_GRASP_ARM_KP:-$TRAINED_ARM_KP}"; ARM_KD="${ARCHB_GRASP_ARM_KD:-$TRAINED_ARM_KD}"
+echo ">>> [gains] arms kp $ARM_KP / kd $ARM_KD (trained values from the milestone; ARCHB_GRASP_ARM_KP/KD override)"
+# gravity-free policies (gr8d_gravfree/combo): trained with robot gravity OFF ==
+# tau_ff = g(q) ALWAYS on at deploy -> the rig must HOLD the ff (no fade at
+# handover). Auto-set from the contract; AM_GRASP_GRAV_FF_HOLD overrides.
+if [ -z "${AM_GRASP_GRAV_FF_HOLD:-}" ] && [ "$TRAINED_GRAVFREE" = "1" ]; then
+  export AM_GRASP_GRAV_FF_HOLD=1
+  echo ">>> [ff] GRAVITY-FREE contract detected -> AM_GRASP_GRAV_FF_HOLD=1 (ff held through policy + lift)"
+fi
 python3 - "$STAGE_MM/$MS/deploy.yaml" "$ARM_KP" "$ARM_KD" <<'PY'
 import sys
 out, kp, kd = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
@@ -278,7 +303,7 @@ DOCKER_CMD=(docker run --rm --name "$CONTAINER" --network host --ipc=host
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}"
   -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
   -e AM_GRASP_POLICY="$MS" -e AM_ARM_OVERRIDE=1
-  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_CUBE_HEIGHT="${AM_GRASP_CUBE_HEIGHT:-$OBJ_H}" -e AM_GRASP_OBJ_FWD_OFFSET="${AM_GRASP_OBJ_FWD_OFFSET:-$OBJ_FWD}" -e AM_GRASP_HOVER_GAP="${AM_GRASP_HOVER_GAP:-$HOVER_GAP_DEF}" -e GRASP_OBJ_BOX="${GRASP_OBJ_BOX:-$OBJ_BOX}" -e AM_GRASP_RETRACT="${AM_GRASP_RETRACT:-0}" -e GRASP_RETRACT_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_retract -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e AM_GRASP_GRAV_FF_FADE="${AM_GRASP_GRAV_FF_FADE:-1.0}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
+  -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_CUBE_HEIGHT="${AM_GRASP_CUBE_HEIGHT:-$OBJ_H}" -e AM_GRASP_OBJ_FWD_OFFSET="${AM_GRASP_OBJ_FWD_OFFSET:-$OBJ_FWD}" -e AM_GRASP_HOVER_GAP="${AM_GRASP_HOVER_GAP:-$HOVER_GAP_DEF}" -e GRASP_OBJ_BOX="${GRASP_OBJ_BOX:-$OBJ_BOX}" -e AM_GRASP_RETRACT="${AM_GRASP_RETRACT:-0}" -e GRASP_RETRACT_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_retract -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e AM_GRASP_GRAV_FF_FADE="${AM_GRASP_GRAV_FF_FADE:-1.0}" -e AM_GRASP_GRAV_FF_HOLD="${AM_GRASP_GRAV_FF_HOLD:-0}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
   -e GRASP_SIM_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_sim_state
   -e VISION_HOLD_MIN="$VISION_HOLD_MIN" -e VISION_HOLD_MAX="$VISION_HOLD_MAX"
   -e ARCHB_GRASP_SEQ_DELAY="$SEQ_DELAY"
