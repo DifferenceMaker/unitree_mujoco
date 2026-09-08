@@ -48,7 +48,7 @@ RLLAB="$REPOS/unitree_rl_lab"
 SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="${CTRL_BIN:-$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl}"   # env override: fleetdeck dds_cpp shadow (run_mujoco_dds_cpp.sh)
-XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"   # comx06 body — matches config.yaml scene_comx06.xml
+XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml"   # comx06 body + Unitree per-joint armature (2026-09-08) — matches config.yaml scene_comx06_armature*.xml
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 

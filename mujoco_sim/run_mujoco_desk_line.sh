@@ -214,10 +214,13 @@ if [[ "$BODY" == "stock" ]]; then
     echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
   fi
 elif [[ "$BODY" == "comx06" ]]; then
-  XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"
-  if ! grep -qE 'robot_scene: "scene_comx06[_a-z0-9]*desk.xml"' "$MUJOCO/simulate/config.yaml"; then
-    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_desk.xml"/' "$MUJOCO/simulate/config.yaml"
-    echo ">>> [scene] robot_scene -> scene_comx06_desk.xml (comx06 body, RIGID floor = Isaac parity)"
+  # 2026-09-08: comx06 body WITH Unitree per-joint armature (h1_2_comx06_armature.xml) — the
+  # plain comx06 xml carries the MJCF default armature=0.1 on every joint (10x Isaac's old
+  # 0.01, and wrong per joint); the armature body mirrors UNITREE_H1_2_CFG @ 688b39b.
+  XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml"
+  if ! grep -qE 'robot_scene: "scene_comx06_armature[_a-z0-9]*desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_armature_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_comx06_armature_desk.xml (comx06 body + Unitree armature, RIGID floor = Isaac parity)"
   fi
 elif ! grep -qE 'robot_scene: "scene_sym_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
   sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_sym_soft07_desk.xml"/' "$MUJOCO/simulate/config.yaml"

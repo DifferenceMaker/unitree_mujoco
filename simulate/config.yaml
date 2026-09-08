@@ -1,5 +1,5 @@
 robot: "h1_2"  # Robot name, "go2", "b2", "b2w", "h1", "go2w", "g1"
-robot_scene: "scene_comx06.xml" # NEW-SOLE-ERA DEFAULT (2026-07-30): comx06 body + rigid floor = the p12f/p12g training-era setup, matches Isaac rigid plane. Desk-line work: run_mujoco_desk_line.sh swaps to its own scenes (--stock = dp2b cush75).
+robot_scene: "scene_comx06_armature_desk.xml" # ARMATURE DEFAULT (2026-09-08): comx06 body + Unitree per-joint armature (was scene_comx06_desk.xml, whose body carries the MJCF default armature=0.1 on all joints). NEW-SOLE-ERA DEFAULT (2026-07-30): comx06 body + rigid floor = the p12f/p12g training-era setup, matches Isaac rigid plane. Desk-line work: run_mujoco_desk_line.sh swaps to its own scenes (--stock = dp2b cush75).
 
 domain_id: 0  # Domain id
 interface: "lo" # Interface
