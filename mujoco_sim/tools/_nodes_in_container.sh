@@ -168,9 +168,28 @@ if [ "$MODE" = "g" ]; then
       if ros2 topic info /ActionModule/run 2>/dev/null | grep -q "Subscription count: [1-9]"; then break; fi
       sleep 1
     done
+    # 2026-09-10: ALSO wait for the Conductor to be IDLE. main.py runs the boot 'start'
+    # sequence (go_to_start x2 per arm + engine switches since the AM merge, ~10 s) and
+    # the Conductor REFUSES an overlapping dispatch ("IGNORED ... a previous sequence
+    # is still running") — a fixed delay landed inside that window and rl_grasp never
+    # ran (operator: "the robot doesn't ik resolve at all, goes to the start pose").
+    # /ActionModule/state is latched: 1 = READY (idle), 2 = RUNNING.
+    am_state() { timeout 3 ros2 topic echo --once --qos-durability transient_local --qos-reliability reliable \
+                   /ActionModule/state 2>/dev/null | awk '/^data:/{print $2; exit}'; }
+    for j in $(seq 1 120); do
+      st=$(am_state); [ "$st" = "1" ] && break; sleep 1
+    done
+    echo ">>> [container] GRASP: /ActionModule/run has a subscriber after ~${i}s; Conductor state=${st:-?} after ~${j}s more"
     sleep "${ARCHB_GRASP_SEQ_DELAY:-3}"
-    echo ">>> [container] GRASP: /ActionModule/run has a subscriber after ~${i}s — dispatching the sequence (<- 'cube_task.rl_grasp')"
-    ros2 topic pub --once /ActionModule/run std_msgs/String "data: cube_task.rl_grasp" >/dev/null 2>&1 ) &
+    # dispatch, then VERIFY the Conductor went RUNNING; retry a few times if the pub was lost
+    for try in 1 2 3 4; do
+      echo ">>> [container] GRASP: dispatching the sequence (<- 'cube_task.rl_grasp', try $try)"
+      ros2 topic pub --once /ActionModule/run std_msgs/String "data: cube_task.rl_grasp" >/dev/null 2>&1
+      for k in $(seq 1 8); do st=$(am_state); [ "$st" = "2" ] && break; sleep 1; done
+      if [ "$st" = "2" ]; then echo ">>> [container] GRASP: Conductor RUNNING — rl_grasp accepted"; break; fi
+      echo ">>> [container] GRASP: Conductor state=${st:-?} after the dispatch — not running; retrying"
+      sleep 2
+    done ) &
 else
 echo ">>> [container] starting MovementModule (FixStand->hold->policy -> /BridgeModule/joint_set_legs)"
 need_venv MovementModule                    # onnxruntime lives here (silent system-python fallback = cryptic crash)
