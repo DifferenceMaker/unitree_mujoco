@@ -303,6 +303,10 @@ DOCKER_CMD=(docker run --rm --name "$CONTAINER" --network host --ipc=host
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}"
   -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
   -e AM_GRASP_POLICY="$MS" -e AM_ARM_OVERRIDE=1
+  # 2026-09-10: JointCommander slews EVERY arm command at ARM_MAX_JOINT_SPEED (1.0 rad/s default),
+  # the override path included — the policy trained with NO rate limit (0.15 rad per 20 ms step
+  # possible). Pass the knob through so the sim2sim A/B can lift it (ARM_MAX_JOINT_SPEED=8).
+  -e ARM_MAX_JOINT_SPEED="${ARM_MAX_JOINT_SPEED:-1.0}"
   -e AM_GRASP_HOVER="${AM_GRASP_HOVER:-ik}" -e AM_GRASP_CUBE_HEIGHT="${AM_GRASP_CUBE_HEIGHT:-$OBJ_H}" -e AM_GRASP_OBJ_FWD_OFFSET="${AM_GRASP_OBJ_FWD_OFFSET:-$OBJ_FWD}" -e AM_GRASP_HOVER_GAP="${AM_GRASP_HOVER_GAP:-$HOVER_GAP_DEF}" -e GRASP_OBJ_BOX="${GRASP_OBJ_BOX:-$OBJ_BOX}" -e AM_GRASP_RETRACT="${AM_GRASP_RETRACT:-0}" -e GRASP_RETRACT_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_retract -e AM_GRASP_ARM_DECODE="${AM_GRASP_ARM_DECODE:-handover}" -e AM_GRASP_GRAV_FF="${AM_GRASP_GRAV_FF:-1}" -e AM_GRASP_GRAV_FF_SCALE="${AM_GRASP_GRAV_FF_SCALE:-1.4}" -e AM_GRASP_GRAV_FF_FADE="${AM_GRASP_GRAV_FF_FADE:-1.0}" -e AM_GRASP_GRAV_FF_HOLD="${AM_GRASP_GRAV_FF_HOLD:-0}" -e GRASP_PLACE_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_place_object
   -e GRASP_SIM_FILE=/unitree_mujoco/mujoco_sim/logs/.grasp_sim_state
   -e VISION_HOLD_MIN="$VISION_HOLD_MIN" -e VISION_HOLD_MAX="$VISION_HOLD_MAX"
