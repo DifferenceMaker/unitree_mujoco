@@ -286,6 +286,10 @@ def main():
     ap.add_argument("--window", type=int, default=250, help="samples per [METRICS] print")
     ap.add_argument("--mode", default="(unset — use stdin: mode <label>)",
                     help="disturbance-mode label for the run summary")
+    ap.add_argument("--oracle", type=int, default=None, metavar="PORT",
+                    help="reward ORACLE mode (2026-09-10): forward state over localhost UDP to "
+                         "reward_oracle.py (isaacsim env), which evaluates the policy's OWN Isaac "
+                         "reward functions on MuJoCo state; replaces --ledger's hand-written twin")
     ap.add_argument("--ledger", default=None, metavar="ENV_YAML",
                     help="LIVE reward ledger: path to the policy's params/env.yaml "
                          "(weights parsed from it). Requires the sim's "
@@ -389,8 +393,15 @@ def main():
     threading.Thread(target=stdin_thread, daemon=True).start()
 
     ledger = None
+    bridge = None
     ledger_pub_t = 0.0
-    if args.ledger:
+    if args.oracle:
+        from oracle_bridge import OracleBridge
+        jnames = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in hinge_joints]
+        jrange = [model.jnt_range[j].tolist() for j in hinge_joints]
+        bnames = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) for b in range(model.nbody)]
+        bridge = OracleBridge(args.oracle, jnames, jrange, bnames)
+    elif args.ledger:
         from reward_ledger import RewardLedger
         jnames = [mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
                   for j in hinge_joints]
@@ -451,7 +462,19 @@ def main():
 
         # --- LIVE reward ledger: publish EVERY tick (50 Hz, operator ask —
         # bars move at policy rate; the sim holds NUMBERS on a 5 Hz snapshot) ---
-        if ledger is not None:
+        if bridge is not None:
+            dq = [msg.motor_state[i].dq for i in range(NUM_JOINTS)]
+            tau = [getattr(msg.motor_state[i], "tau_est", 0.0) for i in range(NUM_JOINTS)]
+            rows = bridge.tick(q, dq, tau, quat, gyro)
+            if metrics.publisher is not None and rows:
+                base_fields = getattr(metrics, "last_payload_fields", "")
+                sep = "," if base_fields else ""
+                try:
+                    metrics.publisher.Write(String_(data=(
+                        '{%s%s"ledger":"%s"}' % (base_fields, sep, rows))))
+                except Exception:
+                    pass
+        elif ledger is not None:
             ledger_pub_t = now
             items = ledger.tick(float(g_b[0] ** 2 + g_b[1] ** 2), q=q)
             if metrics.publisher is not None and items:
@@ -464,6 +487,8 @@ def main():
                 except Exception:
                     pass
 
+    if bridge is not None:
+        print(f"[BRIDGE] {bridge.n_sent} states sent, {bridge.n_recv} row replies", flush=True)
     if ledger is not None:
         tape_dir = os.environ.get("LEDGER_TAPE_DIR", ".")
         tape = ledger.save_tape(os.path.join(

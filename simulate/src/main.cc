@@ -115,7 +115,9 @@ static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::Str
 // Ground-truth base pose publisher (rt/sim_base_pose): world-frame base state
 // + wrist positions for the sidecar reward LEDGER (2026-08-21). Sim2sim-only
 // privilege — the reward functions need world pose, which rt/lowstate lacks.
-// JSON: {"p":[xyz],"q":[wxyz],"v":[world lin],"w":[BODY ang],"lw":[xyz],"rw":[xyz]}
+// JSON v3: {"p":[xyz],"q":[wxyz],"v":[world lin],"w":[BODY ang],"ucnt","umax","th","fc","lw","rw","fl","fr","tl","tr"}
+// JSON v4 (2026-09-10): + "xb","vb","wb" (nbody x [xyz], world) and "cf" (nbody x [fxfyfz] net contact force,
+//   world) — read by mujoco_sim/tools/reward_oracle.py, which runs the ISAAC reward functions on this state.
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_sim_pose_pub;
 
 // Scripted push (sim2sim harness): an instantaneous world-frame base velocity
@@ -620,8 +622,14 @@ namespace
                   for (double f : und_f) { if (f > 1.0) ++und_cnt; if (f > und_max) und_max = f; }
 
                   const int qa = m->jnt_qposadr[fj], va = m->jnt_dofadr[fj];
-                  char js[1024];
-                  int n = std::snprintf(js, sizeof js,
+                  // v4 (2026-09-10, reward ORACLE): the buffer now also carries every
+                  // body's world pose/velocity and per-body net contact force, so the
+                  // sidecar can run the ISAAC reward functions on MuJoCo state.
+                  // 33 bodies x 4 x 3 numbers ~ 4 KB at 50 Hz.
+                  static std::vector<char> jsbuf(32768);
+                  char* js = jsbuf.data();
+                  const int jscap = static_cast<int>(jsbuf.size());
+                  int n = std::snprintf(js, jscap,
                       "{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
                       "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f],"
                       "\"ucnt\":%d,\"umax\":%.1f,\"th\":[%.1f,%.1f],\"fc\":[%.1f,%.1f]",
@@ -631,16 +639,68 @@ namespace
                       d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5],
                       und_cnt, und_max, hand_f[0], hand_f[1], foot_f[0], foot_f[1]);
                   auto add_body = [&](const char* key, int bid) {
-                    if (bid >= 0 && n > 0 && n < (int)sizeof js - 96)
-                      n += std::snprintf(js + n, sizeof js - n,
+                    if (bid >= 0 && n > 0 && n < jscap - 96)
+                      n += std::snprintf(js + n, jscap - n,
                           ",\"%s\":[%.4f,%.4f,%.4f]", key,
                           d->xpos[3 * bid], d->xpos[3 * bid + 1], d->xpos[3 * bid + 2]);
                   };
                   add_body("lw", lw_id); add_body("rw", rw_id);
                   add_body("fl", fl_id); add_body("fr", fr_id);
                   add_body("tl", tl_id); add_body("tr", tr_id);
-                  if (n > 0 && n < (int)sizeof js - 2)
-                    std::snprintf(js + n, sizeof js - n, "}");
+                  // ---- v4: all bodies — world position "xb", linear "vb" and angular
+                  // "wb" velocity (mj_objectVelocity, world frame), and "cf" = net
+                  // contact force on each body in the world frame (mj_contactForce is
+                  // in the contact frame; rows of contact.frame are the frame axes;
+                  // +f on geom2's body, -f on geom1's). Indexed in mjModel body order
+                  // (the sidecar sends the same order as meta.body_names).
+                  {
+                    std::vector<double> cf(3 * m->nbody, 0.0);
+                    for (int c = 0; c < d->ncon; ++c) {
+                      const int b1 = m->geom_bodyid[d->contact[c].geom1];
+                      const int b2 = m->geom_bodyid[d->contact[c].geom2];
+                      mjtNum f6[6];
+                      mj_contactForce(m, d, c, f6);
+                      const mjtNum* fr = d->contact[c].frame;   // row-major 3x3, rows = axes
+                      for (int k = 0; k < 3; ++k) {
+                        const double fw = f6[0] * fr[0 + k] + f6[1] * fr[3 + k] + f6[2] * fr[6 + k];
+                        cf[3 * b2 + k] += fw;
+                        cf[3 * b1 + k] -= fw;
+                      }
+                    }
+                    auto add_arr = [&](const char* key, auto getter) {
+                      if (n <= 0 || n >= jscap - 64) return;
+                      n += std::snprintf(js + n, jscap - n, ",\"%s\":[", key);
+                      for (int b = 0; b < m->nbody && n < jscap - 64; ++b) {
+                        double v[3]; getter(b, v);
+                        n += std::snprintf(js + n, jscap - n, "%s[%.4f,%.4f,%.4f]",
+                                           b ? "," : "", v[0], v[1], v[2]);
+                      }
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    };
+                    add_arr("xb", [&](int b, double* v) {
+                      v[0] = d->xpos[3 * b]; v[1] = d->xpos[3 * b + 1]; v[2] = d->xpos[3 * b + 2]; });
+                    add_arr("vb", [&](int b, double* v) {
+                      mjtNum v6[6]; mj_objectVelocity(m, d, mjOBJ_BODY, b, v6, 0);
+                      v[0] = v6[3]; v[1] = v6[4]; v[2] = v6[5]; });
+                    add_arr("wb", [&](int b, double* v) {
+                      mjtNum v6[6]; mj_objectVelocity(m, d, mjOBJ_BODY, b, v6, 0);
+                      v[0] = v6[0]; v[1] = v6[1]; v[2] = v6[2]; });
+                    add_arr("cf", [&](int b, double* v) {
+                      v[0] = cf[3 * b]; v[1] = cf[3 * b + 1]; v[2] = cf[3 * b + 2]; });
+                    // "bn": the SCENE's body names in the same order — the sidecar's own
+                    // MJCF is the bare robot (29 bodies) while the scene adds desk/balls
+                    // (33), so the consumer must map by these names, not by count.
+                    if (n > 0 && n < jscap - 64) {
+                      n += std::snprintf(js + n, jscap - n, ",\"bn\":[");
+                      for (int b = 0; b < m->nbody && n < jscap - 64; ++b) {
+                        const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+                        n += std::snprintf(js + n, jscap - n, "%s\"%s\"", b ? "," : "", bn ? bn : "");
+                      }
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    }
+                  }
+                  if (n > 0 && n < jscap - 2)
+                    std::snprintf(js + n, jscap - n, "}");
                   std_msgs::msg::dds_::String_ pmsg;
                   pmsg.data(js);
                   g_sim_pose_pub->Write(pmsg, 0);

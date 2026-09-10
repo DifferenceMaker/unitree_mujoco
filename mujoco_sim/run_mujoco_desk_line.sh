@@ -78,6 +78,11 @@ CTRL_BIN="$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl"
 XML="$MUJOCO/unitree_robots/h1_2/h1_2_sym.xml"   # SYM body — matches scene_sym_soft07_desk + the desk-line policies
                                                  # (--stock rebinds XML + scene to the stock-CoM body below)
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
+# reward ORACLE (2026-09-10): the policy's OWN Isaac reward functions evaluated on MuJoCo
+# state, in the isaacsim env (torch + isaaclab source, kit modules stubbed). The tv
+# sidecar bridges DDS -> localhost UDP -> oracle -> HUD rows. --no-oracle = old ledger.
+ISAAC_PY="${ISAAC_PY:-$HOME/miniconda3/envs/isaacsim/bin/python}"
+ORACLE="${ORACLE:-1}"; ORACLE_PORT="${ORACLE_PORT:-47311}"; ORACLE_PID=""
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
 # ── profile + options ────────────────────────────────────────────────────────
@@ -103,6 +108,7 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --record)       RECORD=1; shift;;
   --record-file)  RECORD=1; RECORD_FILE_OPT="$2"; shift 2;;   # fleetdeck: record straight into the milestone folder   # x11grab the sim window -> LOG_DIR/mujoco_rec_<stamp>.mp4, auto-stop on exit
   --no-ledger)    LEDGER=0; shift;;   # disable the live reward-ledger overlay + tape
+  --no-oracle)    ORACLE=0; shift;;   # fall back to the hand-written reward_ledger twin (pre-2026-09-10)
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
 esac; done
@@ -315,6 +321,7 @@ cleanup() {
   echo ""; echo ">>> cleaning up..."
   [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null
   [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }  # → RUN SUMMARY into log
+  [[ -n "$ORACLE_PID" ]] && { kill -TERM "$ORACLE_PID" 2>/dev/null; }             # → oracle tape into log dir
   [[ -n "${FIFO_HOLD_PID:-}" ]] && kill "$FIFO_HOLD_PID" 2>/dev/null
   pkill -f "sleep infinity" -P $$ 2>/dev/null || true
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -389,8 +396,18 @@ if [[ "$METRICS" = "1" ]]; then
     # params/env.yaml (weights parsed from it); disable with --no-ledger.
     LEDGER_ARGS=()
     if [[ "${LEDGER:-1}" = "1" && -f "$MILESTONES/$MS/params/env.yaml" ]]; then
-      LEDGER_ARGS=(--ledger "$MILESTONES/$MS/params/env.yaml")
-      echo ">>> [2] reward LEDGER on ($MS/params/env.yaml); tape lands in $LOG_DIR"
+      if [[ "$ORACLE" = "1" && -x "$ISAAC_PY" ]]; then
+        LEDGER_TAPE_DIR="$LOG_DIR" UNITREE_RL_LAB_DIR="${UNITREE_RL_LAB_DIR:-$REPOS/unitree_rl_lab-ik}" \
+        "$ISAAC_PY" "$SIM/tools/reward_oracle.py" --env-yaml "$MILESTONES/$MS/params/env.yaml" \
+            --port "$ORACLE_PORT" > "$LOG_DIR/reward_oracle.log" 2>&1 &
+        ORACLE_PID=$!
+        LEDGER_ARGS=(--oracle "$ORACLE_PORT")
+        echo ">>> [2] reward ORACLE on (the policy's own Isaac reward functions on MuJoCo state; pid $ORACLE_PID)"
+        echo "    log:   $LOG_DIR/reward_oracle.log   (n/a rows + reasons are listed there; tape lands in $LOG_DIR)"
+      else
+        LEDGER_ARGS=(--ledger "$MILESTONES/$MS/params/env.yaml")
+        echo ">>> [2] reward LEDGER on ($MS/params/env.yaml) — hand-written twin${ORACLE:+; oracle off or $ISAAC_PY missing}; tape lands in $LOG_DIR"
+      fi
     fi
     LEDGER_TAPE_DIR="$LOG_DIR" \
     "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain "$SIM_DDS_DOMAIN" --xml "$XML" \
