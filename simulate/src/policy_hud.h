@@ -237,7 +237,8 @@ inline void set_ledger(const std::string& field) {
 // Display mode, cycled with the 'L' key in the sim window (main.cc key cb):
 // 0 = hidden, 1 = compact (TOTAL + top-12 by |weight| + "SUM rest"), 2 = full.
 inline int& ledger_mode() {
-  static int m = 1;
+  static int m = 2;   // FULL by default (2026-09-10, reward oracle: every term of the
+                      // policy is rendered faithfully — no top-12 cut; 'L' still cycles)
   return m;
 }
 inline void ledger_cycle() { ledger_mode() = (ledger_mode() + 1) % 3; }

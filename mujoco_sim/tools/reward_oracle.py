@@ -612,9 +612,20 @@ class RewardOracle:
                 rows.append(f"{name[:15]} n/a:+0.00:+0.000")
                 continue
             disp = name[:18] + ("~" if note.startswith("~") else "")
-            frac = max(-1.0, min(1.0, v / (abs(wmap[name]) or 1.0)))
+            w = wmap[name]
+            # Bar scale (operator 2026-09-10: "joint_acc shows up as a full penalty
+            # but has the value -0.01"): an INCOME term is a bounded kernel whose
+            # weight IS its maximum -> fill = value / weight. A PENALTY has no
+            # natural cap and its weight can be 1e-6 (joint_acc), so value/|weight|
+            # pins the bar; normalize penalties to a fixed 10 per second instead
+            # (a fifth of the TOTAL bar's 50-scale): action_rate -6.4 reads 64 %,
+            # joint_acc -0.01 reads ~0, undesired_contacts -100 clamps (it IS huge).
+            scale = abs(w) if w > 0 else self.PENALTY_BAR_SCALE
+            frac = max(-1.0, min(1.0, v / (scale or 1.0)))
             rows.append(f"{disp}:{v:+.2f}:{frac:+.3f}")
         return "|".join(rows)
+
+    PENALTY_BAR_SCALE = 10.0   # per second; the TOTAL row uses 50
 
     def record(self, items):
         self.tape.append([time.monotonic()] + [(v if v is not None else None) for _, v, _ in items])
