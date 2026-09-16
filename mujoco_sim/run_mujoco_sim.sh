@@ -49,6 +49,7 @@ SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="${CTRL_BIN:-$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl}"   # env override: fleetdeck dds_cpp shadow (run_mujoco_dds_cpp.sh)
 XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml"   # comx06 body + Unitree per-joint armature (2026-09-08) — matches config.yaml scene_comx06_armature*.xml
+HAND790=0   # --hand790: the same body with the real 790 g Inspire hands (h1_2_comx06_hand790-trained policies, p15+)
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
@@ -62,9 +63,22 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
+  --hand790)      HAND790=1; shift;;
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
 esac; done
+
+if [[ $HAND790 -eq 1 ]]; then
+  # 2026-09-16: policies trained on h1_2_comx06_hand790.urdf must be evaluated on the matching
+  # MuJoCo body (hand mass folded into the wrist bodies, torso re-solved; 77.2676 kg, CoM within
+  # 0.08 mm of the URDF). Every p12-p14 policy keeps the plain armature body -- do NOT pass this
+  # for them.
+  XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature_hand790.xml"
+  if ! grep -qE 'robot_scene: "scene_comx06_armature_hand790\.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_armature_hand790.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_comx06_armature_hand790.xml (--hand790)"
+  fi
+fi
 
 # Everything a profile implies, derived in ONE place:
 MODE="a"; ARM_DEMO=0; SIM_DDS_DOMAIN=1; DOCKER_TTY=""

@@ -96,6 +96,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --stock)        BODY="stock"; BODY_EXPLICIT=1; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
                                           # for policies trained WITHOUT the SYM tree, e.g. the
                                           # entire dp2b batch (see session 2026-07-28 two-urdf trap)
+  --hand790)      BODY="comx06_hand790"; BODY_EXPLICIT=1; shift;;  # comx06 + armature + REAL 790 g hands (2026-09-16):
+                                          # for policies trained on h1_2_comx06_hand790.urdf (p15+)
   --comx06)       BODY="comx06"; BODY_EXPLICIT=1; shift;;  # comx06 body + RIGID floor (new-soles era, 2026-07-30+):
                                           # dp3_anchor and every desk policy warmstarted off the
                                           # p12g/comx06 general line trains on the Isaac rigid plane
@@ -184,7 +186,11 @@ done
 # policy since dp3/p12g trains on h1_2_comx06 + a rigid plane. With no explicit body
 # flag, read the training URDF from the staged milestone's params/env.yaml.
 if [[ $BODY_EXPLICIT -eq 0 && -f "$MILESTONES/$MS/params/env.yaml" ]]; then
-  if grep -q "h1_2_comx06" "$MILESTONES/$MS/params/env.yaml"; then
+  # hand790 FIRST: its filename also contains "h1_2_comx06", so the plain test below
+  # would silently load the OLD body for a hand790 policy -- the 2026-08-28 trap again.
+  if grep -q "h1_2_comx06_hand790" "$MILESTONES/$MS/params/env.yaml"; then
+    BODY="comx06_hand790"; echo ">>> [body] env.yaml names h1_2_comx06_hand790 -> --hand790 (real hand mass) AUTO"
+  elif grep -q "h1_2_comx06" "$MILESTONES/$MS/params/env.yaml"; then
     BODY="comx06"; echo ">>> [body] env.yaml names h1_2_comx06 -> --comx06 (rigid floor) AUTO"
   elif grep -q "h1_2_stock" "$MILESTONES/$MS/params/env.yaml"; then
     BODY="stock";  echo ">>> [body] env.yaml names h1_2_stock -> --stock AUTO"
@@ -218,6 +224,14 @@ if [[ "$BODY" == "stock" ]]; then
   if ! grep -qE 'robot_scene: "scene_stock_[a-z0-9]+_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
     sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_cush75_desk.xml"/' "$MUJOCO/simulate/config.yaml"
     echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
+  fi
+elif [[ "$BODY" == "comx06_hand790" ]]; then
+  # 2026-09-16: the armature body with the real Inspire mass folded into the wrist bodies
+  # (0.124 -> 0.914 kg) and the torso re-solved; matches h1_2_comx06_hand790.urdf to 0.08 mm.
+  XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature_hand790.xml"
+  if ! grep -qE 'robot_scene: "scene_comx06_armature_hand790_desk.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_armature_hand790_desk.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_comx06_armature_hand790_desk.xml (comx06 + armature + 790 g hands, RIGID floor)"
   fi
 elif [[ "$BODY" == "comx06" ]]; then
   # 2026-09-08: comx06 body WITH Unitree per-joint armature (h1_2_comx06_armature.xml) — the
