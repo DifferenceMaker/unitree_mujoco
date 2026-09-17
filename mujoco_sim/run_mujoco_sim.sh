@@ -49,7 +49,7 @@ SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 CTRL_BIN="${CTRL_BIN:-$RLLAB/deploy/robots/h1_2/build/h1_2_ctrl}"   # env override: fleetdeck dds_cpp shadow (run_mujoco_dds_cpp.sh)
 XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml"   # comx06 body + Unitree per-joint armature (2026-09-08) — matches config.yaml scene_comx06_armature*.xml
-HAND790=0   # --hand790: the same body with the real 790 g Inspire hands (h1_2_comx06_hand790-trained policies, p15+)
+HAND790=0; HAND790_EXPLICIT=0   # --hand790: the same body with the real 790 g Inspire hands (h1_2_comx06_hand790-trained policies, p15+)
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 DDS_LO="$SIM/tools/cyclonedds_lo.xml"
 
@@ -63,10 +63,51 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --quiet)        DEBUG=0; shift;;
   --metrics-mode) METRICS_MODE="$2"; shift 2;;
   --no-metrics)   METRICS=0; shift;;
-  --hand790)      HAND790=1; shift;;
+  --hand790)      HAND790=1; HAND790_EXPLICIT=1; shift;;
   -h|--help) sed -n '2,42p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: balance | arms | arms-demo | teleop | ref | stop)"; exit 1;;
 esac; done
+
+# ── BODY AUTO-DETECT (2026-09-17) ────────────────────────────────────────────
+# Derive the MuJoCo body from the policies the controller is configured to load,
+# instead of relying on someone remembering --hand790. WHY: on 2026-09-17 the whole
+# p14b wave (trained on h1_2_comx06_hand790.urdf) was sim2sim'd on
+# scene_comx06_armature_desk.xml -- the OLD 0.19 kg hand body, AND a desk scene --
+# because this launcher only touched robot_scene when --hand790 was passed and
+# otherwise inherited whatever run_mujoco_desk_line.sh had left in config.yaml
+# (last written 2026-09-08). Same class as the 2026-08-28 desk-rig body trap.
+# The config is a BOARD (many states, one policy each), so a mixed board cannot be
+# satisfied by one scene -- that case is reported instead of silently guessed.
+if [[ $HAND790_EXPLICIT -eq 0 ]]; then
+  _cfg="$RLLAB/deploy/robots/h1_2/config/config.yaml"
+  _n790=0; _nplain=0; _seen=0; _list790=""
+  while read -r _pd; do
+    [[ -z "$_pd" ]] && continue
+    _md=$(cd "$(dirname "$_cfg")" && readlink -f "$_pd" 2>/dev/null)
+    _env="$_md/params/env.yaml"
+    # milestones live machine-local; fall back to the git-tracked harvest dir
+    [[ -f "$_env" ]] || _env="$REPOS/aspired-isaac-lab/milestone_checkpoints/$(basename "${_md:-$_pd}")/params/env.yaml"
+    [[ -f "$_env" ]] || continue
+    _seen=$((_seen+1))
+    if grep -q "h1_2_comx06_hand790" "$_env"; then
+      _n790=$((_n790+1)); _list790="$_list790 $(basename "${_md:-$_pd}")"
+    else
+      _nplain=$((_nplain+1))
+    fi
+  done < <(grep -oP 'policy_dir:\s*\K\S+' "$_cfg" 2>/dev/null)
+  if   [[ $_seen -eq 0 ]]; then
+    echo ">>> [body] WARNING: no policy env.yaml resolved from $_cfg -- body NOT verified. Pass --hand790 if this policy was trained on the real-hand body."
+  elif [[ $_n790 -gt 0 && $_nplain -eq 0 ]]; then
+    HAND790=1
+    echo ">>> [body] all $_seen configured policies name h1_2_comx06_hand790 -> --hand790 AUTO"
+  elif [[ $_n790 -eq 0 ]]; then
+    echo ">>> [body] all $_seen configured policies use the plain comx06 body -> armature body AUTO"
+  else
+    echo ">>> [body] WARNING: MIXED board -- $_n790 of $_seen policies are real-hand ($_list790 ), the rest are 0.19 kg-hand."
+    echo ">>> [body]          One scene cannot serve both. Defaulting to the PLAIN armature body;"
+    echo ">>> [body]          pass --hand790 when you are testing the real-hand policies."
+  fi
+fi
 
 if [[ $HAND790 -eq 1 ]]; then
   # 2026-09-16: policies trained on h1_2_comx06_hand790.urdf must be evaluated on the matching
@@ -77,6 +118,13 @@ if [[ $HAND790 -eq 1 ]]; then
   if ! grep -qE 'robot_scene: "scene_comx06_armature_hand790\.xml"' "$MUJOCO/simulate/config.yaml"; then
     sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_armature_hand790.xml"/' "$MUJOCO/simulate/config.yaml"
     echo ">>> [scene] robot_scene -> scene_comx06_armature_hand790.xml (--hand790)"
+  fi
+else
+  # ALWAYS pin the scene on this path too. Leaving it alone inherited the desk-line's
+  # scene (scene_comx06_armature_desk.xml, 2026-09-08) into every balance run.
+  if ! grep -qE 'robot_scene: "scene_comx06_armature\.xml"' "$MUJOCO/simulate/config.yaml"; then
+    sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06_armature.xml"/' "$MUJOCO/simulate/config.yaml"
+    echo ">>> [scene] robot_scene -> scene_comx06_armature.xml (comx06 + Unitree armature, 0.19 kg hands)"
   fi
 fi
 
