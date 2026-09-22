@@ -78,7 +78,27 @@ esac; done
 # (last written 2026-09-08). Same class as the 2026-08-28 desk-rig body trap.
 # The config is a BOARD (many states, one policy each), so a mixed board cannot be
 # satisfied by one scene -- that case is reported instead of silently guessed.
-if [[ $HAND790_EXPLICIT -eq 0 ]]; then
+# 2026-09-22: for the Architecture B profiles the policy that actually runs is the MovementModule's
+# (MM_POLICY, else policy/CURRENT_<MM_LINE>), NOT the h1_2_ctrl board below -- that board is the `ref`
+# profile's. Resolving the body from the board while the MM ran a p14e policy would have picked the
+# 0.19 kg-hand body for a hand790 policy again. Resolve the MM policy -> its MILESTONE.md slug -> the
+# milestone's params/env.yaml first; fall back to the board only for `ref` or when that fails.
+_MM_POLICY_RESOLVED=""
+if [[ $HAND790_EXPLICIT -eq 0 && "$PROFILE" != "ref" ]]; then
+  _mmpol="${MM_POLICY:-$(head -n1 "$ASPIRED/MovementModule/policy/CURRENT_${MM_LINE:-BALANCE}" 2>/dev/null | tr -d '[:space:]')}"
+  _mmms=$(grep -m1 -oP '^# Milestone:\s*\K\S+' "$ASPIRED/MovementModule/policy/$_mmpol/MILESTONE.md" 2>/dev/null || true)
+  for _env in "$RLLAB/logs/milestones/$_mmms/params/env.yaml" "$REPOS/aspired-isaac-lab/milestone_checkpoints/$_mmms/params/env.yaml"; do
+    [[ -n "$_mmms" && -f "$_env" ]] || continue
+    if grep -q "h1_2_comx06_hand790" "$_env"; then
+      HAND790=1; echo ">>> [body] MovementModule policy '$_mmpol' (milestone $_mmms) names h1_2_comx06_hand790 -> --hand790 AUTO"
+    else
+      echo ">>> [body] MovementModule policy '$_mmpol' (milestone $_mmms) uses the plain comx06 body -> armature body AUTO"
+    fi
+    _MM_POLICY_RESOLVED=1; break
+  done
+  [[ -n "$_MM_POLICY_RESOLVED" ]] || echo ">>> [body] WARNING: could not resolve the MovementModule policy '$_mmpol' to a milestone env.yaml (MILESTONE.md slug '$_mmms') -- falling back to the h1_2_ctrl board scan below, which describes the REF profile's policies, not this one. Pass --hand790 for a real-hand policy."
+fi
+if [[ $HAND790_EXPLICIT -eq 0 && -z "$_MM_POLICY_RESOLVED" ]]; then
   _cfg="$RLLAB/deploy/robots/h1_2/config/config.yaml"
   _n790=0; _nplain=0; _seen=0; _list790=""
   while read -r _pd; do
@@ -333,6 +353,7 @@ else
     -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1
     -e BRIDGE_DDS_DOMAIN="$SIM_DDS_DOMAIN"
     -e MODE="$MODE" -e ARCHB_DEBUG="$DEBUG"
+    -e MM_POLICY="${MM_POLICY:-}" -e MM_LINE="${MM_LINE:-BALANCE}"
     -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}"
     -e ARCHB_ENGAGE_BLEND_SEC="${ARCHB_ENGAGE_BLEND_SEC:-0.3}" -e ARCHB_LOAD_STEPS="${ARCHB_LOAD_STEPS:-3}"
     -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}"
