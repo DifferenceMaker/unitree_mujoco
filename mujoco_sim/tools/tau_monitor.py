@@ -106,7 +106,9 @@ def fit_marks(marks):
 
 
 import re
-_LINE = re.compile(r"^(\d\d):(\d\d):(\d\d)\s+\d+\|\s+\d+\s+\|\s+([+-]\d+\.\d+)\s+([+-]\d+\.\d+)\s+\|")
+_LINE = re.compile(r"^(\d\d):(\d\d):(\d\d)\s+\d+\|\s+\d+\s+\|\s+([+-]\d+\.\d+)\s+([+-]\d+\.\d+)\s+\|"
+                   r"(?:\s+[+-]\d+\.\d+\s+[+-]\d+\.\d+\s+->\s*[+-]\d+mm\s+\|){2}\s+(\d+)\s+(\d+)\s+\|")
+LOADED_KNEE_NM = 20.0   # knee |tau| above this on BOTH legs = the weight is on the legs, not the harness
 
 
 def _hms(s):
@@ -114,7 +116,8 @@ def _hms(s):
 
 
 def read_log(path):
-    """log -> list of (t_sec_of_day, leanFwd_deg, leanLat_deg) from the per-second lines."""
+    """log -> list of (t_sec_of_day, leanFwd_deg, leanLat_deg, loaded) from the per-second lines;
+    loaded = both knee |tau| > LOADED_KNEE_NM (the harness carries the robot otherwise)."""
     rows = []
     for line in open(path):
         m = _LINE.match(line)
@@ -122,8 +125,27 @@ def read_log(path):
             continue
         t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
         gx, gy = float(m.group(4)), float(m.group(5))
-        rows.append((t, math.degrees(math.asin(max(-1.0, min(1.0, gx)))), math.degrees(math.asin(max(-1.0, min(1.0, gy))))))
+        kL, kR = float(m.group(6)), float(m.group(7))
+        rows.append((t, math.degrees(math.asin(max(-1.0, min(1.0, gx)))), math.degrees(math.asin(max(-1.0, min(1.0, gy)))),
+                     kL > LOADED_KNEE_NM and kR > LOADED_KNEE_NM))
     return rows
+
+
+def loaded_periods(rows):
+    """maximal runs of consecutive-second LOADED rows: (t0, t1, mean_leanLat, n, spread)."""
+    out, run = [], []
+    def flush():
+        if run:
+            lat = [r[2] for r in run]
+            out.append((run[0][0], run[-1][0], sum(lat) / len(lat), len(run), max(lat) - min(lat)))
+    for r in rows:
+        if not r[3]:
+            flush(); run = []; continue
+        if run and r[0] - run[-1][0] > 2:
+            flush(); run = []
+        run.append(r)
+    flush()
+    return out
 
 
 def still_periods(rows, min_s=8, tol_deg=0.05):
@@ -145,11 +167,13 @@ def replay(args):
     rows = read_log(args.replay)
     if not rows:
         raise SystemExit(f"[replay] no per-second lines found in {args.replay}")
-    periods = still_periods(rows)
+    periods = loaded_periods(rows)
     fmt = lambda t: f"{int(t)//3600:02d}:{(int(t)%3600)//60:02d}:{int(t)%60:02d}"
-    print(f"[replay] {len(rows)} per-second lines {fmt(rows[0][0])}..{fmt(rows[-1][0])}; still periods (>= 8 s within 0.05 deg):")
-    for k, (t0, t1, mean, n) in enumerate(periods, 1):
-        print(f"   #{k:<2d} {fmt(t0)}-{fmt(t1)} ({n:3d} s)  leanLat {mean:+.2f} deg")
+    print(f"[replay] {len(rows)} per-second lines {fmt(rows[0][0])}..{fmt(rows[-1][0])}; LOADED periods (both knees > {LOADED_KNEE_NM:.0f} Nm = weight on the legs, not the harness):")
+    for k, (t0, t1, mean, n, spread) in enumerate(periods, 1):
+        print(f"   #{k:<2d} {fmt(t0)}-{fmt(t1)} ({n:3d} s)  leanLat {mean:+.2f} deg (spread {spread:.2f})")
+    if not periods:
+        print("   (none -- the knees never carried the weight; harness still loaded?)")
     marks = []
     slope_expected = 2.0 * args.mass * args.zcom * math.tan(math.radians(1.0)) / args.d
     for line in open(args.readings):
@@ -160,17 +184,19 @@ def replay(args):
         if key.startswith("#"):
             k = int(key[1:])
             if not 1 <= k <= len(periods):
-                print(f"   {key}: no such still period"); continue
-            t0, t1, _, _ = periods[k - 1]
+                print(f"   {key}: no such loaded period"); continue
+            t0, t1, _, _, _ = periods[k - 1]
             win = [r for r in rows if t0 <= r[0] <= t1]; label = f"{key} {fmt(t0)}-{fmt(t1)}"
         else:
             tp = _hms(key) + args.clock_offset
-            win = [r for r in rows if tp - args.photo_window <= r[0] <= tp]; label = f"photo {key}"
-        if len(win) < 3:
-            print(f"   {label}: only {len(win)} log seconds in the window -- was the monitor running? (clock offset?)"); continue
+            # the LOADED seconds within --photo-window before the photo (plus 1 s after, clock slop);
+            # the harness seconds in that window are excluded by the knee-torque gate
+            win = [r for r in rows if tp - args.photo_window <= r[0] <= tp + 1 and r[3]]; label = f"photo {key}"
+        if len(win) < 2:
+            print(f"   {label}: only {len(win)} LOADED log seconds near the photo -- monitor running? clock offset? weight still on the harness?"); continue
         roll = sum(r[2] for r in win) / len(win); spread = max(r[2] for r in win) - min(r[2] for r in win)
         D = fl - fr; y_raw = (args.d / 2.0) * D / (fl + fr) * 1000.0
-        print(f"   {label}: leanLat {roll:+.2f} deg (spread {spread:.2f}{'  !! MOVED' if spread > 0.10 else ''}) | L {fl:.2f} R {fr:.2f} sum {fl+fr:.2f}"
+        print(f"   {label}: {len(win)} loaded s, leanLat {roll:+.2f} deg (spread {spread:.2f}{'  !! MOVED' if spread > 0.10 else ''}) | L {fl:.2f} R {fr:.2f} sum {fl+fr:.2f}"
               f"{'  !! sum vs mass' if abs(fl+fr-args.mass) > 2.0 else ''} | D {D:+.2f} kg -> y_raw {y_raw:+.1f} mm")
         marks.append((roll, D))
     fit = fit_marks(marks)
@@ -201,7 +227,7 @@ def main():
     ap.add_argument("--replay", default=None, help="post-hoc mode: a --log file from the session (no DDS needed)")
     ap.add_argument("--readings", default=None, help="with --replay: file of 'HH:MM:SS <left> <right>' or '#k <left> <right>' lines")
     ap.add_argument("--clock-offset", type=float, default=0.0, help="with --replay: PC clock minus photo clock, seconds")
-    ap.add_argument("--photo-window", type=float, default=8.0, help="with --replay: seconds BEFORE the photo time to average")
+    ap.add_argument("--photo-window", type=float, default=2.0, help="with --replay: LOADED seconds before the photo time to average (the first 2-3 s after lowering are transitional)")
     ap.add_argument("--quiet", action="store_true",
                     help="weigh-in mode: the per-second lines go to --log ONLY; the screen shows a prompt and the MARK/FIT lines")
     ap.add_argument("--mark-window", type=float, default=15.0,
