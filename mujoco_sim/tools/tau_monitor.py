@@ -26,7 +26,17 @@ mean ankle torque = the true CoM moment.
     torques. In FixStand with the policy OFF the command is symmetric, so a left/right angle
     difference there is a joint ZERO-OFFSET (calibration), while equal angles with unequal
     torques is a mass (CoM) offset -- the two reasons a leg looks "heavier" separated in one read.
-  - MARKS (2026-09-28, the two-scales weigh-in): type the two scale readings "<left> <right>"
+  - REPLAY (2026-09-28, the two-scales weigh-in, ONE person, PC 10 m from the robot): run the
+    monitor with --quiet --log FILE for the whole session and touch nothing. Do the placements;
+    photograph both scales each time (the phone stamps the time). Back at the PC write a readings
+    file, one line per photo:  HH:MM:SS <left> <right>   (photo time, kg) -- or  #k <left> <right>
+    for the k-th STILL PERIOD the replay lists -- and run
+        tau_monitor.py --replay FILE --readings readings.txt [--clock-offset SEC] [--photo-window 8]
+    It looks up the tilt in the log over the --photo-window seconds BEFORE each photo time, prints
+    D, y_raw and the per-photo tilt, lists the still periods it found (>= 8 s within 0.05 deg), and
+    fits D vs tilt: the body offset at ZERO roll. --clock-offset = PC clock minus phone clock (photograph
+    the terminal's clock once, or `date`, to get it; phones are usually within 1-2 s).
+  - MARKS (interactive alternative, same arithmetic): type the two scale readings "<left> <right>"
     (kg) and press Enter right after the photo. The tool stamps them with the wall clock and the
     lateral tilt of that moment, prints D = left - right and the raw CoM offset
     y_raw = (d/2) * D / (left+right), and once >= 3 marks exist fits D against the tilt:
@@ -95,6 +105,83 @@ def fit_marks(marks):
     return a, b, n
 
 
+import re
+_LINE = re.compile(r"^(\d\d):(\d\d):(\d\d)\s+\d+\|\s+\d+\s+\|\s+([+-]\d+\.\d+)\s+([+-]\d+\.\d+)\s+\|")
+
+
+def _hms(s):
+    h, m, sec = s.split(":"); return int(h) * 3600 + int(m) * 60 + float(sec)
+
+
+def read_log(path):
+    """log -> list of (t_sec_of_day, leanFwd_deg, leanLat_deg) from the per-second lines."""
+    rows = []
+    for line in open(path):
+        m = _LINE.match(line)
+        if not m:
+            continue
+        t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
+        gx, gy = float(m.group(4)), float(m.group(5))
+        rows.append((t, math.degrees(math.asin(max(-1.0, min(1.0, gx)))), math.degrees(math.asin(max(-1.0, min(1.0, gy))))))
+    return rows
+
+
+def still_periods(rows, min_s=8, tol_deg=0.05):
+    """maximal runs of consecutive-second rows whose leanLat stays within tol of the run mean, >= min_s long."""
+    out, run = [], []
+    def flush():
+        if len(run) >= min_s:
+            mean = sum(r[2] for r in run) / len(run)
+            out.append((run[0][0], run[-1][0], mean, len(run)))
+    for r in rows:
+        if run and (r[0] - run[-1][0] > 2 or abs(r[2] - sum(x[2] for x in run) / len(run)) > tol_deg):
+            flush(); run = []
+        run.append(r)
+    flush()
+    return out
+
+
+def replay(args):
+    rows = read_log(args.replay)
+    if not rows:
+        raise SystemExit(f"[replay] no per-second lines found in {args.replay}")
+    periods = still_periods(rows)
+    fmt = lambda t: f"{int(t)//3600:02d}:{(int(t)%3600)//60:02d}:{int(t)%60:02d}"
+    print(f"[replay] {len(rows)} per-second lines {fmt(rows[0][0])}..{fmt(rows[-1][0])}; still periods (>= 8 s within 0.05 deg):")
+    for k, (t0, t1, mean, n) in enumerate(periods, 1):
+        print(f"   #{k:<2d} {fmt(t0)}-{fmt(t1)} ({n:3d} s)  leanLat {mean:+.2f} deg")
+    marks = []
+    slope_expected = 2.0 * args.mass * args.zcom * math.tan(math.radians(1.0)) / args.d
+    for line in open(args.readings):
+        parts = line.replace(",", " ").split()
+        if len(parts) < 3 or parts[0].startswith("//"):
+            continue
+        key, fl, fr = parts[0], float(parts[1]), float(parts[2])
+        if key.startswith("#"):
+            k = int(key[1:])
+            if not 1 <= k <= len(periods):
+                print(f"   {key}: no such still period"); continue
+            t0, t1, _, _ = periods[k - 1]
+            win = [r for r in rows if t0 <= r[0] <= t1]; label = f"{key} {fmt(t0)}-{fmt(t1)}"
+        else:
+            tp = _hms(key) + args.clock_offset
+            win = [r for r in rows if tp - args.photo_window <= r[0] <= tp]; label = f"photo {key}"
+        if len(win) < 3:
+            print(f"   {label}: only {len(win)} log seconds in the window -- was the monitor running? (clock offset?)"); continue
+        roll = sum(r[2] for r in win) / len(win); spread = max(r[2] for r in win) - min(r[2] for r in win)
+        D = fl - fr; y_raw = (args.d / 2.0) * D / (fl + fr) * 1000.0
+        print(f"   {label}: leanLat {roll:+.2f} deg (spread {spread:.2f}{'  !! MOVED' if spread > 0.10 else ''}) | L {fl:.2f} R {fr:.2f} sum {fl+fr:.2f}"
+              f"{'  !! sum vs mass' if abs(fl+fr-args.mass) > 2.0 else ''} | D {D:+.2f} kg -> y_raw {y_raw:+.1f} mm")
+        marks.append((roll, D))
+    fit = fit_marks(marks)
+    if fit:
+        a, b, n = fit
+        print(f"[replay] FIT n={n}: D = {a:+.2f} kg {b:+.2f} kg/deg * roll -> body offset at ZERO roll = {(args.d/2.0)*a/args.mass*1000.0:+.1f} mm "
+              f"(|slope| expected ~{slope_expected:.1f} kg/deg, sign = the tilt convention)")
+    else:
+        print(f"[replay] {len(marks)} usable readings -- the fit needs >= 3 with different tilts")
+
+
 def main():
     ap = argparse.ArgumentParser(description="per-second torque + lean monitor (sim2sim / sim2real)")
     ap.add_argument("--iface", default="lo", help="DDS interface (sim=lo; real robot=enp6s0)")
@@ -111,12 +198,20 @@ def main():
                     help="foot CENTRE-to-centre separation (m) for the two-scales CoM estimate (2026-09-28: (22+39)/2 cm)")
     ap.add_argument("--zcom", type=float, default=0.9, help="CoM height (m), only for the expected roll slope printout")
     ap.add_argument("--log", default=None, help="append every line and mark to this file")
+    ap.add_argument("--replay", default=None, help="post-hoc mode: a --log file from the session (no DDS needed)")
+    ap.add_argument("--readings", default=None, help="with --replay: file of 'HH:MM:SS <left> <right>' or '#k <left> <right>' lines")
+    ap.add_argument("--clock-offset", type=float, default=0.0, help="with --replay: PC clock minus photo clock, seconds")
+    ap.add_argument("--photo-window", type=float, default=8.0, help="with --replay: seconds BEFORE the photo time to average")
     ap.add_argument("--quiet", action="store_true",
                     help="weigh-in mode: the per-second lines go to --log ONLY; the screen shows a prompt and the MARK/FIT lines")
     ap.add_argument("--mark-window", type=float, default=15.0,
                     help="a MARK uses the MEAN tilt/angles over this many seconds before Enter (the robot must stay still "
                          "from the photo until Enter; the tilt spread over the window is printed and a big spread = it moved)")
     args = ap.parse_args()
+    if args.replay:
+        if not args.readings:
+            raise SystemExit("[replay] --readings FILE is required")
+        replay(args); return
 
     mg = args.mass * G
     buf = []
