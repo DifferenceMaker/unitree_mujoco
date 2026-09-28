@@ -157,18 +157,18 @@ fi
 # (the container has no unitree_sdk2py; walk_hud fills from this topic, tick = measured)
 ( sleep 6; "${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}" "$SIM/tools/wc_mirror.py" "$LOG_DIR/stack_walk_$STAMP.log" 1 lo ) > "$LOG_DIR/wc_mirror_$STAMP.log" 2>&1 &
 WC_PID=$!
-# ENGAGE: MovementModule defaults to ARCHB_ENGAGE_MODE=conduct (2026-09-15) = wait for
-# /ActionModule/conduct. MODE w runs NO ActionModule, so the policy never engaged and the robot
-# sat in FixStand until it fell (2026-09-28, lm5h_armsslide). "none" = engage at release, what
-# this bench always meant; ARCHB_ENGAGE_MODE=enter for a keypress gate.
-echo ">>> [2] REAL Arch B stack (BridgeModule --sim + MovementModule walk kind + walk_teleop, engage=${ARCHB_ENGAGE_MODE:-none})"
+# ENGAGE: a walk-kind policy owns all 27 joints and engages on itself (MovementModule
+# 2026-09-28: kind=walk ignores the conduct handshake with ActionModule -- MODE w runs no
+# ActionModule, and the bench sat in FixStand until it fell, lm5h_armsslide). The walk kind's
+# own knob is ARCHB_WALK_ENGAGE_MODE (none = engage at release, enter = keypress, load).
+echo ">>> [2] REAL Arch B stack (BridgeModule --sim + MovementModule walk kind + walk_teleop, walk engage=${ARCHB_WALK_ENGAGE_MODE:-none})"
 echo "    drive it:   bash $SIM/run_mujoco_walk_line.sh keys      (second terminal)"
 echo "    stack log:  $LOG_DIR/stack_walk_$STAMP.log"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN=1 \
   -e MODE=w -e ARCHB_DEBUG="$DEBUG" \
-  -e ARCHB_ENGAGE_MODE="${ARCHB_ENGAGE_MODE:-none}" \
+  -e ARCHB_WALK_ENGAGE_MODE="${ARCHB_WALK_ENGAGE_MODE:-none}" \
   -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" \
   -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}" \
   -e ARCHB_YAW_HOLD="${ARCHB_YAW_HOLD:-1}" -e ARCHB_YAW_HOLD_K="${ARCHB_YAW_HOLD_K:-1.0}" -e ARCHB_YAW_HOLD_MAX="${ARCHB_YAW_HOLD_MAX:-0.4}" -e ARCHB_YAW_HOLD_MIN="${ARCHB_YAW_HOLD_MIN:-0.0}" -e ARCHB_YAW_HOLD_DEADBAND="${ARCHB_YAW_HOLD_DEADBAND:-0.03}" \
