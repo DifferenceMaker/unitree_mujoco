@@ -73,7 +73,12 @@ MS="$(resolve_ms "$POLICY")"
 # FALLBACK ROOT (2026-08-25): pod-harvested milestones exist only in the repo
 # archive (aspired-isaac-lab/milestone_checkpoints carries exported/ + params/
 # via git) — not under this machine's logs/milestones. Same layout, so retry there.
-if [[ -z "$MS" || ! -d "$MILESTONES/$MS" ]]; then
+# 2026-09-28: a LOCAL logs/milestones dir that lacks the export (lm5d_combo: model + params only)
+# used to win the resolve and FATAL below while the repo archive had the ONNX all along
+# ("FATAL: lm5d_combo_2026-08-27 missing exported/policy.onnx"). Fall through whenever the
+# local hit is not deployable.
+if [[ -z "$MS" || ! -d "$MILESTONES/$MS" || ! -f "$MILESTONES/$MS/exported/policy.onnx" ]]; then
+  [[ -n "$MS" && -d "$MILESTONES/$MS" ]] && echo ">>> [policy] local $MILESTONES/$MS has no exported/policy.onnx -- trying the repo archive"
   MILESTONES="$REPOS/aspired-isaac-lab/milestone_checkpoints"
   MS="$(resolve_ms "$POLICY")"
   [[ -n "$MS" ]] && echo ">>> [policy] resolved from the repo archive: $MILESTONES/$MS"
@@ -91,10 +96,23 @@ printf '%s\n' "$MS" > "$STAGE/CURRENT"
 echo ">>> [policy] staged $MS -> $STAGE (container sees MovementModule/policy/CURRENT)"
 
 # ── walk scene: comx06 body + rigid floor, NO desk (new-soles-era default) ───
-if ! grep -qE 'robot_scene: "scene_comx06.xml"' "$MUJOCO/simulate/config.yaml"; then
-  sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_comx06.xml"/' "$MUJOCO/simulate/config.yaml"
-  echo ">>> [scene] robot_scene -> scene_comx06.xml (comx06 body, rigid floor, no desk)"
+# BODY = what the policy trained on, read from its milestone env.yaml (2026-09-28). This rig used
+# to pin scene_comx06.xml (MJCF armature 0.1 on every joint) for EVERY walk policy: the lm5 line
+# trained at armature 0.01 on the plain comx06 body (a mismatch the sim2sim verdicts absorbed),
+# and LM6+ trains on the Unitree armature table + the 790 g-hand body. Same resolution the
+# balance rig does (run_mujoco_sim.sh: MILESTONE -> env.yaml -> --hand790 AUTO).
+_env="$MILESTONES/$MS/params/env.yaml"
+if grep -q "h1_2_comx06_hand790" "$_env" 2>/dev/null; then
+  SCENE="scene_comx06_armature_hand790.xml"; SCENE_WHY="milestone names h1_2_comx06_hand790: real hands + Unitree armature"
+elif grep -qE "armature: 0\.16" "$_env" 2>/dev/null; then
+  SCENE="scene_comx06_armature.xml"; SCENE_WHY="milestone carries the Unitree armature table"
+else
+  SCENE="scene_comx06.xml"; SCENE_WHY="plain comx06 body, pre-armature-table policy (lm5 line)"
 fi
+if ! grep -qE "robot_scene: \"$SCENE\"" "$MUJOCO/simulate/config.yaml"; then
+  sed -i "s/robot_scene: \"[^\"]*\"/robot_scene: \"$SCENE\"/" "$MUJOCO/simulate/config.yaml"
+fi
+echo ">>> [scene] robot_scene -> $SCENE ($SCENE_WHY)"
 
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
@@ -116,7 +134,7 @@ trap cleanup EXIT INT TERM
 rm -f "$BAND_FLAG"
 rm -f "$KFIFO"; mkfifo "$KFIFO"    # walk_teleop opens it read-side (nonblocking)
 
-echo ">>> [1] launching unitree_mujoco (h1_2, scene_comx06.xml) on lo, domain 1..."
+echo ">>> [1] launching unitree_mujoco (h1_2, $SCENE) on lo, domain 1..."
 ulimit -c unlimited 2>/dev/null
 ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 \
     ARCHB_RECORD_FILE="$([[ $RECORD = 1 ]] && echo "$RECORD_FILE")" \
@@ -139,13 +157,18 @@ fi
 # (the container has no unitree_sdk2py; walk_hud fills from this topic, tick = measured)
 ( sleep 6; "${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}" "$SIM/tools/wc_mirror.py" "$LOG_DIR/stack_walk_$STAMP.log" 1 lo ) > "$LOG_DIR/wc_mirror_$STAMP.log" 2>&1 &
 WC_PID=$!
-echo ">>> [2] REAL Arch B stack (BridgeModule --sim + MovementModule walk kind + walk_teleop)"
+# ENGAGE: MovementModule defaults to ARCHB_ENGAGE_MODE=conduct (2026-09-15) = wait for
+# /ActionModule/conduct. MODE w runs NO ActionModule, so the policy never engaged and the robot
+# sat in FixStand until it fell (2026-09-28, lm5h_armsslide). "none" = engage at release, what
+# this bench always meant; ARCHB_ENGAGE_MODE=enter for a keypress gate.
+echo ">>> [2] REAL Arch B stack (BridgeModule --sim + MovementModule walk kind + walk_teleop, engage=${ARCHB_ENGAGE_MODE:-none})"
 echo "    drive it:   bash $SIM/run_mujoco_walk_line.sh keys      (second terminal)"
 echo "    stack log:  $LOG_DIR/stack_walk_$STAMP.log"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN=1 \
   -e MODE=w -e ARCHB_DEBUG="$DEBUG" \
+  -e ARCHB_ENGAGE_MODE="${ARCHB_ENGAGE_MODE:-none}" \
   -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" \
   -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}" \
   -e ARCHB_YAW_HOLD="${ARCHB_YAW_HOLD:-1}" -e ARCHB_YAW_HOLD_K="${ARCHB_YAW_HOLD_K:-1.0}" -e ARCHB_YAW_HOLD_MAX="${ARCHB_YAW_HOLD_MAX:-0.4}" -e ARCHB_YAW_HOLD_MIN="${ARCHB_YAW_HOLD_MIN:-0.0}" -e ARCHB_YAW_HOLD_DEADBAND="${ARCHB_YAW_HOLD_DEADBAND:-0.03}" \
