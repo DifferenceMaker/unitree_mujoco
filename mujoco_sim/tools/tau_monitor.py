@@ -111,6 +111,11 @@ def main():
                     help="foot CENTRE-to-centre separation (m) for the two-scales CoM estimate (2026-09-28: (22+39)/2 cm)")
     ap.add_argument("--zcom", type=float, default=0.9, help="CoM height (m), only for the expected roll slope printout")
     ap.add_argument("--log", default=None, help="append every line and mark to this file")
+    ap.add_argument("--quiet", action="store_true",
+                    help="weigh-in mode: the per-second lines go to --log ONLY; the screen shows a prompt and the MARK/FIT lines")
+    ap.add_argument("--mark-window", type=float, default=15.0,
+                    help="a MARK uses the MEAN tilt/angles over this many seconds before Enter (the robot must stay still "
+                         "from the photo until Enter; the tilt spread over the window is printed and a big spread = it moved)")
     args = ap.parse_args()
 
     mg = args.mass * G
@@ -162,13 +167,16 @@ def main():
           flush=True)
 
     logf = open(args.log, "a") if args.log else None
+    if args.quiet and not logf:
+        raise SystemExit("[tau] --quiet needs --log (the per-second lines have to go somewhere)")
 
-    def out(line):
-        print(line, flush=True)
+    def out(line, screen=True):
+        if screen:
+            print(line, flush=True)
         if logf:
             logf.write(line + "\n"); logf.flush()
 
-    last = {}          # the most recent window's values, for the MARK thread
+    hist = []          # (wall_t, dict of the window's values), for the MARK thread (last --mark-window s)
     marks = []         # (roll_deg, D_kg)
     mark_n = [0]
     deg = 57.29577951308232
@@ -176,15 +184,20 @@ def main():
 
     def stdin_marks():
         for text in sys.stdin:
+            now_w = time.time()
             with lock:
-                L = dict(last)
-            if not L:
-                out(">>> MARK ignored: no rt/lowstate data yet"); continue
+                win = [v for (tw, v) in hist if now_w - tw <= args.mark_window]
+            if not win:
+                out(">>> MARK ignored: no rt/lowstate data in the last window"); continue
             mark_n[0] += 1
+            L = {k: sum(v[k] for v in win) / len(win) for k in win[0]}
+            rolls = [v["gy_deg"] for v in win]
+            spread = max(rolls) - min(rolls)
             roll = L["gy_deg"]
             sc = parse_mark(text)
-            head = (f">>> MARK {mark_n[0]} {time.strftime('%H:%M:%S')} | leanLat {L['gy']:+.4f} rad ({roll:+.2f} deg) "
-                    f"leanFwd {L['gx']:+.4f} | q hipR L {L['qhL']*deg:+.2f} R {L['qhR']*deg:+.2f} ankR L {L['qaL']*deg:+.2f} R {L['qaR']*deg:+.2f}")
+            head = (f">>> MARK {mark_n[0]} {time.strftime('%H:%M:%S')} | tilt over the last {len(win)} s: leanLat {roll:+.2f} deg "
+                    f"(spread {spread:.2f}{'  !! MOVED, retake' if spread > 0.10 else ''}) leanFwd {math.degrees(math.asin(max(-1.0, min(1.0, L['gx'])))):+.2f} deg "
+                    f"| q hipR L {L['qhL']*deg:+.2f} R {L['qhR']*deg:+.2f} ankR L {L['qaL']*deg:+.2f} R {L['qaR']*deg:+.2f}")
             if sc is None:
                 out(head + " | (no scale numbers)"); marks.append((roll, None)); continue
             fl, fr = sc
@@ -198,9 +211,12 @@ def main():
                 a, b, n = fit
                 y0 = (args.d / 2.0) * a / args.mass * 1000.0
                 out(f">>> FIT n={n}: D = {a:+.2f} kg + {b:+.2f} kg/deg * roll  ->  body offset at ZERO roll = {y0:+.1f} mm "
-                    f"(slope expected ~{slope_expected:+.1f} kg/deg for a CoM {args.zcom:.2f} m up; a slope far from it = the reads are not tracking the tilt)")
+                    f"(|slope| expected ~{slope_expected:.1f} kg/deg for a CoM {args.zcom:.2f} m up, sign = the tilt convention; "
+                    f"a |slope| far from it = the reads are not tracking the tilt)")
     threading.Thread(target=stdin_marks, daemon=True).start()
-    out(f"[tau] MARKS: type '<left> <right>' (kg) + Enter after each photo; d={args.d:.3f} m, expected roll slope {slope_expected:+.1f} kg/deg")
+    out(f"[tau] MARKS: type '<left> <right>' (kg) + Enter after each photo (robot still from the photo until Enter; "
+        f"the mark averages the last {args.mark_window:.0f} s); d={args.d:.3f} m, expected |roll slope| {slope_expected:.1f} kg/deg"
+        + ("  [quiet: per-second lines in the log only]" if args.quiet else ""))
 
     period = 1.0 / args.hz
     peak_hr = 0.0
@@ -212,7 +228,7 @@ def main():
             buf.clear()
         n = len(rows)
         if n == 0:
-            print("   -- no rt/lowstate messages this window --", flush=True)
+            out("   -- no rt/lowstate messages this window --", screen=not args.quiet)
             continue
         if t0 is None:
             t0 = time.monotonic()
@@ -225,15 +241,18 @@ def main():
         peak_hr = max(peak_hr, hL, hR)
         flag = "  <== HIP-ROLL SQUEEZE" if max(hL, hR) > args.threshold else ""
         with lock:
-            last.update(gx=gx, gy=gy, gy_deg=math.degrees(math.asin(max(-1.0, min(1.0, gy)))),
-                        qhL=qhL, qhR=qhR, qaL=qaL, qaR=qaR, qkL=qkL, qkR=qkR)
+            hist.append((time.time(), dict(gx=gx, gy=gy, gy_deg=math.degrees(math.asin(max(-1.0, min(1.0, gy)))),
+                                           qhL=qhL, qhR=qhR, qaL=qaL, qaR=qaR, qkL=qkL, qkR=qkR)))
+            cutoff = time.time() - max(args.mark_window, 1.0) - 1.0
+            while hist and hist[0][0] < cutoff:
+                hist.pop(0)
         out(f"{time.strftime('%H:%M:%S')} {t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
             f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
-            f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}")
+            f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}", screen=not args.quiet)
         if args.angles:
             out(f"      q(deg) hipR L {qhL*deg:+6.2f} R {qhR*deg:+6.2f} (L+R {(qhL+qhR)*deg:+5.2f}) | knee L {qkL*deg:5.2f} R {qkR*deg:5.2f} "
                 f"(L-R {(qkL-qkR)*deg:+5.2f}) | ankR L {qaL*deg:+6.2f} R {qaR*deg:+6.2f} (L+R {(qaL+qaR)*deg:+5.2f}) "
-                f"| hipR tau signed L {thL:+6.1f} R {thR:+6.1f} Nm")
+                f"| hipR tau signed L {thL:+6.1f} R {thR:+6.1f} Nm", screen=not args.quiet)
 
 
 if __name__ == "__main__":
