@@ -21,6 +21,11 @@ MEASURE ON A SETTLED BALANCING POLICY (not FixStand): when it holds near-upright
 leanFwd/leanLat = the residual lean it can't correct = CoM-belief error, and the
 mean ankle torque = the true CoM moment.
 
+  - --angles (2026-09-28, the lateral-asymmetry read): a second line per window with the
+    MEASURED joint angles L/R (deg) for hip_roll / knee / ankle_roll and the SIGNED hip-roll
+    torques. In FixStand with the policy OFF the command is symmetric, so a left/right angle
+    difference there is a joint ZERO-OFFSET (calibration), while equal angles with unequal
+    torques is a mass (CoM) offset -- the two reasons a leg looks "heavier" separated in one read.
 SDK motor order (h1_2): 0-5 L leg (hip_yaw,hip_pitch,hip_roll,knee,ankle_pitch,
 ankle_roll), 6-11 R leg, 12 torso, 13+ arms.
   hip_roll m2/m8 | knee m3/m9 | ankle_pitch m4/m10 | ankle_roll m5/m11
@@ -62,6 +67,8 @@ def main():
                          "— lean(proj_grav) is mass-free")
     ap.add_argument("--threshold", type=float, default=100.0, help="flag hip-roll |tau| above this (Nm)")
     ap.add_argument("--n_motors", type=int, default=27)
+    ap.add_argument("--angles", action="store_true",
+                    help="also print measured hip_roll/knee/ankle_roll angles L/R (deg) + signed hip-roll tau")
     args = ap.parse_args()
 
     mg = args.mass * G
@@ -86,6 +93,12 @@ def main():
                 max(float(ms[i].temperature[0]) for i in range(args.n_motors)),
                 max(float(ms[i].temperature[-1]) for i in range(args.n_motors)),
                 float(max(range(args.n_motors), key=lambda i: ms[i].temperature[-1])),
+                # --angles columns (always captured, printed on request): measured q (rad)
+                # hip_roll L/R, knee L/R, ankle_roll L/R, then SIGNED hip-roll tau L/R
+                float(ms[HIP_ROLL_L].q), float(ms[HIP_ROLL_R].q),
+                float(ms[KNEE_L].q), float(ms[KNEE_R].q),
+                float(ms[ANK_ROLL_L].q), float(ms[ANK_ROLL_R].q),
+                float(ms[HIP_ROLL_L].tau_est), float(ms[HIP_ROLL_R].tau_est),
             )
         except Exception:
             return
@@ -122,8 +135,8 @@ def main():
             t0 = time.monotonic()
         t = time.monotonic() - t0
         m = [sum(col) / n for col in zip(*rows)]
-        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, tcase, twind, _ = m
-        hot = Counter(int(r[-1]) for r in rows).most_common(1)[0][0]
+        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, tcase, twind, _, qhL, qhR, qkL, qkR, qaL, qaR, thL, thR = m
+        hot = Counter(int(r[13]) for r in rows).most_common(1)[0][0]
         comx = (pL + pR) / mg * 1000.0
         comy = (rL + rR) / mg * 1000.0
         peak_hr = max(peak_hr, hL, hR)
@@ -131,6 +144,11 @@ def main():
         print(f"{t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
               f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
               f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}", flush=True)
+        if args.angles:
+            d = 57.29577951308232
+            print(f"      q(deg) hipR L {qhL*d:+6.2f} R {qhR*d:+6.2f} (L+R {(qhL+qhR)*d:+5.2f}) | knee L {qkL*d:5.2f} R {qkR*d:5.2f} "
+                  f"(L-R {(qkL-qkR)*d:+5.2f}) | ankR L {qaL*d:+6.2f} R {qaR*d:+6.2f} (L+R {(qaL+qaR)*d:+5.2f}) "
+                  f"| hipR tau signed L {thL:+6.1f} R {thR:+6.1f} Nm", flush=True)
 
 
 if __name__ == "__main__":
