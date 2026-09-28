@@ -26,6 +26,15 @@ mean ankle torque = the true CoM moment.
     torques. In FixStand with the policy OFF the command is symmetric, so a left/right angle
     difference there is a joint ZERO-OFFSET (calibration), while equal angles with unequal
     torques is a mass (CoM) offset -- the two reasons a leg looks "heavier" separated in one read.
+  - MARKS (2026-09-28, the two-scales weigh-in): type the two scale readings "<left> <right>"
+    (kg) and press Enter right after the photo. The tool stamps them with the wall clock and the
+    lateral tilt of that moment, prints D = left - right and the raw CoM offset
+    y_raw = (d/2) * D / (left+right), and once >= 3 marks exist fits D against the tilt:
+    the load split follows the CoM ground projection, and a CoM ~0.9 m up moves ~8 kg per
+    degree of roll, so the placement-to-placement roll of a PD-held FixStand swamps a 5 mm
+    offset; the value of the fit at ZERO tilt is the body's own offset. The slope should
+    come out near 2*m*zcom*tan(1 deg)/d (printed as "expected"), which checks the method.
+    Enter alone = a mark without scale numbers (tilt + angles only). --log appends everything.
 SDK motor order (h1_2): 0-5 L leg (hip_yaw,hip_pitch,hip_roll,knee,ankle_pitch,
 ankle_roll), 6-11 R leg, 12 torso, 13+ arms.
   hip_roll m2/m8 | knee m3/m9 | ankle_pitch m4/m10 | ankle_roll m5/m11
@@ -37,6 +46,8 @@ Usage (monitor on the work PC, robot's DDS net; controller runs on pc4):
 """
 import argparse
 from collections import Counter
+import math
+import sys
 import threading
 import time
 
@@ -57,6 +68,33 @@ def projected_gravity(quat):
     return (2.0 * (w * y - x * z), -2.0 * (y * z + w * x), 2.0 * (x * x + y * y) - 1.0)
 
 
+def parse_mark(text):
+    """'39.3 36.55' -> (39.3, 36.55); anything else -> None (a bare Enter is a tilt-only mark)."""
+    parts = text.replace(",", " ").split()
+    if len(parts) < 2:
+        return None
+    try:
+        return float(parts[0]), float(parts[1])
+    except ValueError:
+        return None
+
+
+def fit_marks(marks):
+    """marks: list of (roll_deg, D_kg). Least squares D = a + b*roll. Returns (a, b, n) or None."""
+    pts = [(r, d) for r, d in marks if r is not None and d is not None]
+    n = len(pts)
+    if n < 3:
+        return None
+    mr = sum(r for r, _ in pts) / n
+    md = sum(d for _, d in pts) / n
+    sxx = sum((r - mr) ** 2 for r, _ in pts)
+    if sxx < 1e-9:
+        return None
+    b = sum((r - mr) * (d - md) for r, d in pts) / sxx
+    a = md - b * mr
+    return a, b, n
+
+
 def main():
     ap = argparse.ArgumentParser(description="per-second torque + lean monitor (sim2sim / sim2real)")
     ap.add_argument("--iface", default="lo", help="DDS interface (sim=lo; real robot=enp6s0)")
@@ -69,6 +107,10 @@ def main():
     ap.add_argument("--n_motors", type=int, default=27)
     ap.add_argument("--angles", action="store_true",
                     help="also print measured hip_roll/knee/ankle_roll angles L/R (deg) + signed hip-roll tau")
+    ap.add_argument("--d", type=float, default=0.305,
+                    help="foot CENTRE-to-centre separation (m) for the two-scales CoM estimate (2026-09-28: (22+39)/2 cm)")
+    ap.add_argument("--zcom", type=float, default=0.9, help="CoM height (m), only for the expected roll slope printout")
+    ap.add_argument("--log", default=None, help="append every line and mark to this file")
     args = ap.parse_args()
 
     mg = args.mass * G
@@ -116,8 +158,49 @@ def main():
     sub.Init(on_msg, 10)
     print(f"[tau] subscribed rt/lowstate on {args.iface} (domain {args.domain}); mass={args.mass}kg; "
           f"averaging every {1.0/args.hz:.2f}s. MEASURE ON A SETTLED POLICY. waiting for data...", flush=True)
-    print("  t | N    |  leanFwd leanLat |  ankP_L  ankP_R ->CoMx |  ankR_L  ankR_R ->CoMy* | knee LR | hipR LR | case/wind@motor",
+    print("  clock     t | N    |  leanFwd leanLat |  ankP_L  ankP_R ->CoMx |  ankR_L  ankR_R ->CoMy* | knee LR | hipR LR | case/wind@motor",
           flush=True)
+
+    logf = open(args.log, "a") if args.log else None
+
+    def out(line):
+        print(line, flush=True)
+        if logf:
+            logf.write(line + "\n"); logf.flush()
+
+    last = {}          # the most recent window's values, for the MARK thread
+    marks = []         # (roll_deg, D_kg)
+    mark_n = [0]
+    deg = 57.29577951308232
+    slope_expected = 2.0 * args.mass * args.zcom * math.tan(math.radians(1.0)) / args.d   # kg per degree of roll
+
+    def stdin_marks():
+        for text in sys.stdin:
+            with lock:
+                L = dict(last)
+            if not L:
+                out(">>> MARK ignored: no rt/lowstate data yet"); continue
+            mark_n[0] += 1
+            roll = L["gy_deg"]
+            sc = parse_mark(text)
+            head = (f">>> MARK {mark_n[0]} {time.strftime('%H:%M:%S')} | leanLat {L['gy']:+.4f} rad ({roll:+.2f} deg) "
+                    f"leanFwd {L['gx']:+.4f} | q hipR L {L['qhL']*deg:+.2f} R {L['qhR']*deg:+.2f} ankR L {L['qaL']*deg:+.2f} R {L['qaR']*deg:+.2f}")
+            if sc is None:
+                out(head + " | (no scale numbers)"); marks.append((roll, None)); continue
+            fl, fr = sc
+            D = fl - fr
+            y_raw = (args.d / 2.0) * D / (fl + fr) * 1000.0
+            out(head + f" | scales L {fl:.2f} R {fr:.2f} sum {fl+fr:.2f} kg  D {D:+.2f} kg -> y_raw {y_raw:+.1f} mm"
+                + (f"  !! sum {fl+fr:.1f} vs mass {args.mass:.1f}: robot moving or harness loaded" if abs(fl + fr - args.mass) > 2.0 else ""))
+            marks.append((roll, D))
+            fit = fit_marks(marks)
+            if fit:
+                a, b, n = fit
+                y0 = (args.d / 2.0) * a / args.mass * 1000.0
+                out(f">>> FIT n={n}: D = {a:+.2f} kg + {b:+.2f} kg/deg * roll  ->  body offset at ZERO roll = {y0:+.1f} mm "
+                    f"(slope expected ~{slope_expected:+.1f} kg/deg for a CoM {args.zcom:.2f} m up; a slope far from it = the reads are not tracking the tilt)")
+    threading.Thread(target=stdin_marks, daemon=True).start()
+    out(f"[tau] MARKS: type '<left> <right>' (kg) + Enter after each photo; d={args.d:.3f} m, expected roll slope {slope_expected:+.1f} kg/deg")
 
     period = 1.0 / args.hz
     peak_hr = 0.0
@@ -141,14 +224,16 @@ def main():
         comy = (rL + rR) / mg * 1000.0
         peak_hr = max(peak_hr, hL, hR)
         flag = "  <== HIP-ROLL SQUEEZE" if max(hL, hR) > args.threshold else ""
-        print(f"{t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
-              f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
-              f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}", flush=True)
+        with lock:
+            last.update(gx=gx, gy=gy, gy_deg=math.degrees(math.asin(max(-1.0, min(1.0, gy)))),
+                        qhL=qhL, qhR=qhR, qaL=qaL, qaR=qaR, qkL=qkL, qkR=qkR)
+        out(f"{time.strftime('%H:%M:%S')} {t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
+            f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
+            f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}")
         if args.angles:
-            d = 57.29577951308232
-            print(f"      q(deg) hipR L {qhL*d:+6.2f} R {qhR*d:+6.2f} (L+R {(qhL+qhR)*d:+5.2f}) | knee L {qkL*d:5.2f} R {qkR*d:5.2f} "
-                  f"(L-R {(qkL-qkR)*d:+5.2f}) | ankR L {qaL*d:+6.2f} R {qaR*d:+6.2f} (L+R {(qaL+qaR)*d:+5.2f}) "
-                  f"| hipR tau signed L {thL:+6.1f} R {thR:+6.1f} Nm", flush=True)
+            out(f"      q(deg) hipR L {qhL*deg:+6.2f} R {qhR*deg:+6.2f} (L+R {(qhL+qhR)*deg:+5.2f}) | knee L {qkL*deg:5.2f} R {qkR*deg:5.2f} "
+                f"(L-R {(qkL-qkR)*deg:+5.2f}) | ankR L {qaL*deg:+6.2f} R {qaR*deg:+6.2f} (L+R {(qaL+qaR)*deg:+5.2f}) "
+                f"| hipR tau signed L {thL:+6.1f} R {thR:+6.1f} Nm")
 
 
 if __name__ == "__main__":
