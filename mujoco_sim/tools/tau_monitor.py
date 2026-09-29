@@ -45,6 +45,11 @@ mean ankle torque = the true CoM moment.
     offset; the value of the fit at ZERO tilt is the body's own offset. The slope should
     come out near 2*m*zcom*tan(1 deg)/d (printed as "expected"), which checks the method.
     Enter alone = a mark without scale numbers (tilt + angles only). --log appends everything.
+  - --legs (2026-09-29, "which motor is not at its command?"): subscribes rt/lowcmd as well and
+    prints, per window, for all 12 leg joints: commanded q, measured q, err = cmd - q (deg) and
+    tau_est (Nm), one line per leg. A joint whose err stays non-zero under a steady command is
+    the one the PD cannot move (friction / backlash / mechanical stop); an encoder zero offset
+    shows err ~0 with the geometry wrong. Same read in sim (lo, domain 1) and on the robot.
 SDK motor order (h1_2): 0-5 L leg (hip_yaw,hip_pitch,hip_roll,knee,ankle_pitch,
 ankle_roll), 6-11 R leg, 12 torso, 13+ arms.
   hip_roll m2/m8 | knee m3/m9 | ankle_pitch m4/m10 | ankle_roll m5/m11
@@ -62,7 +67,7 @@ import threading
 import time
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize, ChannelSubscriber
-from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowCmd_, LowState_
 
 HIP_ROLL_L, HIP_ROLL_R = 2, 8
 KNEE_L, KNEE_R = 3, 9
@@ -220,6 +225,8 @@ def main():
     ap.add_argument("--n_motors", type=int, default=27)
     ap.add_argument("--angles", action="store_true",
                     help="also print measured hip_roll/knee/ankle_roll angles L/R (deg) + signed hip-roll tau")
+    ap.add_argument("--legs", action="store_true",
+                    help="per-window table of the 12 leg joints: commanded q (rt/lowcmd), measured q, err, tau_est")
     ap.add_argument("--d", type=float, default=0.305,
                     help="foot CENTRE-to-centre separation (m) for the two-scales CoM estimate (2026-09-28: (22+39)/2 cm)")
     ap.add_argument("--zcom", type=float, default=0.9, help="CoM height (m), only for the expected roll slope printout")
@@ -267,6 +274,8 @@ def main():
                 float(ms[KNEE_L].q), float(ms[KNEE_R].q),
                 float(ms[ANK_ROLL_L].q), float(ms[ANK_ROLL_R].q),
                 float(ms[HIP_ROLL_L].tau_est), float(ms[HIP_ROLL_R].tau_est),
+                # --legs columns: measured q and tau_est of the 12 leg joints
+                *[float(ms[i].q) for i in range(12)], *[float(ms[i].tau_est) for i in range(12)],
             )
         except Exception:
             return
@@ -282,6 +291,20 @@ def main():
                          f"(robot LAN is usually enp6s0; sim is lo)")
     sub = ChannelSubscriber("rt/lowstate", LowState_)
     sub.Init(on_msg, 10)
+    cmd_q = [None] * 12       # latest commanded q of the 12 leg joints (rt/lowcmd), None until seen
+    cmd_buf = []
+    if args.legs:
+        def on_cmd(msg):
+            try:
+                row = [float(msg.motor_cmd[i].q) for i in range(12)]
+            except Exception:
+                return
+            with lock:
+                cmd_buf.append(row)
+        try:
+            ChannelSubscriber("rt/lowcmd", LowCmd_).Init(on_cmd, 10)
+        except Exception as e:
+            print(f"[tau] --legs: rt/lowcmd subscribe failed ({e}); command columns will read '-'", flush=True)
     print(f"[tau] subscribed rt/lowstate on {args.iface} (domain {args.domain}); mass={args.mass}kg; "
           f"averaging every {1.0/args.hz:.2f}s. MEASURE ON A SETTLED POLICY. waiting for data...", flush=True)
     print("  clock     t | N    |  leanFwd leanLat |  ankP_L  ankP_R ->CoMx |  ankR_L  ankR_R ->CoMy* | knee LR | hipR LR | case/wind@motor",
@@ -347,6 +370,9 @@ def main():
         with lock:
             rows = buf[:]
             buf.clear()
+            if args.legs and cmd_buf:
+                cmd_q = [sum(r[i] for r in cmd_buf) / len(cmd_buf) for i in range(12)]
+                cmd_buf.clear()
         n = len(rows)
         if n == 0:
             out("   -- no rt/lowstate messages this window --", screen=not args.quiet)
@@ -355,7 +381,8 @@ def main():
             t0 = time.monotonic()
         t = time.monotonic() - t0
         m = [sum(col) / n for col in zip(*rows)]
-        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, tcase, twind, _, qhL, qhR, qkL, qkR, qaL, qaR, thL, thR = m
+        gx, gy, gz, pL, pR, rL, rR, kL, kR, hL, hR, tcase, twind, _, qhL, qhR, qkL, qkR, qaL, qaR, thL, thR = m[:22]
+        legs_q, legs_tau = m[22:34], m[34:46]
         hot = Counter(int(r[13]) for r in rows).most_common(1)[0][0]
         comx = (pL + pR) / mg * 1000.0
         comy = (rL + rR) / mg * 1000.0
@@ -370,6 +397,16 @@ def main():
         out(f"{time.strftime('%H:%M:%S')} {t:4.0f}| {n:4d} | {gx:+7.3f} {gy:+7.3f} | {pL:+6.1f} {pR:+6.1f} ->{comx:+5.0f}mm "
             f"| {rL:+6.1f} {rR:+6.1f} ->{comy:+5.0f}mm | {kL:2.0f} {kR:2.0f} | {hL:3.0f} {hR:3.0f} "
             f"| case {tcase:.0f}C wind {twind:.0f}C@m{hot}{flag}", screen=not args.quiet)
+        if args.legs:
+            names = ("hipY", "hipP", "hipR", "knee", "ankP", "ankR")
+            for side, off in (("L", 0), ("R", 6)):
+                cells = []
+                for j, nm in enumerate(names):
+                    i = off + j
+                    c = cmd_q[i]
+                    err = "   -  " if c is None else f"{(c - legs_q[i]) * deg:+6.2f}"
+                    cells.append(f"{nm} cmd {('   -  ' if c is None else f'{c*deg:+6.2f}')} q {legs_q[i]*deg:+6.2f} err {err} tau {legs_tau[i]:+6.1f}")
+                out(f"      {side} | " + " | ".join(cells), screen=not args.quiet)
         if args.angles:
             out(f"      q(deg) hipR L {qhL*deg:+6.2f} R {qhR*deg:+6.2f} (L+R {(qhL+qhR)*deg:+5.2f}) | knee L {qkL*deg:5.2f} R {qkR*deg:5.2f} "
                 f"(L-R {(qkL-qkR)*deg:+5.2f}) | ankR L {qaL*deg:+6.2f} R {qaR*deg:+6.2f} (L+R {(qaL+qaR)*deg:+5.2f}) "
