@@ -40,11 +40,23 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --quiet)  DEBUG=0; shift;;
   --record) RECORD=1; shift;;
   --record-file) RECORD=1; RECORD_FILE_OPT="$2"; shift 2;;   # fleetdeck: record straight into the milestone folder
+  --no-metrics) METRICS=0; shift;;   # no balance_metrics sidecar (and so no reward HUD)
+  --no-oracle)  ORACLE=0; shift;;    # reward HUD from the hand-written ledger twin instead of the Isaac oracle
   -h|--help) sed -n '2,24p' "$0"; exit 0;;
   *) echo "unknown arg: $1 (profiles: walk | keys | stop)"; exit 1;;
 esac; done
 
 KFIFO="$SIM/logs/.teleop_keys"
+# reward HUD sidecar (2026-10-01, operator: "Reward hud doesn't load for locomotion policies" -- this rig never
+# started it; the desk rig did). Same block as run_mujoco_desk_line.sh: balance_metrics headless on the sim
+# domain, fed by the reward ORACLE (the policy's own Isaac reward functions on MuJoCo state, isaacsim env)
+# or by the hand-written ledger twin. Rows the oracle cannot evaluate for a walk policy are listed as n/a
+# with the reason in reward_oracle.log.
+METRICS="${METRICS:-1}"; METRICS_MODE="${METRICS_MODE:-walk}"
+TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
+ISAAC_PY="${ISAAC_PY:-$HOME/miniconda3/envs/isaacsim/bin/python}"
+ORACLE="${ORACLE:-1}"; ORACLE_PORT="${ORACLE_PORT:-47312}"; ORACLE_PID=""; METRICS_PID=""; FIFO_HOLD_PID=""
+METRICS_FIFO="/tmp/archb_walk_metrics.stdin"
 if [[ "$PROFILE" == "keys" ]]; then
   [[ -p "$KFIFO" ]] || mkfifo "$KFIFO"
   echo "WALK KEYS — this terminal now drives the robot (logs stay in the other one)."
@@ -109,6 +121,12 @@ elif grep -qE "armature: 0\.16" "$_env" 2>/dev/null; then
 else
   SCENE="scene_comx06.xml"; SCENE_WHY="plain comx06 body, pre-armature-table policy (lm5 line)"
 fi
+case "$SCENE" in
+  scene_comx06_armature_hand790.xml) XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature_hand790.xml" ;;
+  scene_comx06_armature.xml)         XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml" ;;
+  *)                                 XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml" ;;
+esac
+[[ -f "$XML" ]] || XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml"
 if ! grep -qE "robot_scene: \"$SCENE\"" "$MUJOCO/simulate/config.yaml"; then
   sed -i "s/robot_scene: \"[^\"]*\"/robot_scene: \"$SCENE\"/" "$MUJOCO/simulate/config.yaml"
 fi
@@ -125,6 +143,9 @@ CONTAINER="archb_walk_$$"
 
 cleanup() {
   [[ -n "${WC_PID:-}" ]] && kill "$WC_PID" 2>/dev/null
+  [[ -n "$METRICS_PID" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }   # -> RUN SUMMARY + ledger tape
+  [[ -n "$ORACLE_PID" ]] && kill -TERM "$ORACLE_PID" 2>/dev/null
+  [[ -n "$FIFO_HOLD_PID" ]] && kill "$FIFO_HOLD_PID" 2>/dev/null; rm -f "$METRICS_FIFO"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
   [[ -n "${MJ_PID:-}" ]] && kill "$MJ_PID" 2>/dev/null
   rm -f "$BAND_FLAG"
@@ -152,6 +173,36 @@ fi
 ( while kill -0 "$MJ_PID" 2>/dev/null; do sleep 2; done
   echo ""; echo ">>> [watchdog] sim died — tearing down the stack"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 ) &
+
+# ── reward HUD sidecar (metrics + oracle/ledger), as in the desk rig ─────────
+if [[ "$METRICS" = "1" ]]; then
+  if [[ -x "$TV_PY" ]]; then
+    METRICS_LOG="$LOG_DIR/walk_metrics_$STAMP.log"
+    rm -f "$METRICS_FIFO"; mkfifo "$METRICS_FIFO"
+    sleep infinity > "$METRICS_FIFO" 2>/dev/null & FIFO_HOLD_PID=$!
+    LEDGER_ARGS=()
+    if [[ -f "$MILESTONES/$MS/params/env.yaml" ]]; then
+      if [[ "$ORACLE" = "1" && -x "$ISAAC_PY" ]]; then
+        LEDGER_TAPE_DIR="$LOG_DIR" UNITREE_RL_LAB_DIR="${UNITREE_RL_LAB_DIR:-$REPOS/unitree_rl_lab-ik}" \
+        "$ISAAC_PY" "$SIM/tools/reward_oracle.py" --env-yaml "$MILESTONES/$MS/params/env.yaml" \
+            --port "$ORACLE_PORT" > "$LOG_DIR/reward_oracle_walk_$STAMP.log" 2>&1 &
+        ORACLE_PID=$!
+        LEDGER_ARGS=(--oracle "$ORACLE_PORT")
+        echo ">>> [1b] reward ORACLE on (pid $ORACLE_PID; log $LOG_DIR/reward_oracle_walk_$STAMP.log -- n/a rows + reasons listed there)"
+      else
+        LEDGER_ARGS=(--ledger "$MILESTONES/$MS/params/env.yaml")
+        echo ">>> [1b] reward LEDGER on ($MS/params/env.yaml, hand-written twin)"
+      fi
+    fi
+    LEDGER_TAPE_DIR="$LOG_DIR" \
+    "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain 1 --xml "$XML" \
+        --mode "$METRICS_MODE" "${LEDGER_ARGS[@]}" < "$METRICS_FIFO" > "$METRICS_LOG" 2>&1 &
+    METRICS_PID=$!
+    echo ">>> [1b] balance_metrics headless (pid $METRICS_PID; log $METRICS_LOG)"
+  else
+    echo ">>> [1b] SKIP metrics: tv python not found at $TV_PY"
+  fi
+fi
 
 # walk_hud gauge feeder: host-side mirror of walk_teleop's printed cmd -> rt/wirelesscontroller
 # (the container has no unitree_sdk2py; walk_hud fills from this topic, tick = measured)
