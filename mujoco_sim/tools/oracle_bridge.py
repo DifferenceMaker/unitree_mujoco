@@ -42,6 +42,7 @@ class OracleBridge:
         self._anchor = None
         self._qcmd = None
         self._lean = None
+        self._vel = None          # [vx, vy, wz] from rt/cmd_vel (walk_teleop's DDS mirror, 2026-10-06)
         self._last_rows = ""
         self._last_reply_t = 0.0
         self.n_sent = 0
@@ -52,6 +53,8 @@ class OracleBridge:
         self._anchor_sub.Init(self._on_anchor, 10)
         self._lean_sub = ChannelSubscriber("rt/lean_cmd", String_)
         self._lean_sub.Init(self._on_lean, 10)
+        self._vel_sub = ChannelSubscriber("rt/cmd_vel", String_)
+        self._vel_sub.Init(self._on_vel, 10)
         try:
             self._cmd_sub = ChannelSubscriber("rt/lowcmd", LowCmd_)
             self._cmd_sub.Init(self._on_lowcmd, 10)
@@ -79,6 +82,13 @@ class OracleBridge:
         except Exception:
             pass
 
+    def _on_vel(self, msg):
+        try:
+            v = json.loads(msg.data)["v"]
+            self._vel = [float(v[0]), float(v[1]), float(v[2])]
+        except Exception:
+            pass
+
     def _on_lowcmd(self, msg):
         try:
             self._qcmd = [float(mc.q) for mc in msg.motor_cmd[:27]]
@@ -97,7 +107,8 @@ class OracleBridge:
         state = {"type": "state", "t": now,
                  "q": [float(x) for x in q], "dq": [float(x) for x in dq], "tau": [float(x) for x in tau],
                  "quat": [float(x) for x in quat], "gyro": [float(x) for x in np.asarray(gyro).tolist()],
-                 "pose": self._pose, "anchor": self._anchor, "qcmd": self._qcmd, "lean": self._lean}
+                 "pose": self._pose, "anchor": self._anchor, "qcmd": self._qcmd, "lean": self._lean,
+                 "vel_cmd": self._vel}
         try:
             self.sock.sendto(json.dumps(state).encode(), self.addr)
             self.n_sent += 1

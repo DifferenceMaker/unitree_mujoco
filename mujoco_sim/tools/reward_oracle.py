@@ -29,7 +29,8 @@ back. Protocol:
                         "body_names":[nbody]}               (once, and every ~5 s)
     bridge -> oracle : {"type":"state", "t":..., "q":[27], "dq":[27], "tau":[27],
                         "quat":[w,x,y,z], "gyro":[3], "pose":{sim_base_pose json}|null,
-                        "anchor":[x,y,z]|null, "qcmd":[27]|null, "lean":float|null}
+                        "anchor":[x,y,z]|null, "qcmd":[27]|null, "lean":float|null,
+                        "vel_cmd":[vx,vy,wz]|null}
     oracle -> bridge : "TOTAL:v:f|name:v:f|..."   (policy_hud.h set_ledger format)
 
 sim_base_pose v3 (2026-08-21 build): p,q,v,w,ucnt,umax,th,fc,lw,rw,fl,fr,tl,tr.
@@ -247,6 +248,7 @@ class MjCommandManager:
         self.base_velocity = torch.zeros(1, 3)
         self.lean = torch.zeros(1, 1)
         self.lean_known = False
+        self.vel_known = False    # rt/cmd_vel seen; until then base_velocity = 0 and every row gated on it is flagged '~'
         self.arm = MjArmPoseCommand(robot, torch)
         self.arm_cmd14 = torch.zeros(1, 14)
 
@@ -545,6 +547,11 @@ class RewardOracle:
         if s.get("lean") is not None:
             cm.lean[0, 0] = float(s["lean"])
             cm.lean_known = True
+        # velocity command (rt/cmd_vel via the bridge, walk kind); None -> 0 and flagged '~' (2026-10-06)
+        vc = s.get("vel_cmd")
+        if vc is not None and len(vc) >= 3:
+            cm.base_velocity[0, 0] = float(vc[0]); cm.base_velocity[0, 1] = float(vc[1]); cm.base_velocity[0, 2] = float(vc[2])
+            cm.vel_known = True
         # action from the controller's joint targets: a = (q_target - offset) / scale
         qc = s.get("qcmd")
         if qc and self.act_ids:
@@ -599,6 +606,8 @@ class RewardOracle:
             note = ""
             if any(isinstance(v, str) and v == "lean_command" for v in params.values()) and not self.env.command_manager.lean_known:
                 note = "~lean=0 assumed"
+            if any(isinstance(v, str) and v == "base_velocity" for v in params.values()) and not self.env.command_manager.vel_known:
+                note = "~cmd=0 assumed (no rt/cmd_vel)"
             out.append((name, w * val, note))
         return out
 
