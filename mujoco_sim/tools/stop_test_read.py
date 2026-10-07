@@ -16,11 +16,11 @@ LIM = {("hipR", "L"): (-24.64, None), ("hipR", "R"): (None, 24.64),      # inwar
        ("hipY", "L"): (-24.64, 24.64), ("hipY", "R"): (-24.64, 24.64),
        ("ankR", "L"): (-15.0, 15.0), ("ankR", "R"): (-15.0, 15.0),
        ("ankP", "L"): (-51.41, 30.0), ("ankP", "R"): (-51.41, 30.0),
-       ("hipP", "L"): (None, None), ("hipP", "R"): (None, None), ("knee", "L"): (None, None), ("knee", "R"): (None, None)}
+       ("hipP", "L"): (None, None), ("hipP", "R"): (None, None), ("knee", "L"): (-14.90, 117.46), ("knee", "R"): (-14.90, 117.46)}
 MIRROR = {"hipR": -1, "hipY": -1, "ankR": -1, "ankP": +1, "hipP": +1, "knee": +1}   # L and R at the same physical stop: sum (-1) or equal (+1)
 ap = argparse.ArgumentParser(); ap.add_argument("log"); ap.add_argument("--hold", type=float, default=3.0); ap.add_argument("--tol", type=float, default=0.3); ap.add_argument("--min-frac", type=float, default=0.5)
 a = ap.parse_args()
-tpat = re.compile(r"^(\d\d:\d\d:\d\d)"); lpat = re.compile(r"^\s*([LR]) \| (.*)$"); jpat = re.compile(r"(\w+) cmd\s+\S+\s+q\s+([-+]?\d+\.\d+)")
+tpat = re.compile(r"^(\d\d:\d\d:\d\d)"); lpat = re.compile(r"^\s*([LR]) \| (.*)$"); jpat = re.compile(r"(\w+) cmd\s+\S+\s+q\s+([-+]?\d+\.\d+)\s+err\s+\S+\s+tau\s+([-+]?\d+\.\d+|-)")
 series = collections.defaultdict(list)   # (joint, side) -> [(t, q)]
 t = None
 for line in open(a.log, errors="replace"):
@@ -29,7 +29,9 @@ for line in open(a.log, errors="replace"):
     m = lpat.match(line)
     if not m or t is None: continue
     side = m.group(1)
-    for j, q in jpat.findall(m.group(2)): series[(j, side)].append((t, float(q)))
+    for j, q, tau in jpat.findall(m.group(2)):
+        series[(j, side)].append((t, float(q)))
+        if j == "knee" and tau != "-": series[("kneeTau", side)].append((t, abs(float(tau))))
 if not series: sys.exit("no leg lines found (run tau_monitor with --legs --angles)")
 def plateaus(rows):
     out, i = [], 0
@@ -62,4 +64,11 @@ for j, sgn in sorted({(j, s) for (j, side, s) in found}):
     resid = qL + qR if MIRROR[j] < 0 else qL - qR
     verdict = "PASS" if abs(resid) <= 0.5 else "OFFSET"
     print(f"  {j:5s} {sgn}: L {qL:+7.2f}  R {qR:+7.2f}  {'sum' if MIRROR[j] < 0 else 'diff'} {resid:+6.2f} deg  -> {verdict} (pass = within 0.5)")
-print("\nFEET FLAT: read ankP/ankR of both sides in the final 10 s window directly (the floor is the absolute reference).")
+# FEET FLAT = the final 10 s; valid as an absolute ankle reference ONLY with the weight on the legs (knee |tau| > 20 Nm both sides)
+last = sorted(set(t for t, _ in series[("hipR", "L")]))[-10:]
+def wmean(k): v = [q for t, q in series[k] if t in last]; return sum(v) / len(v) if v else float("nan")
+tL, tR = wmean(("kneeTau", "L")), wmean(("kneeTau", "R"))
+loaded = tL > 20 and tR > 20
+print(f"\nFEET FLAT (final 10 s {last[0]}..{last[-1]}): knee |tau| L {tL:.1f} / R {tR:.1f} Nm -> {'LOADED, usable as the absolute ankle reference' if loaded else 'UNLOADED (weight on the harness) -> NOT an absolute reference; redo with knee |tau| > 20 Nm'}")
+for j in ["hipR", "ankR", "ankP", "knee", "hipY"]:
+    L, R = wmean((j, "L")), wmean((j, "R")); print(f"  {j:5s} L {L:+7.2f} R {R:+7.2f}  {'sum' if MIRROR[j] < 0 else 'diff'} {(L + R) if MIRROR[j] < 0 else (L - R):+6.2f}")
