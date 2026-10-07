@@ -45,6 +45,7 @@ def plateaus(rows):
 found = {}
 print(f"{'joint':5s} {'side':4s} {'from':8s} {'to':8s} {'s':>3s} {'angle':>8s}  {'URDF stop':>9s} {'to stop':>8s}")
 for (j, side), rows in sorted(series.items()):
+    if j == "kneeTau": continue
     lo, hi = LIM[(j, side)]
     for t0, t1, n, q in plateaus(rows):
         lim = None
