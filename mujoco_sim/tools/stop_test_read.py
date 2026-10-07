@@ -61,7 +61,7 @@ for j, sgn in sorted({(j, s) for (j, side, s) in found}):
     # mirrored joints: L at +x pairs with R at -x; pitch joints: same sign
     sL = found.get((j, "L", sgn)); sR = found.get((j, "R", sgn if MIRROR[j] > 0 else ("neg" if sgn == "pos" else "pos")))
     if not sL or not sR: print(f"  {j:5s} {sgn}: only one side reached this stop (L {sL} / R {sR})"); continue
-    qL, qR = sum(sL) / len(sL), sum(sR) / len(sR)
+    qL, qR = max(sL, key=abs), max(sR, key=abs)   # the plateau closest to the stop on each side (rest poses can pass --min-frac)
     resid = qL + qR if MIRROR[j] < 0 else qL - qR
     verdict = "PASS" if abs(resid) <= 0.5 else "OFFSET"
     print(f"  {j:5s} {sgn}: L {qL:+7.2f}  R {qR:+7.2f}  {'sum' if MIRROR[j] < 0 else 'diff'} {resid:+6.2f} deg  -> {verdict} (pass = within 0.5)")
