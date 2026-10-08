@@ -361,8 +361,6 @@ trap cleanup EXIT INT TERM
 SCENE=$(grep -oP 'robot_scene:\s*"\K[^"]+' "$MUJOCO/simulate/config.yaml" 2>/dev/null || echo "?")
 ulimit -c unlimited 2>/dev/null   # capture a core if the sim segfaults (lands in simulate/)
 # torque cap = hardware-safety analogue (BridgeModule TAU_CAP_FRAC, default 0.6). Tested OFF once on 2026-08-28
-# Encoder-offset REPRODUCTION (2026-10-08): BRIDGE_ENCODER_OFFSET_DEG='{"2": 2.3}' bash run_mujoco_desk_line.sh --policy <ms>
-# makes the perfect sim behave like a robot whose left hip roll encoder reads +2.3 deg (mode defaults to emulate here).
 # for the dp6b lean ("didn't change much") and restored the same day. Override per launch: BRIDGE_TAU_CAP_FRAC=0 bash ...
 if [[ "${BRIDGE_TAU_CAP_FRAC:-0.6}" != "0.6" ]]; then
   echo ">>> [WARN] BridgeModule torque cap overridden: BRIDGE_TAU_CAP_FRAC=${BRIDGE_TAU_CAP_FRAC} (safety default 0.6)"
@@ -507,7 +505,7 @@ else
     -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}"
     -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
     -e ARM_IK_DEMO="$ARM_DEMO"
-    -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}" -e BRIDGE_ENCODER_OFFSET_DEG="${BRIDGE_ENCODER_OFFSET_DEG:-}" -e BRIDGE_ENCODER_OFFSET_MODE="${BRIDGE_ENCODER_OFFSET_MODE:-emulate}"
+    -e BRIDGE_TAU_CAP_FRAC="${BRIDGE_TAU_CAP_FRAC:-0.6}"
     -e ARCHB_LEAN="${LEAN_TELEOP:-0}" -e ARCHB_LEAN_KEYS="${ARCHB_LEAN_KEYS:-0}"
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
     -v "$ASPIRED:/workspace" -v "$STAGE:/workspace/MovementModule/policy"
