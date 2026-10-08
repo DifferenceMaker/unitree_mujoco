@@ -124,9 +124,13 @@ def read_log(path):
     """log -> list of (t_sec_of_day, leanFwd_deg, leanLat_deg, loaded) from the per-second lines;
     loaded = both knee |tau| > LOADED_KNEE_NM (the harness carries the robot otherwise)."""
     rows = []
+    ang = re.compile(r"q\(deg\) hipR L\s+([-+]\d+\.\d+) R\s+([-+]\d+\.\d+).*?ankR L\s+([-+]\d+\.\d+) R\s+([-+]\d+\.\d+)")
     for line in open(path):
         m = _LINE.match(line)
         if not m:
+            a = ang.search(line)
+            if a and rows and len(rows[-1]) == 4:    # the --angles line that follows a per-second line: (hipR L, hipR R, ankR L, ankR R) deg
+                rows[-1] = rows[-1] + (tuple(float(x) for x in a.groups()),)
             continue
         t = int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3))
         gx, gy = float(m.group(4)), float(m.group(5))
@@ -176,7 +180,14 @@ def replay(args):
     fmt = lambda t: f"{int(t)//3600:02d}:{(int(t)%3600)//60:02d}:{int(t)%60:02d}"
     print(f"[replay] {len(rows)} per-second lines {fmt(rows[0][0])}..{fmt(rows[-1][0])}; LOADED periods (both knees > {LOADED_KNEE_NM:.0f} Nm = weight on the legs, not the harness):")
     for k, (t0, t1, mean, n, spread) in enumerate(periods, 1):
-        print(f"   #{k:<2d} {fmt(t0)}-{fmt(t1)} ({n:3d} s)  leanLat {mean:+.2f} deg (spread {spread:.2f})")
+        # loaded = the weight is on the feet -> the joint angles here are the ABSOLUTE ankle/hip-roll reference the
+        # hanging stop test cannot give (2026-10-07: the feet-flat phase was unloaded and void)
+        angs = [r[4] for r in rows if t0 <= r[0] <= t1 and len(r) > 4]
+        extra = ""
+        if angs:
+            hL, hR, aL, aR = (sum(a[i] for a in angs) / len(angs) for i in range(4))
+            extra = f"  | hipR L {hL:+.2f} R {hR:+.2f} (L+R {hL+hR:+.2f})  ankR L {aL:+.2f} R {aR:+.2f} (L+R {aL+aR:+.2f})  roll-chain L {hL+aL:+.2f} R {hR+aR:+.2f} deg"
+        print(f"   #{k:<2d} {fmt(t0)}-{fmt(t1)} ({n:3d} s)  leanLat {mean:+.2f} deg (spread {spread:.2f}){extra}")
     if not periods:
         print("   (none -- the knees never carried the weight; harness still loaded?)")
     marks = []
