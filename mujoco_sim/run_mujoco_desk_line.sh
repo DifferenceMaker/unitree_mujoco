@@ -225,6 +225,15 @@ if [[ "$BODY" == "stock" ]]; then
     sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_cush75_desk.xml"/' "$MUJOCO/simulate/config.yaml"
     echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
   fi
+elif [[ "$BODY" == "comx06_hand790" && -n "${MJ_SCENE:-}" ]]; then
+  # PLANT VARIANT (2026-10-08): MJ_SCENE=scene_comx06_armature_hand790_<tag>_desk.xml picks a variant of the
+  # CURRENT body (armature table + 790 g hands kept): l5f5 / l10f10 / l10 / f10 (whole-body CoM shifted
+  # forward x / LEFT y, mm) or rfric (right ankle roll frictionloss 1.0 Nm). Unset = the default below.
+  [[ -f "$MUJOCO/unitree_robots/h1_2/$MJ_SCENE" ]] || { echo "FATAL: MJ_SCENE=$MJ_SCENE not in unitree_robots/h1_2/"; exit 2; }
+  _inc=$(grep -oP '<include file="\K[^"]+' "$MUJOCO/unitree_robots/h1_2/$MJ_SCENE" | head -1)
+  XML="$MUJOCO/unitree_robots/h1_2/$_inc"
+  sed -i "s/robot_scene: \"[^\"]*\"/robot_scene: \"$MJ_SCENE\"/" "$MUJOCO/simulate/config.yaml"
+  echo ">>> [scene] PLANT VARIANT robot_scene -> $MJ_SCENE (body $_inc)"
 elif [[ "$BODY" == "comx06_hand790" ]]; then
   # 2026-09-16: the armature body with the real Inspire mass folded into the wrist bodies
   # (0.124 -> 0.914 kg) and the torso re-solved; matches h1_2_comx06_hand790.urdf to 0.08 mm.
