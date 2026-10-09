@@ -96,7 +96,8 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --stock)        BODY="stock"; BODY_EXPLICIT=1; shift;;   # STOCK Unitree torso CoM (x=+0.0155, y=+0.0028) —
                                           # for policies trained WITHOUT the SYM tree, e.g. the
                                           # entire dp2b batch (see session 2026-07-28 two-urdf trap)
-  --hand790)      BODY="comx06_hand790"; BODY_EXPLICIT=1; shift;;  # comx06 + armature + REAL 790 g hands (2026-09-16):
+  --hand790)      BODY="comx06_hand790"; BODY_EXPLICIT=1; shift;;
+  --plant)        PLANT="$2"; shift 2;;   # PLANT VARIANT for this run only: l5f5 | l10f10 | l10 | f10 | rfric | symy | sym0 (2026-10-08 bodies)  # comx06 + armature + REAL 790 g hands (2026-09-16):
                                           # for policies trained on h1_2_comx06_hand790.urdf (p15+)
   --comx06)       BODY="comx06"; BODY_EXPLICIT=1; shift;;  # comx06 body + RIGID floor (new-soles era, 2026-07-30+):
                                           # dp3_anchor and every desk policy warmstarted off the
@@ -215,6 +216,11 @@ if grep -q "lean_command" "$STAGE/$MS/deploy.yaml" 2>/dev/null; then
 fi
 echo ">>> [policy] staged $MS -> $STAGE (container sees it as MovementModule/policy/CURRENT)"
 
+if [[ -n "${MJ_SCENE:-}" && -z "${PLANT:-}" ]]; then
+  echo "!!! [scene] MJ_SCENE=$MJ_SCENE is set in this shell and is IGNORED (it leaked into every later run on 2026-10-09)."
+  echo "!!!         For a plant variant pass --plant <tag> on the command line; run 'unset MJ_SCENE' to silence this."
+  unset MJ_SCENE
+fi
 # desk scene: the desk + click-to-reach markers must be in the sim
 # any *_desk scene OF THE REQUESTED BODY is respected (the softness ladder:
 # soft07/soft05/soft04/rigid); a NON-desk or wrong-body scene gets replaced by
@@ -225,11 +231,12 @@ if [[ "$BODY" == "stock" ]]; then
     sed -i 's/robot_scene: "[^"]*"/robot_scene: "scene_stock_cush75_desk.xml"/' "$MUJOCO/simulate/config.yaml"
     echo ">>> [scene] robot_scene -> scene_stock_cush75_desk.xml (STOCK body, cush75-equivalent floor)"
   fi
-elif [[ "$BODY" == "comx06_hand790" && -n "${MJ_SCENE:-}" ]]; then
-  # PLANT VARIANT (2026-10-08): MJ_SCENE=scene_comx06_armature_hand790_<tag>_desk.xml picks a variant of the
+elif [[ "$BODY" == "comx06_hand790" && -n "${PLANT:-}" ]]; then
+  MJ_SCENE="scene_comx06_armature_hand790_${PLANT}_desk.xml"
+  # PLANT VARIANT (2026-10-08; per-run --plant <tag> since 2026-10-09): picks a variant of the
   # CURRENT body (armature table + 790 g hands kept): l5f5 / l10f10 / l10 / f10 (whole-body CoM shifted
   # forward x / LEFT y, mm) or rfric (right ankle roll frictionloss 1.0 Nm). Unset = the default below.
-  [[ -f "$MUJOCO/unitree_robots/h1_2/$MJ_SCENE" ]] || { echo "FATAL: MJ_SCENE=$MJ_SCENE not in unitree_robots/h1_2/"; exit 2; }
+  [[ -f "$MUJOCO/unitree_robots/h1_2/$MJ_SCENE" ]] || { echo "FATAL: --plant $PLANT -> $MJ_SCENE not in unitree_robots/h1_2/"; exit 2; }
   _inc=$(grep -oP '<include file="\K[^"]+' "$MUJOCO/unitree_robots/h1_2/$MJ_SCENE" | head -1)
   XML="$MUJOCO/unitree_robots/h1_2/$_inc"
   sed -i "s/robot_scene: \"[^\"]*\"/robot_scene: \"$MJ_SCENE\"/" "$MUJOCO/simulate/config.yaml"
@@ -274,6 +281,9 @@ case "$PROFILE" in
              echo "   !! DDS domain 0 — do NOT run while the real stack is up on this PC" ;;
 esac
 echo "   model: $XML"
+if [[ -n "${PLANT:-}" ]]; then
+  echo "   !!! PLANT VARIANT ACTIVE: --plant $PLANT -> $MJ_SCENE -- NOT the body the policy trained on !!!"
+fi
 echo "   POLICY: $MS  (staged; host MovementModule/policy untouched)"
 echo "   sim DDS: lo, domain $SIM_DDS_DOMAIN   |   ROS2: domain ${ARCHB_ROS_DOMAIN:-77}, localhost-only"
 echo "============================================================"
