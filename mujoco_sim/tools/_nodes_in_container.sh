@@ -119,6 +119,22 @@ elif [ "$MODE" = "w" ]; then
     PYTHONPATH="/workspace/.global:${PYTHONPATH:-}" \
     TELEOP_INPUT=/unitree_mujoco/mujoco_sim/logs/.teleop_keys \
     python3 /workspace/MovementModule/Utils/walk_teleop.py ) & PIDS+=($!)
+  if [ "${ARCHB_ARM_IK:-0}" = "1" ]; then
+    # loco-switch (2026-10-12): the desk rig's arm commander NEXT TO the walk teleop, GATED on
+    # the active policy (ARM_IK_ACTIVE_POLICY = the first switch policy): while the walk owns
+    # the 27 joints it stays silent; once the balance policy is active the alt-click targets
+    # (.arm_targets, written by the sim) drive the arms through ikpy -> joint_set_arms, and
+    # MovementModule reads that slice as the balance policy's arm_pose_command.
+    need_venv ActionModule
+    _ARM_ACTIVE="${MM_SWITCH_POLICIES%%[,;]*}"
+    echo ">>> [container] MODE W + ARM IK — arm_ik_commander gated on policy_active == '${_ARM_ACTIVE}' (alt-click in the sim = reach target)"
+    ( source /workspace/.venv/ActionModule/bin/activate
+      PYTHONPATH="/workspace/.global:/workspace/ActionModule:${PYTHONPATH:-}" \
+      ARM_TARGETS_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_targets \
+      ARM_WISH_FILE=/unitree_mujoco/mujoco_sim/logs/.arm_wish \
+      ARM_IK_ACTIVE_POLICY="${_ARM_ACTIVE}" \
+      python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
+  fi
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi

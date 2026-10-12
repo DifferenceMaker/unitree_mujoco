@@ -17,6 +17,9 @@
 #   bash run_mujoco_loco_switch.sh keys                   # SECOND terminal: drive the walk; p = policy switch
 #   bash run_mujoco_loco_switch.sh --policy <walk>        # --policy = --walk (fleetdeck's spelling, 2026-10-12)
 #   bash run_mujoco_loco_switch.sh --walk lm5_heading --balance p16_dr_phys
+#   bash run_mujoco_loco_switch.sh --desk --arms          # TABLE scene + the desk rig's arm commander once the
+#                                                         # balance policy is active (alt-click the table = reach target,
+#                                                         # ctrl+alt-click = anchor); fleetdeck's "policy switchable test"
 #   bash tools/loco_switch_scenario.sh                     # the scripted test (3rd terminal)
 #   bash run_mujoco_loco_switch.sh stop
 #
@@ -46,12 +49,14 @@ MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 # default balance = the deployment pointer (Aspired_Robot_Project/MovementModule/policy/CURRENT_BALANCE)
 CUR_BAL="$(tr -d '[:space:]' < "$ASPIRED/MovementModule/policy/CURRENT_BALANCE" 2>/dev/null)"
 PROFILE="run"; WALK="${LOCOSW_WALK:-lm7b_u_ladder}"; BALANCE="${LOCOSW_BALANCE:-${CUR_BAL:-p14h_stancewide}}"; DEBUG=1; METRICS="${METRICS:-1}"
-RECORD_FILE=""
+RECORD_FILE=""; DESK=0; ARMS=0
 while [[ $# -gt 0 ]]; do case "$1" in
   keys|stop) PROFILE="$1"; shift;;
   --walk|--policy) WALK="$2"; shift 2;;      # --policy: fleetdeck passes every rig its policy this way
   --balance) BALANCE="$2"; shift 2;;
   --record-file) RECORD_FILE="$2"; shift 2;;  # in-sim recording (ARCHB_RECORD_FILE), fleetdeck's record toggle
+  --desk)    DESK=1; shift;;                  # the table scene (<scene>_desk.xml variant of the auto scene)
+  --arms)    ARMS=1; shift;;                  # arm_ik_commander gated on the balance policy (alt-click reach targets)
   --quiet)   DEBUG=0; shift;;
   --no-metrics) METRICS=0; shift;;
   -h|--help) sed -n '2,32p' "$0"; exit 0;;
@@ -124,8 +129,10 @@ if [[ -n "$WALK_ENV" && -f "$WALK_ENV" ]]; then
   elif grep -qE "armature: 0\.16" "$WALK_ENV"; then SCENE_AUTO="scene_comx06_armature.xml"
   else SCENE_AUTO="scene_comx06.xml"; fi
 fi
+[[ $DESK -eq 1 ]] && SCENE_AUTO="${SCENE_AUTO%.xml}_desk.xml"   # scene_comx06_armature_hand790_desk.xml etc.
 SCENE="${LOCOSW_SCENE:-$SCENE_AUTO}"
-case "$SCENE" in
+[[ -f "$MUJOCO/unitree_robots/h1_2/$SCENE" ]] || { echo "FATAL: scene $SCENE not in unitree_robots/h1_2/"; exit 2; }
+case "${SCENE%_desk.xml}.xml" in
   scene_comx06_armature_hand790.xml) XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature_hand790.xml" ;;
   scene_comx06_armature.xml)         XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml" ;;
   *)                                 XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml" ;;
@@ -152,6 +159,7 @@ ln -sfn "$METRICS_LOG" "$LOG_DIR/locosw_metrics_latest.log"
 
 cleanup() {
   [[ -n "${METRICS_PID:-}" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }   # -> RUN SUMMARY (falls, touchdowns)
+  [[ -n "${WC_PID:-}" ]] && kill "$WC_PID" 2>/dev/null
   [[ -n "${KHOLD_PID:-}" ]] && kill "$KHOLD_PID" 2>/dev/null
   [[ -n "${SHOLD_PID:-}" ]] && kill "$SHOLD_PID" 2>/dev/null
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
@@ -164,6 +172,14 @@ trap cleanup EXIT INT TERM
 # FIFOs with a holder writer each, so a one-shot `printf > fifo` never gives the
 # reader EOF (walk_teleop) and the sim's `push` reader keeps a live stdin.
 for _f in "$KFIFO" "$SFIFO"; do [ -e "$_f" ] && unlink "$_f"; done; mkfifo "$KFIFO" "$SFIFO"
+# alt-click reach targets: the sim appends "l x y z" lines to logs/.arm_targets (click_target.h default
+# path, relative to simulate/); clear a stale file so the commander does not replay last run's clicks
+if [[ $ARMS -eq 1 ]]; then
+  [ -e "$SIM/logs/.arm_targets" ] && unlink "$SIM/logs/.arm_targets"
+  : > "$SIM/logs/.arm_targets"
+  # the desk rig's raised start pose (hands ~desk + 10 cm) -- taken up when the balance policy becomes active
+  echo "l 0.30 0.25 0.10" >> "$SIM/logs/.arm_targets"; echo "r 0.30 -0.25 0.10" >> "$SIM/logs/.arm_targets"
+fi
 sleep infinity > "$KFIFO" & KHOLD_PID=$!
 sleep infinity > "$SFIFO" & SHOLD_PID=$!
 
@@ -189,8 +205,13 @@ if [[ "$METRICS" = "1" && -x "$TV_PY" ]]; then
   METRICS_PID=$!
   echo ">>> [1b] balance_metrics headless (pid $METRICS_PID; falls/touchdowns -> $METRICS_LOG)"
 fi
+# walk_hud gauge feeder (the walk rig's): the container's walk_teleop has no unitree_sdk2py, so a host
+# mirror tails the stack log and publishes rt/wirelesscontroller -- the bottom-right vx/vy/wz gauges
+# auto-hide without it (missing here until 2026-10-12: "the tracking gauges don't show up")
+( sleep 6; "$TV_PY" "$SIM/tools/wc_mirror.py" "$STACK_LOG" 1 lo ) > "$LOG_DIR/wc_mirror_locosw_$STAMP.log" 2>&1 &
+WC_PID=$!
 
-echo ">>> [2] REAL Arch B stack: BridgeModule --sim + MovementModule [$WALK_NAME active, $BALANCE shadow] + walk_teleop"
+echo ">>> [2] REAL Arch B stack: BridgeModule --sim + MovementModule [$WALK_NAME active, $BALANCE shadow] + walk_teleop$([[ $ARMS -eq 1 ]] && echo ' + arm_ik_commander (gated on the balance policy; alt-click = reach target)')"
 echo "    switch:  docker exec $CONTAINER bash -c 'source /opt/ros/humble/setup.bash; ros2 topic pub --once /MovementModule/policy std_msgs/String \"data: $BALANCE\"'"
 echo "    drive:   bash $SIM/run_mujoco_loco_switch.sh keys   |  printf '\\033[A' > $KFIFO   (p = policy switch)"
 echo "    push:    echo \"push 0.5 0\" > $SFIFO"
@@ -199,7 +220,7 @@ echo "    stack log: $STACK_LOG"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN=1 \
-  -e MODE=w -e ARCHB_DEBUG="$DEBUG" \
+  -e MODE=w -e ARCHB_DEBUG="$DEBUG" -e ARCHB_ARM_IK="$ARMS" \
   -e MM_POLICY="$WALK_NAME" -e MM_SWITCH_POLICIES="$BALANCE" \
   -e MM_SWITCH_BLEND_SEC="${MM_SWITCH_BLEND_SEC:-0.0}" -e MM_SWITCH_HOLD_SEC="${MM_SWITCH_HOLD_SEC:-0.3}" \
   -e MM_SWITCH_GYRO="${MM_SWITCH_GYRO:-0.3}" -e MM_SWITCH_REQUIRE_LOAD="${MM_SWITCH_REQUIRE_LOAD:-1}" \
