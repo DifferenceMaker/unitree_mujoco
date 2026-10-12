@@ -1230,6 +1230,11 @@ int main(int argc, char **argv)
   sim->RenderLoop();
   physicsthreadhandle.join();
 
-  pthread_exit(NULL);
-  return 0;
+  // Window closed -> END THE PROCESS (2026-10-12). pthread_exit(NULL) only ended the main
+  // thread: the process lived on while ANY thread did, and the detached stdin command thread
+  // blocks in getline forever when stdin is a FIFO held open by a writer (the loco-switch rig's
+  // `push` channel) -- the window vanished, the controller kept running, the launcher's
+  // sim-death watchdog never fired and the consoles stayed open. std::exit also runs the
+  // atexit handlers (sim_record's stop), which a pthread_exit-driven teardown never promised.
+  std::exit(0);
 }

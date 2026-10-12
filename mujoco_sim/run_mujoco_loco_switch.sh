@@ -194,6 +194,23 @@ if ! kill -0 "$MJ_PID" 2>/dev/null; then
   echo "ERROR: MuJoCo exited during startup — see $MJ_LOG"; tail -3 "$MJ_LOG" | sed 's/^/    /'
   echo "       Aborting: refusing to start the ROS2 stack without a live sim."; exit 1
 fi
+# WINDOW watchdog (2026-10-12): closing the MuJoCo window did NOT end the sim process here -- its stdin
+# is the push FIFO, held open by a writer, so the stdin command thread never sees EOF and the process
+# outlived its window (the walk rig's sim gets /dev/null as a background job and exits). The operator
+# closes the window to end a test and expects the consoles to follow (as on the walk rig): once the
+# sim's window has existed and is gone while the pid lives, kill the sim -> the sim-death watchdog below
+# tears the stack down. Needs wmctrl; without it this rig behaves as before.
+if command -v wmctrl >/dev/null 2>&1; then
+  ( seen=0
+    while kill -0 "$MJ_PID" 2>/dev/null; do
+      if wmctrl -lp 2>/dev/null | awk -v p="$MJ_PID" '$3==p{f=1} END{exit !f}'; then seen=1
+      elif [[ $seen -eq 1 ]]; then
+        echo ""; echo ">>> [watchdog] MuJoCo window closed — ending the sim (pid $MJ_PID)"
+        kill "$MJ_PID" 2>/dev/null; sleep 3; kill -9 "$MJ_PID" 2>/dev/null; break
+      fi
+      sleep 1
+    done ) &
+fi
 # sim-death watchdog: never leave a phantom controller without its robot
 ( while kill -0 "$MJ_PID" 2>/dev/null; do sleep 2; done
   echo ""; echo ">>> [watchdog] sim died — tearing down the stack"
