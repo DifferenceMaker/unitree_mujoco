@@ -14,13 +14,15 @@
 # handover, and the push -> reposition -> balance loop.
 #
 #   bash run_mujoco_loco_switch.sh                        # lm7b_u_ladder (milestone, last known good walk) + p14h_stancewide (vendored)
-#   bash run_mujoco_loco_switch.sh keys                   # SECOND terminal: drive the walk
+#   bash run_mujoco_loco_switch.sh keys                   # SECOND terminal: drive the walk; p = policy switch
+#   bash run_mujoco_loco_switch.sh --policy <walk>        # --policy = --walk (fleetdeck's spelling, 2026-10-12)
 #   bash run_mujoco_loco_switch.sh --walk lm5_heading --balance p16_dr_phys
 #   bash tools/loco_switch_scenario.sh                     # the scripted test (3rd terminal)
 #   bash run_mujoco_loco_switch.sh stop
 #
 # The balance policy must be VENDORED under Aspired_Robot_Project/MovementModule/
-# policy/; the walk policy may be vendored OR a milestone name (staged, like the
+# policy/ (default = that repo's CURRENT_BALANCE pointer, p14h_stancewide if the
+# file is missing); the walk policy may be vendored OR a milestone name (staged, like the
 # walk-line rig). Both should be trained at EQUAL PD gains (MovementModule warns
 # otherwise: BridgeModule applies one gain set per session).
 #
@@ -41,11 +43,15 @@ SDK="$REPOS/unitree_sdk2_python"
 SIM="$MUJOCO/mujoco_sim"
 MJ_BIN="$MUJOCO/simulate/build/unitree_mujoco"
 
-PROFILE="run"; WALK="${LOCOSW_WALK:-lm7b_u_ladder}"; BALANCE="${LOCOSW_BALANCE:-p14h_stancewide}"; DEBUG=1; METRICS="${METRICS:-1}"
+# default balance = the deployment pointer (Aspired_Robot_Project/MovementModule/policy/CURRENT_BALANCE)
+CUR_BAL="$(tr -d '[:space:]' < "$ASPIRED/MovementModule/policy/CURRENT_BALANCE" 2>/dev/null)"
+PROFILE="run"; WALK="${LOCOSW_WALK:-lm7b_u_ladder}"; BALANCE="${LOCOSW_BALANCE:-${CUR_BAL:-p14h_stancewide}}"; DEBUG=1; METRICS="${METRICS:-1}"
+RECORD_FILE=""
 while [[ $# -gt 0 ]]; do case "$1" in
   keys|stop) PROFILE="$1"; shift;;
-  --walk)    WALK="$2"; shift 2;;
+  --walk|--policy) WALK="$2"; shift 2;;      # --policy: fleetdeck passes every rig its policy this way
   --balance) BALANCE="$2"; shift 2;;
+  --record-file) RECORD_FILE="$2"; shift 2;;  # in-sim recording (ARCHB_RECORD_FILE), fleetdeck's record toggle
   --quiet)   DEBUG=0; shift;;
   --no-metrics) METRICS=0; shift;;
   -h|--help) sed -n '2,32p' "$0"; exit 0;;
@@ -60,6 +66,7 @@ TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 if [[ "$PROFILE" == "keys" ]]; then
   [[ -p "$KFIFO" ]] || mkfifo "$KFIFO"
   echo "WALK KEYS — this terminal drives the walk policy (arrows = vx/vy, q/e = yaw, space = zero, ESC = quit)."
+  echo "            p = POLICY SWITCH (walk <-> balance; zeroes the stick, MovementModule switches when the standing gate holds)"
   stty -icanon min 1 time 0 -echo; trap 'stty sane' EXIT INT TERM
   python3 "$SIM/tools/teleop_keys_feed.py" "$KFIFO"
   exit 0
@@ -162,7 +169,7 @@ sleep infinity > "$SFIFO" & SHOLD_PID=$!
 
 echo ">>> [1] launching unitree_mujoco (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
 ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 \
-    ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" \
+    ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ARCHB_RECORD_FILE="$RECORD_FILE" \
     "$MJ_BIN" -r h1_2 -i 1 -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
 echo "    pid $MJ_PID, log $MJ_LOG"
@@ -185,7 +192,7 @@ fi
 
 echo ">>> [2] REAL Arch B stack: BridgeModule --sim + MovementModule [$WALK_NAME active, $BALANCE shadow] + walk_teleop"
 echo "    switch:  docker exec $CONTAINER bash -c 'source /opt/ros/humble/setup.bash; ros2 topic pub --once /MovementModule/policy std_msgs/String \"data: $BALANCE\"'"
-echo "    drive:   bash $SIM/run_mujoco_loco_switch.sh keys   |  printf '\\033[A' > $KFIFO"
+echo "    drive:   bash $SIM/run_mujoco_loco_switch.sh keys   |  printf '\\033[A' > $KFIFO   (p = policy switch)"
 echo "    push:    echo \"push 0.5 0\" > $SFIFO"
 echo "    scenario: bash $SIM/tools/loco_switch_scenario.sh"
 echo "    stack log: $STACK_LOG"
