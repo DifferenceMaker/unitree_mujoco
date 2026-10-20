@@ -22,6 +22,12 @@
 #                                                         # ctrl+alt-click = anchor); fleetdeck's "policy switchable test"
 #   bash tools/loco_switch_scenario.sh                     # the scripted test (3rd terminal)
 #   bash run_mujoco_loco_switch.sh stop
+#   MM_LOCO_SWITCH=unitree BRIDGE_SIM_FAKE_LOCO=1 bash run_mujoco_loco_switch.sh
+#       PLUMBING ONLY (2026-10-20, Aspired branch MM_loco_switch_unitree): 'unitree' on
+#       /MovementModule/policy makes MovementModule send the Bridge 'give-stand'; the SIM Bridge
+#       fakes the owner flip (no Unitree controller here: the robot SAGS under the shadow-follow),
+#       the stick is relayed as 'move', a policy name sends stop/take and the HANDOFF engages.
+#       Message flow only -- the physics of the real handover cannot be seen in MuJoCo.
 #
 # The balance policy must be VENDORED under Aspired_Robot_Project/MovementModule/
 # policy/ (default = that repo's CURRENT_BALANCE pointer, p14h_stancewide if the
@@ -242,6 +248,10 @@ docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e MM_SWITCH_BLEND_SEC="${MM_SWITCH_BLEND_SEC:-0.0}" -e MM_SWITCH_HOLD_SEC="${MM_SWITCH_HOLD_SEC:-0.3}" \
   -e MM_SWITCH_GYRO="${MM_SWITCH_GYRO:-0.3}" -e MM_SWITCH_REQUIRE_LOAD="${MM_SWITCH_REQUIRE_LOAD:-1}" \
   -e MM_SWITCH_FORCE_SEC="${MM_SWITCH_FORCE_SEC:-0}" \
+  -e MM_LOCO_SWITCH="${MM_LOCO_SWITCH:-aspired}" -e MM_LOCO_GIVE_CMD="${MM_LOCO_GIVE_CMD:-give-stand}" \
+  -e MM_LOCO_SWITCH_TIMEOUT_S="${MM_LOCO_SWITCH_TIMEOUT_S:-10}" -e MM_LOCO_SETTLE_S="${MM_LOCO_SETTLE_S:-2.0}" \
+  -e MM_LOCO_MOVE_RATE_HZ="${MM_LOCO_MOVE_RATE_HZ:-5}" -e MM_LOCO_MOVE_DUR_S="${MM_LOCO_MOVE_DUR_S:-0.6}" -e MM_LOCO_VMAX="${MM_LOCO_VMAX:-0.5,0.3,0.5}" \
+  -e BRIDGE_SIM_FAKE_LOCO="${BRIDGE_SIM_FAKE_LOCO:-0}" \
   -e ARCHB_WALK_ENGAGE_MODE="${ARCHB_WALK_ENGAGE_MODE:-none}" \
   -e ARCHB_FIXSTAND_SEC="${ARCHB_FIXSTAND_SEC:-1.0}" -e ARCHB_HOLD_SEC="${ARCHB_HOLD_SEC:-3.5}" \
   -e ARCHB_ACTION_CLIP="${ARCHB_ACTION_CLIP:-100.0}" \
