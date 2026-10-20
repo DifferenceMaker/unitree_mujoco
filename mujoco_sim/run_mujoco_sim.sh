@@ -360,6 +360,7 @@ else
     -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}"
     -e ARM_IK_DEMO="$ARM_DEMO"
     -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR"
+    ${ARCHB_ENGAGE_MODE:+-e ARCHB_ENGAGE_MODE="$ARCHB_ENGAGE_MODE"}
     -v "$ASPIRED:/workspace" -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python"
     --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh)
   if [[ -n "$DOCKER_TTY" ]]; then
