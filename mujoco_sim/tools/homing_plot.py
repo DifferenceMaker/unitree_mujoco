@@ -135,7 +135,9 @@ def plot_map(rows, trajs, out, title):
     lim = max(12.0, math.ceil(1.15 * max(offs) / 5) * 5) if offs else 20.0
     az.set_xlim(-lim, lim); az.set_ylim(-lim, lim)
     edge = (STOP_DIST_M + TORSO_FRONT_M) * 100
-    az.annotate(f"table edge {edge:.0f} cm this way ->", (lim, 0), xytext=(-6, 6), textcoords="offset points", ha="right", fontsize=8, color=C["muted"])
+    az.annotate("", xy=(0.97 * lim, 0.82 * lim), xytext=(0.45 * lim, 0.82 * lim), arrowprops=dict(arrowstyle="-|>", color=C["ink"], lw=2.5))
+    az.text(0.71 * lim, 0.86 * lim, f"TABLE EDGE {edge:.0f} cm", ha="center", va="bottom", fontsize=10, fontweight="bold", color=C["ink"])
+    az.axvspan(0.985 * lim, lim, color=C["table"], lw=0)
     az.set_xlabel("fwd offset from the stop [cm]  (+ = towards the table)", color=C["muted"], fontsize=9)
     az.set_ylabel("left offset [cm]  (+ = left of the approach line)", color=C["muted"], fontsize=9)
     az.set_title("stop zone: switch (open) -> settled (filled; tick = heading)\nboxes = +-3 cm (solid) / +-5 cm (dashed)", fontsize=10, color=C["ink"], loc="left")
@@ -143,6 +145,33 @@ def plot_map(rows, trajs, out, title):
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     fig.savefig(out + "_map.png", dpi=130); plt.close(fig)
     return out + "_map.png"
+
+
+TRACK_THR = (0.1, 0.08, 0.3)      # a command counts as active above this (vx m/s, vy m/s, wz rad/s)
+
+
+def tracking(d, hz=10.0):
+    """per channel: gain = sum(v_meas * sign(cmd)) / sum(|cmd|) over STEADY active ticks (command unchanged for 0.5 s, so the
+    estimator lag drops out), split by sign for vy / wz; rms = sqrt(mean((cmd - meas)^2)); the same for the sim truth.
+    score = 1 - mean(|1 - gain|) over the channels/signs with data (1 = perfect tracking, 0 = no response)."""
+    k = max(1, int(round(0.5 * hz)))
+    out = {}
+    for c, (kc, km, ko) in enumerate((("cmd_vx", "mvx", "ovx"), ("cmd_vy", "mvy", "ovy"), ("cmd_wz", "mwz", "owz"))):
+        cmd, mv, ov = d[kc], d[km], d[ko]
+        steady = np.array([bool(np.all(np.abs(cmd[max(0, i - k):i + 1] - cmd[i]) < 0.02)) for i in range(len(cmd))])
+        for sgn, name in ((1, "+"), (-1, "-")):
+            s = steady & (sgn * cmd >= TRACK_THR[c]) & np.isfinite(mv)
+            if s.sum() < 3:
+                continue
+            g = float(np.sum(mv[s] * sgn) / np.sum(np.abs(cmd[s])))
+            e = {"gain": g, "rms": float(np.sqrt(np.mean((cmd[s] - mv[s]) ** 2))), "n": int(s.sum())}
+            st = s & np.isfinite(ov)
+            if st.sum() >= 3:
+                e["gain_truth"] = float(np.sum(ov[st] * sgn) / np.sum(np.abs(cmd[st])))
+            out[(c, name)] = e
+    errs = [abs(1 - e["gain"]) for e in out.values()]
+    out["score"] = max(0.0, 1.0 - float(np.mean(errs))) if errs else None
+    return out
 
 
 def plot_velocity(rows, trajs, out, title):
@@ -155,8 +184,17 @@ def plot_velocity(rows, trajs, out, title):
     cols = (("cmd_vx", "mvx", "ovx", "vx [m/s]"), ("cmd_vy", "mvy", "ovy", "vy [m/s]"), ("cmd_wz", "mwz", "owz", "wz [rad/s]"))
     for i, (r, d) in enumerate(sel):
         t = d["t"]
+        tr = tracking(d)
         for j, (kc, km, ko, lab) in enumerate(cols):
             ax = axs[i, j]
+            parts = []
+            for name in ("+", "-"):
+                e = tr.get((j, name))
+                if e:
+                    tag = {"+": "L" if j else "", "-": "R"}[name] if j else ""
+                    parts.append(f"gain{(' ' + tag) if tag else ''} {e['gain']:.2f}" + (f" (truth {e['gain_truth']:.2f})" if "gain_truth" in e else "") + f" rms {e['rms']:.2f}")
+            ax.text(0.01, 0.97, " | ".join(parts) if parts else "no steady active command", transform=ax.transAxes, fontsize=6.5, va="top", ha="left",
+                    color=C["ink"], bbox=dict(fc="white", ec="none", alpha=0.75, pad=1.5))
             named = set()
             for p, i0, i1 in runs(d["phase"]):
                 t1 = t[i1 + 1] if i1 + 1 < len(t) else t[i1] + 0.1
@@ -172,14 +210,18 @@ def plot_velocity(rows, trajs, out, title):
                 ax.axvline(r["t_switch"], color=C["muted"], ls="--", lw=0.8)
             ax.set_xlim(0, tmax); style(ax)
             if j == 0:
-                ax.set_ylabel(f"trial {r['trial']}\n{lab}", fontsize=8, color=C["ink"])
+                sc = tr.get("score")
+                ax.set_ylabel(f"trial {r['trial']}" + (f"  track {sc:.2f}" if sc is not None else "") + f"\n{lab}", fontsize=8, color=C["ink"])
             else:
                 ax.set_ylabel(lab, fontsize=8, color=C["muted"])
             if i == n - 1:
                 ax.set_xlabel("t since goto [s]", fontsize=8, color=C["muted"])
             if i == 0 and j == 2:
                 ax.legend(fontsize=7, loc="upper right", frameon=False)
-    fig.suptitle(title + "\nvelocities: commanded (blue) vs measured (orange) vs sim truth (grey); bands = phases; dashed = balance active", fontsize=10, color=C["ink"], x=0.01, ha="left")
+    scores = [tracking(d)["score"] for _, d in sel if tracking(d)["score"] is not None]
+    fig.suptitle(title + "\nvelocities: commanded (blue) vs measured (orange) vs sim truth (grey); bands = phases; dashed = balance active; "
+                 f"track = 1 - mean|1 - gain| over steady active commands (batch mean {np.mean(scores):.2f})" if scores else title,
+                 fontsize=10, color=C["ink"], x=0.01, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(out + "_velocity.png", dpi=120); plt.close(fig)
     return out + "_velocity.png"
