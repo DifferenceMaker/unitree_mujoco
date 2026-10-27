@@ -14,7 +14,7 @@ the base 0.50 m off; arrival tolerance 3 cm / 2°; hold; switch; 10 s settle). R
 | v3, balance switch (`_v3_switch`) | 10 | 10/10 | 1.7–6.3 cm, ≤ 3.0° | 7.5 cm, 12 cm / 3.7°, 6.2° | 18–60 s (mean 26) |
 | v3.1, NO switch — the walk policy stands (`_v31_noswitch`) | 5 | 5/5 | 0.8–3.6 cm, ≤ 1.4° | 6.1 cm, 8.4 cm / **10.7°, 16.7°** | — |
 | v3.1, balance switch (`_v31_switch`) | 10 | 10/10 | 0.7–4.2 cm, ≤ 3.8° | 8.4 cm, 16 cm / 3.9°, 11.5° | 16–30 s (mean 21) |
-| v3.1, switch, hold 0.3 s (`_v31_switch_hold03`) | 10 | see the log appended below | | | |
+| v3.1, switch, hold 0.3 s (`_v31_switch_hold03`) | 10 | 10/10 | 0.6–4.1 cm, ≤ 2.4° | 7.6 cm, 17 cm / 4.7°, 11.3° | 15–25 s (mean 20) |
 
 Walk from 3–5 m: FAR phase ≈ 0.44 m/s average (3 m in 7 s); whole approach 16–30 s; the two 40–60 s cases were starts facing away
 (a full in-place turn at 0.36 rad/s left).
@@ -27,6 +27,8 @@ Walk from 3–5 m: FAR phase ≈ 0.44 m/s average (3 m in 7 s); whole approach 1
    always to the LEFT, and its heading drifts +2…+17° (left) within 10 s. The balance policy, once engaged, holds the heading far
    better (3.9° mean vs 10.7°) but keeps the lateral shift it inherited from the hold + gate (≈ 1.3 s under the walk policy):
    lateral **+2…+15 cm left, mean +7 cm** in 20/20 switch trials. Nothing in the commander or the localiser produces this bias.
+   Shortening the hold before the switch request from 1.0 s to 0.3 s changes nothing (7.6 cm mean, lateral +0.6…+17 cm, 10/10 left) —
+   the shift is the balance policy's engagement from the walk stance plus the walk policy's own stand, not the waiting time.
 3. **Turn asymmetry of the walk policy** (measured on this rig, in place): +0.5 → 0.02 rad/s (no left turn), −0.5 → −0.10, +0.8 → +0.36,
    −0.8 → −0.66; walking at 0.15 m/s both directions turn at ≈ 0.3 rad/s on a ±0.5 command. The commander turns in place only at the
    full ±0.8, arcs at 0.15 m/s + 0.5 for medium bearing errors, and trims heading only while translating. The training-side item is in
