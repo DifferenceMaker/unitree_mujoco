@@ -46,7 +46,7 @@
 set -uo pipefail
 
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
-ASPIRED="$REPOS/Aspired_Robot_Project"
+ASPIRED="${ASPIRED:-$REPOS/Aspired_Robot_Project}"   # a worktree on another MM branch via ASPIRED=... (homing rig: Aspired_Robot_Project-homing)
 MUJOCO="$REPOS/unitree_mujoco"
 SDK="$REPOS/unitree_sdk2_python"
 SIM="$MUJOCO/mujoco_sim"
@@ -243,7 +243,8 @@ echo "    stack log: $STACK_LOG"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN=1 \
-  -e MODE=w -e ARCHB_DEBUG="$DEBUG" -e ARCHB_ARM_IK="$ARMS" \
+  -e MODE="${LOCOSW_MODE:-w}" -e ARCHB_DEBUG="$DEBUG" -e ARCHB_ARM_IK="$ARMS" \
+  ${HOMING_POSE:+-e HOMING_POSE="$HOMING_POSE"} ${HOMING_VMAX:+-e HOMING_VMAX="$HOMING_VMAX"} ${HOMING_POSE_NOISE_XY:+-e HOMING_POSE_NOISE_XY="$HOMING_POSE_NOISE_XY"} ${HOMING_POSE_NOISE_YAW:+-e HOMING_POSE_NOISE_YAW="$HOMING_POSE_NOISE_YAW"} ${HOMING_POSE_BIAS_XY:+-e HOMING_POSE_BIAS_XY="$HOMING_POSE_BIAS_XY"} ${HOMING_TORSO_FRONT:+-e HOMING_TORSO_FRONT="$HOMING_TORSO_FRONT"} ${HOMING_STOP_DIST:+-e HOMING_STOP_DIST="$HOMING_STOP_DIST"} \
   -e MM_POLICY="$WALK_NAME" -e MM_SWITCH_POLICIES="$BALANCE" \
   -e MM_SWITCH_BLEND_SEC="${MM_SWITCH_BLEND_SEC:-0.0}" -e MM_SWITCH_HOLD_SEC="${MM_SWITCH_HOLD_SEC:-0.3}" \
   -e MM_SWITCH_GYRO="${MM_SWITCH_GYRO:-0.3}" -e MM_SWITCH_REQUIRE_LOAD="${MM_SWITCH_REQUIRE_LOAD:-1}" \
@@ -261,7 +262,7 @@ docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e BRIDGE_GETTER_MIN_DT="${BRIDGE_GETTER_MIN_DT:-0.002}" -e BRIDGE_LEG_SLEW_SCALE="${BRIDGE_LEG_SLEW_SCALE:-4.0}" \
   -e BRIDGE_IMU_PERIOD="${BRIDGE_IMU_PERIOD:-0.002}" -e EMERGENCY_SRV="${EMERGENCY_SRV:-0}" \
   -e ARCHB_BAND_RELEASE_FILE="$BAND_FLAG_CTR" \
-  -v "$ASPIRED:/workspace" -v "$POLICY_MOUNT:/workspace/MovementModule/policy" \
+  -v "$ASPIRED:/workspace" ${ASPIRED_VENV:+-v "$ASPIRED_VENV:/workspace/.venv"} -v "$POLICY_MOUNT:/workspace/MovementModule/policy" \
   -v "$MUJOCO:/unitree_mujoco" -v "$SDK:/unitree_sdk2_python" \
   --entrypoint bash ros2-humble-dev /unitree_mujoco/mujoco_sim/tools/_nodes_in_container.sh \
   2>&1 | tee "$STACK_LOG"

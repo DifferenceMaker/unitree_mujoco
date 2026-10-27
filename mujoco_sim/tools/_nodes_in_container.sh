@@ -135,6 +135,18 @@ elif [ "$MODE" = "w" ]; then
       ARM_IK_ACTIVE_POLICY="${_ARM_ACTIVE}" \
       python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
   fi
+elif [ "$MODE" = "h" ]; then
+  # HOMING (2026-10-27): the goal-to-velocity commander drives the walk policy from the localiser pose (sim: rt/sim_base_pose +
+  # the measured LIO-SAM noise) to a workstation goal and requests the balance switch at arrival. Commands from the host via
+  # HOMING_CMD_FILE ("goto X Y YAW_DEG" | "walk" | "stop"); trial records to HOMING_LOG (JSON lines).
+  echo ">>> [container] MODE H — HOMING: homing_commander -> /MovementModule/cmd_vel (pose=${HOMING_POSE:-sim}, balance=${MM_SWITCH_POLICIES%%[,;]*})"
+  need_venv MovementModule
+  ( source /workspace/.venv/MovementModule/bin/activate
+    PYTHONPATH="/workspace/.global${SDK_PYTHONPATH:+:$SDK_PYTHONPATH}:${PYTHONPATH:-}" \
+    HOMING_CMD_FILE="${HOMING_CMD_FILE:-/unitree_mujoco/mujoco_sim/logs/.homing_cmd}" \
+    HOMING_LOG="${HOMING_LOG:-/unitree_mujoco/mujoco_sim/logs/homing_trials.jsonl}" \
+    HOMING_BALANCE="${MM_SWITCH_POLICIES%%[,;]*}" HOMING_WALK="$MM_POLICY" \
+    python3 /workspace/MovementModule/Utils/homing_commander.py --pose "${HOMING_POSE:-sim}" ) & PIDS+=($!)
 else
   echo ">>> [container] MODE A — no arm source; MovementModule uses measured-arms fallback"
 fi

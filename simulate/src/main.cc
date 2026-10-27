@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -133,6 +134,18 @@ struct ScriptedPush
 };
 inline ScriptedPush scripted_push;
 
+// Scripted teleport (homing rig, 2026-10-27): place the free-joint base at a world pose
+// (x, y, yaw) with the current height and joint angles, velocities zeroed -- the Isaac
+// reset the policies trained with. Requested from stdin ("teleport <x> <y> <yaw_deg>"),
+// applied inside the physics lock like the push.
+struct ScriptedTeleport
+{
+  std::mutex mtx;
+  bool pending = false;
+  double x = 0.0, y = 0.0, yaw_deg = 0.0;
+};
+inline ScriptedTeleport scripted_teleport;
+
 // Reads harness commands from stdin:
 //   push <vx> <vy>   instantaneous base velocity change (m/s, world frame)
 // Each applied push is printed with wall + sim timestamps so runs can be
@@ -159,9 +172,23 @@ void StdinCommandThread()
       scripted_push.vy = vy;
       scripted_push.pending = true;
     }
+    else if (cmd == "teleport")
+    {
+      double x, y, yaw;
+      if (!(iss >> x >> y >> yaw))
+      {
+        std::printf("[TELEPORT] usage: teleport <x> <y> <yaw_deg>   (world frame; height + joints kept, velocities zeroed)\n");
+        continue;
+      }
+      std::lock_guard<std::mutex> lk(scripted_teleport.mtx);
+      scripted_teleport.x = x;
+      scripted_teleport.y = y;
+      scripted_teleport.yaw_deg = yaw;
+      scripted_teleport.pending = true;
+    }
     else
     {
-      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy>)\n", cmd.c_str());
+      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy> | teleport <x> <y> <yaw_deg>)\n", cmd.c_str());
     }
   }
 }
@@ -524,6 +551,32 @@ namespace
                   std::printf("[PUSH] ignored: model has no free-joint base\n");
                 }
                 scripted_push.pending = false;
+              }
+            }
+
+            // scripted teleport (homing rig): base pose set, velocities zeroed
+            {
+              std::lock_guard<std::mutex> tlk(scripted_teleport.mtx);
+              if (scripted_teleport.pending)
+              {
+                if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE)
+                {
+                  const double half = 0.5 * scripted_teleport.yaw_deg * M_PI / 180.0;
+                  d->qpos[0] = scripted_teleport.x;
+                  d->qpos[1] = scripted_teleport.y;
+                  d->qpos[3] = std::cos(half); d->qpos[4] = 0.0; d->qpos[5] = 0.0; d->qpos[6] = std::sin(half);
+                  for (int k = 0; k < 6; ++k) d->qvel[k] = 0.0;
+                  for (int k = 6; k < m->nv; ++k) d->qvel[k] = 0.0;
+                  mj_forward(m, d);
+                  std::printf("[TELEPORT] sim_t=%.3f -> x=%.3f y=%.3f yaw=%.1f deg (z kept %.3f, velocities zeroed)\n",
+                              d->time, scripted_teleport.x, scripted_teleport.y, scripted_teleport.yaw_deg, d->qpos[2]);
+                  std::fflush(stdout);
+                }
+                else
+                {
+                  std::printf("[TELEPORT] ignored: model has no free-joint base\n");
+                }
+                scripted_teleport.pending = false;
               }
             }
 
