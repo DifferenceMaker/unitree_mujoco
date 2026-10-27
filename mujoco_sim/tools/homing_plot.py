@@ -30,6 +30,7 @@ C = {"FAR": "#2a78d6", "ALIGN": "#eda100", "APPROACH": "#1baf7a", "PULSE": "#e87
      "SETTLE": "#9a9893", "cmd": "#2a78d6", "meas": "#eb6834", "truth": "#9a9893", "table": "#e5e3dd", "ink": "#0b0b0b", "muted": "#52514e",
      "grid": "#e8e6e1"}
 PHASES = ["FAR", "ALIGN", "APPROACH", "PULSE", "HOLD", "SWITCHING", "SETTLE"]
+STOP_DIST_M = float(os.environ.get("HOMING_STOP_DIST", "0.35")); TORSO_FRONT_M = float(os.environ.get("HOMING_TORSO_FRONT", "0.15"))
 
 
 def load(args):
@@ -133,6 +134,8 @@ def plot_map(rows, trajs, out, title):
     offs = [abs(v) * 100 for r in rows for v in offset(r.get("final_err"))[:2] + offset(r.get("err_at_switch"))[:2] if v is not None]
     lim = max(12.0, math.ceil(1.15 * max(offs) / 5) * 5) if offs else 20.0
     az.set_xlim(-lim, lim); az.set_ylim(-lim, lim)
+    edge = (STOP_DIST_M + TORSO_FRONT_M) * 100
+    az.annotate(f"table edge {edge:.0f} cm this way ->", (lim, 0), xytext=(-6, 6), textcoords="offset points", ha="right", fontsize=8, color=C["muted"])
     az.set_xlabel("fwd offset from the stop [cm]  (+ = towards the table)", color=C["muted"], fontsize=9)
     az.set_ylabel("left offset [cm]  (+ = left of the approach line)", color=C["muted"], fontsize=9)
     az.set_title("stop zone: switch (open) -> settled (filled; tick = heading)\nboxes = +-3 cm (solid) / +-5 cm (dashed)", fontsize=10, color=C["ink"], loc="left")
