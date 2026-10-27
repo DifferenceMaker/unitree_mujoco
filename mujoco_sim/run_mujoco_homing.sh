@@ -18,4 +18,5 @@ export ASPIRED_VENV="${ASPIRED_VENV:-$REPOS/Aspired_Robot_Project/.venv}"
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "${1:-}" == "stop" ]]; then exec bash "$SIM/run_mujoco_loco_switch.sh" stop; fi
 rm -f "$SIM/logs/.homing_cmd"; : > "$SIM/logs/.homing_cmd"; touch "$SIM/logs/homing_trials.jsonl"   # host-owned: the container (root) must not create them
+mkdir -p "$SIM/logs/homing_traj" "$SIM/logs/homing_plots"   # trajectory CSVs (written by the container) + the plots (host)
 exec bash "$SIM/run_mujoco_loco_switch.sh" --desk --walk "${HOMING_WALK:-lm7f_kit_footbonus6_still}" --balance "${HOMING_BALANCE:-p14h_stancewide}" "$@"

@@ -145,6 +145,7 @@ elif [ "$MODE" = "h" ]; then
     PYTHONPATH="/workspace/.global${SDK_PYTHONPATH:+:$SDK_PYTHONPATH}:${PYTHONPATH:-}" \
     HOMING_CMD_FILE="${HOMING_CMD_FILE:-/unitree_mujoco/mujoco_sim/logs/.homing_cmd}" \
     HOMING_LOG="${HOMING_LOG:-/unitree_mujoco/mujoco_sim/logs/homing_trials.jsonl}" \
+    HOMING_TRAJ_DIR="${HOMING_TRAJ_DIR:-/unitree_mujoco/mujoco_sim/logs/homing_traj}" \
     HOMING_BALANCE="${HOMING_BALANCE-${MM_SWITCH_POLICIES%%[,;]*}}" HOMING_WALK="$MM_POLICY" \
     python3 /workspace/MovementModule/Utils/homing_commander.py --pose "${HOMING_POSE:-sim}" ) & PIDS+=($!)
 else
