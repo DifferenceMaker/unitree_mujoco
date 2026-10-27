@@ -32,7 +32,8 @@ import math,random; random.seed($SEED*1000+$t)
 d=random.uniform($DMIN,$DMAX); th=math.radians($GPSI)+math.pi+math.radians(random.uniform(-60,60))
 print(f'{$GX+d*math.cos(th):.3f} {$GY+d*math.sin(th):.3f} {random.uniform(-180,180):.1f}')")"
   echo "=== trial $t: teleport to ($SX, $SY, $SYAW deg), goal ($GOAL)"
-  if [[ $t -gt 1 ]]; then echo "walk" >> "$CMD"; wait_active "$WALK" 20 || echo "   !! walk policy not active after 20 s (continuing)"; sleep 1; fi
+  # every trial starts under the WALK policy (the previous trial, or a hand run, may have ended in balance)
+  if ! wait_active "$WALK" 1; then echo "walk" >> "$CMD"; wait_active "$WALK" 20 || echo "   !! walk policy not active after 20 s (continuing)"; sleep 1; fi
   echo "teleport $SX $SY $SYAW" > "$SFIFO"; sleep 2.0
   n0=$(mark); echo "goto $GOAL" >> "$CMD"
   if wait_result "$n0" $((120 + SETTLE)); then tail -1 "$JL" | python3 -c "

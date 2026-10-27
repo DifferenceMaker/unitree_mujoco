@@ -1,0 +1,36 @@
+policies: walk=lm7f_kit_footbonus6_still balance=  goal=(0.35 0 0)  trials=10  starts 3.0-5.0 m  seed 1
+=== trial 1: teleport to (-2.417, 3.667, 93.7 deg), goal (0.35 0 0)
+   ARRIVED                t=69.85s switch@59.84s  at switch: planar 0.063 m head -1.18 deg | settled: planar 0.085 m (along -0.05, lat 0.069) head -3.63 deg
+=== trial 2: teleport to (-3.637, 0.664, -100.5 deg), goal (0.35 0 0)
+   ARRIVED                t=29.05s switch@19.04s  at switch: planar 0.035 m head -0.62 deg | settled: planar 0.069 m (along 0.01, lat 0.068) head 2.06 deg
+=== trial 3: teleport to (-3.474, 1.155, 79.9 deg), goal (0.35 0 0)
+   ARRIVED                t=30.68s switch@20.66s  at switch: planar 0.056 m head -2.96 deg | settled: planar 0.068 m (along -0.06, lat -0.03) head 2.8 deg
+=== trial 4: teleport to (-1.735, -3.227, 40.8 deg), goal (0.35 0 0)
+   ARRIVED                t=28.17s switch@18.16s  at switch: planar 0.03 m head -0.18 deg | settled: planar 0.082 m (along 0.015, lat 0.081) head -6.16 deg
+=== trial 5: teleport to (-2.290, -2.960, 13.5 deg), goal (0.35 0 0)
+   ARRIVED                t=29.29s switch@19.28s  at switch: planar 0.037 m head 0.46 deg | settled: planar 0.062 m (along -0.06, lat 0.017) head -1.08 deg
+=== trial 6: teleport to (-2.763, 1.988, -175.5 deg), goal (0.35 0 0)
+   ARRIVED                t=30.43s switch@20.42s  at switch: planar 0.017 m head -0.08 deg | settled: planar 0.075 m (along 0.036, lat 0.066) head 6.24 deg
+=== trial 7: teleport to (-3.459, -2.773, 33.8 deg), goal (0.35 0 0)
+   ARRIVED                t=27.95s switch@17.94s  at switch: planar 0.021 m head -0.39 deg | settled: planar 0.12 m (along -0.029, lat 0.117) head 2.04 deg
+=== trial 8: teleport to (-1.967, -3.309, -57.5 deg), goal (0.35 0 0)
+   ARRIVED                t=31.58s switch@21.57s  at switch: planar 0.036 m head -0.83 deg | settled: planar 0.076 m (along 0.001, lat 0.076) head 4.84 deg
+=== trial 9: teleport to (-3.009, 0.089, -152.1 deg), goal (0.35 0 0)
+   ARRIVED                t=31.56s switch@21.55s  at switch: planar 0.035 m head -0.7 deg | settled: planar 0.089 m (along -0.021, lat 0.086) head -6.01 deg
+=== trial 10: teleport to (-2.837, -2.949, -91.1 deg), goal (0.35 0 0)
+   ARRIVED                t=55.79s switch@45.78s  at switch: planar 0.031 m head -2.3 deg | settled: planar 0.029 m (along -0.029, lat 0.001) head -1.8 deg
+
+=== SUMMARY (/home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/homing_trials.jsonl)
+trials 10  ARRIVED 10  other: []
+trial          start (x y yaw) result                  t_tot   t_sw planar@sw  head@sw  planar   along     lat    head
+    1   [-2.422, 3.704, 79.24] ARRIVED                 69.85  59.84     0.063    -1.18   0.085   -0.05   0.069   -3.63
+    2 [-3.617, 0.643, -101.36] ARRIVED                 29.05  19.04     0.035    -0.62   0.069    0.01   0.068    2.06
+    3   [-3.454, 1.192, 73.32] ARRIVED                 30.68  20.66     0.056    -2.96   0.068   -0.06   -0.03     2.8
+    4  [-1.697, -3.217, 34.01] ARRIVED                 28.17  18.16      0.03    -0.18   0.082   0.015   0.081   -6.16
+    5  [-2.255, -2.957, 10.88] ARRIVED                 29.29  19.28     0.037     0.46   0.062   -0.06   0.017   -1.08
+    6 [-2.777, 1.965, -176.02] ARRIVED                 30.43  20.42     0.017    -0.08   0.075   0.036   0.066    6.24
+    7  [-3.419, -2.766, 28.01] ARRIVED                 27.95  17.94     0.021    -0.39    0.12  -0.029   0.117    2.04
+    8 [-1.935, -3.319, -58.19] ARRIVED                 31.58  21.57     0.036    -0.83   0.076   0.001   0.076    4.84
+    9 [-3.041, 0.075, -151.55] ARRIVED                 31.56  21.55     0.035     -0.7   0.089  -0.021   0.086   -6.01
+   10  [-2.844, -2.989, -91.6] ARRIVED                 55.79  45.78     0.031     -2.3   0.029  -0.029   0.001    -1.8
+settled over ARRIVED: planar mean 0.075 max 0.120 m | |heading| mean 3.67 max 6.24 deg | time mean 36.4 s | pass (<=0.05 m, <=2 deg): 1/10
