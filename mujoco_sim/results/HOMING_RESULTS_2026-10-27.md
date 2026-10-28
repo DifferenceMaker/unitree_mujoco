@@ -139,3 +139,18 @@ identical over 222 500 frames. Cost: with the commander in the per-period wait c
 the per-frame wall time (profile the setter tick, the pose JSON, MM's poll loop).
 Forensic tooling kept (env-gated): `SIM_TRACE=<file>` (per-frame FNV hashes of ctrl/qpos/qvel), `MM_TRACE=<file>` (per-step obs/action
 hashes + cmd), `BRIDGE_TRACE=<file>`; `scratchpad … compare_batches.py` compares batches record by record.
+
+## Parity re-check 2026-10-28 evening — lock-step vs wall-clock, like for like (same commander, same trial scheduler, headless both)
+The 10-28 morning "stand drift gap" (lock-step −2.9 cm vs the 10-27 GUI batches −6…−7 cm) does not survive a like-for-like control: two
+wall-clock HEADLESS batches (`LOCOSW_HEADLESS=1`, wall-paced, seed 1, n 10, instances 1 and 2 at once, the commander's scheduler clock fixed)
+against the lock-step batch of the same evening (det12_B, bit-identical to det12_C on another instance):
+
+| batch | arrived | @switch planar median | settled planar mean / max | left offset mean | gain vx | wz L / R | stand after the switch left / turned |
+|---|---|---|---|---|---|---|---|
+| det12_B lock-step | 10/10 | 0.033 | 0.091 / 0.162 | −0.075 | 0.87 | 0.39 / 0.67 | −0.051 m / −1.07° |
+| wall3_A wall-clock | 10/10 | 0.027 | 0.081 / 0.186 | −0.069 | 0.87 | 0.36 / 0.66 | −0.049 m / −1.17° |
+| wall3_B wall-clock | 9/10 | 0.025 | 0.072 / 0.138 | −0.056 | 0.87 | 0.38 / 0.64 | −0.047 m / −3.36° |
+
+Every lock-step mean sits inside or next to the wall-clock pair's spread; the stand after the switch agrees to 0.4 cm. The 10-27 GUI
+numbers were produced by the earlier commander (no one-command-per-step rule, wall-timed trial sequencing), not by a different physics.
+Lock-step rtf 1.67; wall-clock rtf 1.00 by construction. Parity: PASS on every column.
