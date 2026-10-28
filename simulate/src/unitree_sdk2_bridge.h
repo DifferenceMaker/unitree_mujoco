@@ -18,10 +18,17 @@
 #include "physics_joystick.h"
 #include "walk_hud.h"
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <deque>
 
 // Lock-step (2026-10-28): count received lowcmd messages so the headless loop can step one
 // physics frame per command (post_communication runs inside the subscription's lock).
+// lock-step wake-up: the headless loop sleeps on this condition variable and is woken by the DDS receive thread the moment the
+// next lowcmd lands (2026-10-28 evening: replaces a 20 us sleep-poll whose real granularity was ~70 us per frame)
+inline std::mutex& lockstep_cmd_mutex() { static std::mutex m; return m; }
+inline std::condition_variable& lockstep_cmd_cv() { static std::condition_variable cv; return cv; }
+
 template <class Base>
 class CountedSub : public Base
 {
@@ -29,7 +36,11 @@ public:
     using Base::Base;
     std::atomic<uint64_t> seq{0};
 protected:
-    void post_communication() override { seq.fetch_add(1, std::memory_order_relaxed); }
+    void post_communication() override
+    {
+        { const std::lock_guard<std::mutex> lk(lockstep_cmd_mutex()); seq.fetch_add(1, std::memory_order_release); }
+        lockstep_cmd_cv().notify_all();
+    }
 };
 
 #define MOTOR_SENSOR_NUM 3

@@ -631,6 +631,8 @@ namespace
                   };
                   add_body("lw", lw_id); add_body("rw", rw_id);
                   add_body("fl", fl_id); add_body("fr", fr_id);
+                  // foot body indices into "xb"/"vb"/"wb"/"cf" (the staircase exam reads the feet's world yaw rate + floor contact)
+                  if (n > 0 && n < jscap - 64) n += std::snprintf(js + n, jscap - n, ",\"fli\":%d,\"fri\":%d", fl_id, fr_id);
                   add_body("tl", tl_id); add_body("tr", tr_id);
                   // ---- v4: all bodies — world position "xb", linear "vb" and angular
                   // "wb" velocity (mj_objectVelocity, world frame), and "cf" = net
@@ -927,6 +929,9 @@ namespace
     std::fflush(stdout);
     uint64_t last_seq = g_bridge->lowcmd_seq();
     uint64_t frames = 0, timeouts = 0, extra_cmds = 0;
+    // per-frame wait profile (2026-10-28 evening): how long the sim waits for the stack after a POLICY-frame lowstate
+    // (tick % 20 ms == 0: MovementModule steps on it) vs after any other frame (setter tick only)
+    double wait_pol_us = 0.0, wait_oth_us = 0.0; uint64_t n_pol = 0, n_oth = 0; bool last_state_policy = false;
     const char* band_flag_path = std::getenv("ARCHB_BAND_RELEASE_FILE");
     if (band_flag_path && !band_flag_path[0]) band_flag_path = nullptr;
     // SIM_TRACE=<file>: per-frame FNV-1a hashes of qpos / qvel / ctrl (determinism forensics: the first differing frame between two runs)
@@ -949,11 +954,14 @@ namespace
       {
         // wait for the next command on the wire (one per frame from the lock-step Bridge setter), or the fallback
         const auto t0 = std::chrono::steady_clock::now();
-        while (g_bridge->lowcmd_seq() <= last_seq)
         {
-          if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > fallback_ms) { ++timeouts; break; }
-          std::this_thread::sleep_for(std::chrono::microseconds(20));
+          // sleep until the DDS receive thread signals the next lowcmd (no poll granularity), bounded by the fallback
+          std::unique_lock<std::mutex> lk(lockstep_cmd_mutex());
+          lockstep_cmd_cv().wait_for(lk, std::chrono::duration<double, std::milli>(fallback_ms), [&] { return g_bridge->lowcmd_seq() > last_seq; });
         }
+        if (g_bridge->lowcmd_seq() <= last_seq) ++timeouts;
+        const double waited_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
+        if (last_state_policy) { wait_pol_us += waited_us; ++n_pol; } else { wait_oth_us += waited_us; ++n_oth; }
         const uint64_t seq = g_bridge->lowcmd_seq();
         if (seq > last_seq + 1) extra_cmds += seq - last_seq - 1;   // more than one command per frame = the setter is not lock-stepped
         last_seq = seq;
@@ -989,6 +997,7 @@ namespace
                                 (unsigned long long)fnv(d->ctrl, m->nu), (unsigned long long)fnv(d->qpos, m->nq), (unsigned long long)fnv(d->qvel, m->nv));
         mj_step(m, d);
         g_bridge->publish_state();
+        last_state_policy = ((static_cast<long long>(std::llround(d->time * 1000.0))) % 20) == 0;   // the lowstate just published carries this tick
       }
       ++frames;
       if (trace && (frames % 500) == 0) std::fflush(trace);
@@ -996,8 +1005,10 @@ namespace
       const double wall = std::chrono::duration<double>(now - t_report).count();
       if (wall >= report_s)
       {
-        std::printf("[HEADLESS] sim_t=%.1f s  rtf=%.2f  frames=%llu  cmd_timeouts=%llu  extra_cmds=%llu\n",
-                    d->time, (d->time - sim_t_report) / wall, (unsigned long long)frames, (unsigned long long)timeouts, (unsigned long long)extra_cmds);
+        std::printf("[HEADLESS] sim_t=%.1f s  rtf=%.2f  frames=%llu  cmd_timeouts=%llu  extra_cmds=%llu  wait/frame: policy %.0f us (n=%llu) other %.0f us (n=%llu)\n",
+                    d->time, (d->time - sim_t_report) / wall, (unsigned long long)frames, (unsigned long long)timeouts, (unsigned long long)extra_cmds,
+                    n_pol ? wait_pol_us / n_pol : 0.0, (unsigned long long)n_pol, n_oth ? wait_oth_us / n_oth : 0.0, (unsigned long long)n_oth);
+        wait_pol_us = wait_oth_us = 0.0; n_pol = n_oth = 0;
         std::fflush(stdout);
         t_report = now; sim_t_report = d->time;
       }

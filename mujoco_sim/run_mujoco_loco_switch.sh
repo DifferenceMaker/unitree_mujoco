@@ -69,9 +69,14 @@ while [[ $# -gt 0 ]]; do case "$1" in
   *) echo "unknown arg: $1"; exit 1;;
 esac; done
 
-KFIFO="$SIM/logs/.teleop_keys"
-SFIFO="$SIM/logs/.sim_stdin"
-CONTAINER="archb_locosw"
+# ── instances (2026-10-28): LOCOSW_INSTANCE=k -> own DDS domains / names / files, so N rigs run side by side on one box ──
+INST="${LOCOSW_INSTANCE:-}"; SFX="${INST:+_$INST}"; K="${INST:-0}"
+SDK_DOM="${LOCOSW_SDK_DOMAIN:-$((1 + K))}"            # unitree-SDK DDS domain of this rig's sim + Bridge + commander (real robot = 0)
+ROS_DOM="${ARCHB_ROS_DOMAIN:-$((77 + K))}"
+KFIFO="$SIM/logs/.teleop_keys$SFX"
+SFIFO="$SIM/logs/.sim_stdin$SFX"
+CONTAINER="archb_locosw$SFX"
+MJ_PIDFILE="$SIM/logs/.mj_pid$SFX"
 TV_PY="${TV_PY:-$HOME/miniconda3/envs/tv/bin/python}"
 
 if [[ "$PROFILE" == "keys" ]]; then
@@ -84,7 +89,8 @@ if [[ "$PROFILE" == "keys" ]]; then
 fi
 if [[ "$PROFILE" == "stop" ]]; then
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  pkill -x unitree_mujoco 2>/dev/null || true
+  if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { kill "$(cat "$MJ_PIDFILE")" 2>/dev/null; rm -f "$MJ_PIDFILE"; }
+  else pkill -x unitree_mujoco 2>/dev/null || true; fi
   pkill -f "balance_metrics.py" 2>/dev/null || true
   echo "stopped."; exit 0
 fi
@@ -150,18 +156,19 @@ echo ">>> [scene] robot_scene -> $SCENE (LOCOSW_SCENE overrides)"
 
 # ── sweep leftovers from an aborted run ──────────────────────────────────────
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-pkill -x unitree_mujoco 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"
+if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { kill "$(cat "$MJ_PIDFILE")" 2>/dev/null && echo ">>> [sweep] killed this instance's leftover sim"; rm -f "$MJ_PIDFILE"; }
+else pkill -x unitree_mujoco 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"; fi
 pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [sweep] killed a leftover balance_metrics"
 
 LOG_DIR="$SIM/logs"; mkdir -p "$LOG_DIR"
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
-MJ_LOG="$LOG_DIR/mujoco_locosw_$STAMP.log"
-STACK_LOG="$LOG_DIR/stack_locosw_$STAMP.log"
-METRICS_LOG="$LOG_DIR/locosw_metrics_$STAMP.log"
-BAND_FLAG="$SIM/logs/.band_release"
-BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release"
-ln -sfn "$STACK_LOG" "$LOG_DIR/stack_locosw_latest.log"
-ln -sfn "$METRICS_LOG" "$LOG_DIR/locosw_metrics_latest.log"
+MJ_LOG="$LOG_DIR/mujoco_locosw_$STAMP$SFX.log"
+STACK_LOG="$LOG_DIR/stack_locosw_$STAMP$SFX.log"
+METRICS_LOG="$LOG_DIR/locosw_metrics_$STAMP$SFX.log"
+BAND_FLAG="$SIM/logs/.band_release$SFX"
+BAND_FLAG_CTR="/unitree_mujoco/mujoco_sim/logs/.band_release$SFX"
+ln -sfn "$STACK_LOG" "$LOG_DIR/stack_locosw_latest$SFX.log"
+ln -sfn "$METRICS_LOG" "$LOG_DIR/locosw_metrics_latest$SFX.log"
 
 cleanup() {
   [[ -n "${METRICS_PID:-}" ]] && { kill -INT "$METRICS_PID" 2>/dev/null; sleep 1; }   # -> RUN SUMMARY (falls, touchdowns)
@@ -196,7 +203,7 @@ sleep infinity > "$SFIFO" & SHOLD_PID=$!
 LOCKSTEP="${LOCOSW_LOCKSTEP:-0}"
 if [[ "$LOCKSTEP" == "1" ]]; then
   LOCKSTEP_ENV=(SIM_HEADLESS=1 SIM_LOCKSTEP=1 SIM_LOCKSTEP_ACT_DELAY_FRAMES="${SIM_LOCKSTEP_ACT_DELAY_FRAMES:-2}" SIM_LOCKSTEP_FALLBACK_MS="${SIM_LOCKSTEP_FALLBACK_MS:-120000}" SIM_LOCKSTEP_REPORT_S="${SIM_LOCKSTEP_REPORT_S:-10}" ${SIM_TRACE:+SIM_TRACE="$SIM_TRACE"})
-  echo ">>> [1] launching unitree_mujoco HEADLESS LOCK-STEP (h1_2, $SCENE) on lo, domain 1 — act delay ${SIM_LOCKSTEP_ACT_DELAY_FRAMES:-2} frames; stdin <- $SFIFO"
+  echo ">>> [1] launching unitree_mujoco HEADLESS LOCK-STEP (h1_2, $SCENE) on lo, SDK domain $SDK_DOM, ROS domain $ROS_DOM${INST:+, instance $INST} — act delay ${SIM_LOCKSTEP_ACT_DELAY_FRAMES:-2} frames; stdin <- $SFIFO"
 elif [[ "${LOCOSW_HEADLESS:-0}" == "1" ]]; then
   LOCKSTEP_ENV=(SIM_HEADLESS=1 SIM_LOCKSTEP_REPORT_S="${SIM_LOCKSTEP_REPORT_S:-10}")   # headless but wall-clock paced: the stack unchanged (the headless loop's own control)
   echo ">>> [1] launching unitree_mujoco HEADLESS free-running (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
@@ -206,8 +213,9 @@ else
 fi
 ( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 "${LOCKSTEP_ENV[@]}" \
     ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ARCHB_RECORD_FILE="$RECORD_FILE" \
-    "$MJ_BIN" -r h1_2 -i 1 -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &
+    "$MJ_BIN" -r h1_2 -i "$SDK_DOM" -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
+echo "$MJ_PID" > "$MJ_PIDFILE"
 echo "    pid $MJ_PID, log $MJ_LOG"
 sleep 3
 if ! kill -0 "$MJ_PID" 2>/dev/null; then
@@ -236,8 +244,8 @@ fi
   echo ""; echo ">>> [watchdog] sim died — tearing down the stack"
   docker rm -f "$CONTAINER" >/dev/null 2>&1 ) &
 
-if [[ "$METRICS" = "1" && -x "$TV_PY" ]]; then
-  "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain 1 --xml "$XML" \
+if [[ "$METRICS" = "1" && "$LOCKSTEP" != "1" && -x "$TV_PY" ]]; then
+  "$TV_PY" "$SIM/tools/balance_metrics.py" --iface lo --domain "$SDK_DOM" --xml "$XML" \
       --mode switch < /dev/null > "$METRICS_LOG" 2>&1 &
   METRICS_PID=$!
   echo ">>> [1b] balance_metrics headless (pid $METRICS_PID; falls/touchdowns -> $METRICS_LOG)"
@@ -245,8 +253,10 @@ fi
 # walk_hud gauge feeder (the walk rig's): the container's walk_teleop has no unitree_sdk2py, so a host
 # mirror tails the stack log and publishes rt/wirelesscontroller -- the bottom-right vx/vy/wz gauges
 # auto-hide without it (missing here until 2026-10-12: "the tracking gauges don't show up")
-( sleep 6; "$TV_PY" "$SIM/tools/wc_mirror.py" "$STACK_LOG" 1 lo ) > "$LOG_DIR/wc_mirror_locosw_$STAMP.log" 2>&1 &
-WC_PID=$!
+if [[ "$LOCKSTEP" != "1" ]]; then
+  ( sleep 6; "$TV_PY" "$SIM/tools/wc_mirror.py" "$STACK_LOG" "$SDK_DOM" lo ) > "$LOG_DIR/wc_mirror_locosw_$STAMP$SFX.log" 2>&1 &
+  WC_PID=$!
+fi
 
 echo ">>> [2] REAL Arch B stack: BridgeModule --sim + MovementModule [$WALK_NAME active, $BALANCE shadow] + walk_teleop$([[ $ARMS -eq 1 ]] && echo ' + arm_ik_commander (gated on the balance policy; alt-click = reach target)')"
 echo "    switch:  docker exec $CONTAINER bash -c 'source /opt/ros/humble/setup.bash; ros2 topic pub --once /MovementModule/policy std_msgs/String \"data: $BALANCE\"'"
@@ -255,8 +265,9 @@ echo "    push:    echo \"push 0.5 0\" > $SFIFO"
 echo "    scenario: bash $SIM/tools/loco_switch_scenario.sh"
 echo "    stack log: $STACK_LOG"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
-  -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
-  -e BRIDGE_DDS_DOMAIN=1 \
+  -e ROS_DOMAIN_ID="$ROS_DOM" -e ROS_LOCALHOST_ONLY=1 \
+  -e BRIDGE_DDS_DOMAIN="$SDK_DOM" -e SIM_DDS_DOMAIN="$SDK_DOM" ${INST:+-e LOCOSW_INSTANCE="$INST"} \
+  ${HOMING_CMD_FILE:+-e HOMING_CMD_FILE="$HOMING_CMD_FILE"} ${HOMING_LOG:+-e HOMING_LOG="$HOMING_LOG"} ${HOMING_STAIRS_LOG:+-e HOMING_STAIRS_LOG="$HOMING_STAIRS_LOG"} \
   -e BRIDGE_LOCKSTEP="$LOCKSTEP" -e BRIDGE_LOCKSTEP_WAIT_S="${BRIDGE_LOCKSTEP_WAIT_S:-120}" ${MM_TRACE:+-e MM_TRACE="$MM_TRACE"} ${BRIDGE_TRACE:+-e BRIDGE_TRACE="$BRIDGE_TRACE"} -e MM_ORT_THREADS="${MM_ORT_THREADS:-$([[ "$LOCKSTEP" == 1 ]] && echo 1 || echo 0)}" -e MM_CLOCK="$([[ "$LOCKSTEP" == 1 ]] && echo sim || echo wall)" -e HOMING_CLOCK="$([[ "$LOCKSTEP" == 1 ]] && echo sim || echo wall)" \
   -e MODE="${LOCOSW_MODE:-w}" -e ARCHB_DEBUG="$DEBUG" -e ARCHB_ARM_IK="$ARMS" \
   ${HOMING_POSE:+-e HOMING_POSE="$HOMING_POSE"} ${HOMING_BALANCE+-e HOMING_BALANCE="$HOMING_BALANCE"} ${HOMING_VMAX:+-e HOMING_VMAX="$HOMING_VMAX"} ${HOMING_POSE_NOISE_XY:+-e HOMING_POSE_NOISE_XY="$HOMING_POSE_NOISE_XY"} ${HOMING_POSE_NOISE_YAW:+-e HOMING_POSE_NOISE_YAW="$HOMING_POSE_NOISE_YAW"} ${HOMING_POSE_BIAS_XY:+-e HOMING_POSE_BIAS_XY="$HOMING_POSE_BIAS_XY"} ${HOMING_TORSO_FRONT:+-e HOMING_TORSO_FRONT="$HOMING_TORSO_FRONT"} ${HOMING_STOP_DIST:+-e HOMING_STOP_DIST="$HOMING_STOP_DIST"} ${HOMING_HOLD_S:+-e HOMING_HOLD_S="$HOMING_HOLD_S"} ${HOMING_SEED:+-e HOMING_SEED="$HOMING_SEED"} ${HOMING_TRAJ_DIR:+-e HOMING_TRAJ_DIR="$HOMING_TRAJ_DIR"} ${HOMING_TRAJ_HZ:+-e HOMING_TRAJ_HZ="$HOMING_TRAJ_HZ"} \

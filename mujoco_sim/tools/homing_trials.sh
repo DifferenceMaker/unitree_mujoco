@@ -19,8 +19,9 @@ while [[ $# -gt 0 ]]; do case "$1" in
   --n) N="$2"; shift 2;; --goal) GOAL="$2"; shift 2;; --dmin) DMIN="$2"; shift 2;; --dmax) DMAX="$2"; shift 2;;
   --seed) SEED="$2"; shift 2;; --settle) SETTLE="$2"; shift 2;; --tag) TAG="$2"; shift 2;; --no-plot) PLOT=0; shift;;
   *) echo "unknown arg: $1"; exit 1;; esac; done
-SFIFO="$SIM/logs/.sim_stdin"; CMD="$SIM/logs/.homing_cmd"; LOG="$SIM/logs/stack_locosw_latest.log"; JL="$SIM/logs/homing_trials.jsonl"
-TRAJ="$SIM/logs/homing_traj"; BENCH="$SIM/results/HOMING_BENCH.md"; STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
+SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"; CONTAINER="archb_locosw$SFX"   # instances (2026-10-28): the rig launched with the same LOCOSW_INSTANCE
+SFIFO="$SIM/logs/.sim_stdin$SFX"; CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL="$SIM/logs/homing_trials$SFX.jsonl"
+TRAJ="$SIM/logs/homing_traj$SFX"; BENCH="${HOMING_BENCH_FILE:-$SIM/results/HOMING_BENCH.md}"; STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 [[ -p "$SFIFO" ]] || { echo "FATAL: sim stdin FIFO $SFIFO missing -- is run_mujoco_homing.sh running?"; exit 2; }
 for _i in $(seq 1 120); do grep -q "\[homing\] pose=" "$LOG" 2>/dev/null && break; sleep 0.5; done
 grep -q "\[homing\] pose=" "$LOG" || { echo "FATAL: homing_commander not up in $LOG"; exit 2; }
@@ -97,10 +98,12 @@ if ok:
     print(f"trajectory: path eff mean {m(EFF)} | cruise measured mean {m(VC)} m/s | gain vx {m(GX,2)} | wz in-place gain L {m(GL,2)} R {m(GR,2)} | stand after the switch: left {m(DL)} m, turned {m(DH,2)} deg (means, signed)")
     hdr="| date | walk | balance | seed | n | arrived | @switch planar med/max m | @switch head med/max deg | settled planar mean/max m | settled head mean/max deg | settled left mean m | t mean s | path eff | cruise m/s | gain vx | gain wz L/R | stand left / turned | tag |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n"
     row=f"| {stamp} | {walk} | {bal or '(none)'} | {seed} | {len(rows)} | {len(ok)} | {md(SP)}/{mx(SP)} | {md(SH,2)}/{mx(SH,2)} | {m(P)}/{mx(P)} | {m(H,2)}/{mx(H,2)} | {m(L)} | {m(T,1)} | {m(EFF)} | {m(VC)} | {m(GX,2)} | {m(GL,2)}/{m(GR,2)} | {m(DL)} m / {m(DH,2)} deg | {tag} |\n"
-    new=not os.path.exists(bench)
+    import fcntl
     with open(bench,"a") as fh:
-        if new: fh.write("# HOMING benchmark -- one row per tools/homing_trials.sh batch (same seed = same starts; compare walk policies row by row)\n\n"+hdr)
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        if fh.tell() == 0: fh.write("# HOMING benchmark -- one row per tools/homing_trials.sh batch (same seed = same starts; compare walk policies row by row)\n\n"+hdr)
         fh.write(row)
+        fcntl.flock(fh, fcntl.LOCK_UN)
     print(f"benchmark row appended -> {bench}")
 PY
 if [[ "$PLOT" == 1 ]]; then
