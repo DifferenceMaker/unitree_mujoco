@@ -951,6 +951,7 @@ namespace
       }
       {
         const std::lock_guard<std::recursive_mutex> lock(g_headless_mtx);
+        mju_zero(d->xfrc_applied, 6 * m->nbody);   // what mjv_applyPerturbForce does every GUI step: no force outlives its frame (the released band's last pull did)
         ApplyScriptedCommands();
         PublishSidecar();
         ApplyElasticBand();

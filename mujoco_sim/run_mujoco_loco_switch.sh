@@ -189,8 +189,22 @@ fi
 sleep infinity > "$KFIFO" & KHOLD_PID=$!
 sleep infinity > "$SFIFO" & SHOLD_PID=$!
 
-echo ">>> [1] launching unitree_mujoco (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
-( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 \
+# LOCK-STEP rig (2026-10-28): LOCOSW_LOCKSTEP=1 -> the sim runs HEADLESS and steps one physics frame per lowcmd (no wall-clock
+# pacing: as fast as the stack answers, deterministic), the Bridge ticks per lowstate frame and waits for MovementModule on
+# policy frames, MovementModule / the commander keep time by the sim clock. SIM_LOCKSTEP_ACT_DELAY_FRAMES (2 = 4 ms) = the
+# robot's obs-age + action-path latency on the wire.
+LOCKSTEP="${LOCOSW_LOCKSTEP:-0}"
+if [[ "$LOCKSTEP" == "1" ]]; then
+  LOCKSTEP_ENV=(SIM_HEADLESS=1 SIM_LOCKSTEP=1 SIM_LOCKSTEP_ACT_DELAY_FRAMES="${SIM_LOCKSTEP_ACT_DELAY_FRAMES:-2}" SIM_LOCKSTEP_FALLBACK_MS="${SIM_LOCKSTEP_FALLBACK_MS:-200}" SIM_LOCKSTEP_REPORT_S="${SIM_LOCKSTEP_REPORT_S:-10}")
+  echo ">>> [1] launching unitree_mujoco HEADLESS LOCK-STEP (h1_2, $SCENE) on lo, domain 1 — act delay ${SIM_LOCKSTEP_ACT_DELAY_FRAMES:-2} frames; stdin <- $SFIFO"
+elif [[ "${LOCOSW_HEADLESS:-0}" == "1" ]]; then
+  LOCKSTEP_ENV=(SIM_HEADLESS=1 SIM_LOCKSTEP_REPORT_S="${SIM_LOCKSTEP_REPORT_S:-10}")   # headless but wall-clock paced: the stack unchanged (the headless loop's own control)
+  echo ">>> [1] launching unitree_mujoco HEADLESS free-running (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
+else
+  LOCKSTEP_ENV=()
+  echo ">>> [1] launching unitree_mujoco (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
+fi
+( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 "${LOCKSTEP_ENV[@]}" \
     ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ARCHB_RECORD_FILE="$RECORD_FILE" \
     "$MJ_BIN" -r h1_2 -i 1 -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &
 MJ_PID=$!
@@ -243,6 +257,7 @@ echo "    stack log: $STACK_LOG"
 docker run --rm --name "$CONTAINER" --network host --ipc=host \
   -e ROS_DOMAIN_ID="${ARCHB_ROS_DOMAIN:-77}" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN=1 \
+  -e BRIDGE_LOCKSTEP="$LOCKSTEP" -e MM_CLOCK="$([[ "$LOCKSTEP" == 1 ]] && echo sim || echo wall)" -e HOMING_CLOCK="$([[ "$LOCKSTEP" == 1 ]] && echo sim || echo wall)" \
   -e MODE="${LOCOSW_MODE:-w}" -e ARCHB_DEBUG="$DEBUG" -e ARCHB_ARM_IK="$ARMS" \
   ${HOMING_POSE:+-e HOMING_POSE="$HOMING_POSE"} ${HOMING_BALANCE+-e HOMING_BALANCE="$HOMING_BALANCE"} ${HOMING_VMAX:+-e HOMING_VMAX="$HOMING_VMAX"} ${HOMING_POSE_NOISE_XY:+-e HOMING_POSE_NOISE_XY="$HOMING_POSE_NOISE_XY"} ${HOMING_POSE_NOISE_YAW:+-e HOMING_POSE_NOISE_YAW="$HOMING_POSE_NOISE_YAW"} ${HOMING_POSE_BIAS_XY:+-e HOMING_POSE_BIAS_XY="$HOMING_POSE_BIAS_XY"} ${HOMING_TORSO_FRONT:+-e HOMING_TORSO_FRONT="$HOMING_TORSO_FRONT"} ${HOMING_STOP_DIST:+-e HOMING_STOP_DIST="$HOMING_STOP_DIST"} ${HOMING_HOLD_S:+-e HOMING_HOLD_S="$HOMING_HOLD_S"} ${HOMING_SEED:+-e HOMING_SEED="$HOMING_SEED"} ${HOMING_TRAJ_DIR:+-e HOMING_TRAJ_DIR="$HOMING_TRAJ_DIR"} ${HOMING_TRAJ_HZ:+-e HOMING_TRAJ_HZ="$HOMING_TRAJ_HZ"} \
   -e MM_POLICY="$WALK_NAME" -e MM_SWITCH_POLICIES="$BALANCE" \
