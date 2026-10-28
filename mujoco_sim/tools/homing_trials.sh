@@ -43,11 +43,10 @@ import math,random; random.seed($SEED*1000+$t)
 d=random.uniform($DMIN,$DMAX); th=math.radians($GPSI)+math.pi+math.radians(random.uniform(-60,60))
 print(f'{$GX+d*math.cos(th):.3f} {$GY+d*math.sin(th):.3f} {random.uniform(-180,180):.1f}')")"
   echo "=== trial $t: teleport to ($SX, $SY, $SYAW deg), goal ($GOAL)"
-  # every trial starts under the WALK policy (the previous trial, or a hand run, may have ended in balance)
-  if ! wait_active "$WALK" 1; then echo "walk" >> "$CMD"; wait_active "$WALK" 20 || echo "   !! walk policy not active after 20 s (continuing)"; sleep 1; fi
-  echo "teleport $SX $SY $SYAW" > "$SFIFO"; echo "teleport $SX $SY $SYAW" >> "$CMD"; sleep 2.0
-  n0=$(mark); echo "goto $GOAL" >> "$CMD"
-  if wait_result "$n0" $((120 + SETTLE)); then tail -1 "$JL" | python3 -c "
+  # the COMMANDER runs the trial (2026-10-28): walk policy back -> teleport at a planned SIM time (rt/sim_cmd teleport_at) ->
+  # goto HOMING_TRIAL_DROP_S later -- every input lands on a planned frame, so a lock-step batch is reproducible bit for bit
+  n0=$(mark); echo "trial $SX $SY $SYAW $GOAL" >> "$CMD"
+  if wait_result "$n0" $((150 + SETTLE)); then tail -1 "$JL" | python3 -c "
 import sys,json
 r=json.loads(sys.stdin.readline()); e=r.get('final_err') or {}; s=r.get('err_at_switch') or {}
 def off(d): return (-d['along_m'], -d['lateral_m'], -d['heading_deg']) if d else (None,)*3   # to-go error -> the robot's offset (fwd, left, CCW)

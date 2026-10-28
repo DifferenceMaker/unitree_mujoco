@@ -153,6 +153,7 @@ struct ScriptedTeleport
   std::mutex mtx;
   bool pending = false;
   double x = 0.0, y = 0.0, yaw_deg = 0.0;
+  double t_apply = -1.0;   // teleport_at: apply at the first frame with d->time >= t_apply (-1 = next frame); sim-time scheduling = determinism
 };
 inline ScriptedTeleport scripted_teleport;
 
@@ -160,47 +161,55 @@ inline ScriptedTeleport scripted_teleport;
 //   push <vx> <vy>   instantaneous base velocity change (m/s, world frame)
 // Each applied push is printed with wall + sim timestamps so runs can be
 // reproduced from the log.
-void StdinCommandThread()
+// one parser for the stdin FIFO and the rt/sim_cmd DDS topic (2026-10-28: the commander schedules teleports in SIM time)
+void HandleCommand(const std::string &line)
 {
-  std::string line;
-  while (std::getline(std::cin, line))
   {
     std::istringstream iss(line);
     std::string cmd;
     if (!(iss >> cmd))
-      continue;
+      return;
     if (cmd == "push")
     {
       double vx, vy;
       if (!(iss >> vx >> vy))
       {
         std::printf("[PUSH] usage: push <vx> <vy>   (m/s, world frame)\n");
-        continue;
+        return;
       }
       std::lock_guard<std::mutex> lk(scripted_push.mtx);
       scripted_push.vx = vx;
       scripted_push.vy = vy;
       scripted_push.pending = true;
     }
-    else if (cmd == "teleport")
+    else if (cmd == "teleport" || cmd == "teleport_at")
     {
-      double x, y, yaw;
-      if (!(iss >> x >> y >> yaw))
+      double x, y, yaw, t_at = -1.0;
+      bool ok = (cmd == "teleport") ? bool(iss >> x >> y >> yaw) : bool(iss >> t_at >> x >> y >> yaw);
+      if (!ok)
       {
-        std::printf("[TELEPORT] usage: teleport <x> <y> <yaw_deg>   (world frame; height + joints kept, velocities zeroed)\n");
-        continue;
+        std::printf("[TELEPORT] usage: teleport <x> <y> <yaw_deg> | teleport_at <sim_t> <x> <y> <yaw_deg>   (world frame; height + joints kept, velocities zeroed)\n");
+        return;
       }
       std::lock_guard<std::mutex> lk(scripted_teleport.mtx);
       scripted_teleport.x = x;
       scripted_teleport.y = y;
       scripted_teleport.yaw_deg = yaw;
+      scripted_teleport.t_apply = t_at;
       scripted_teleport.pending = true;
     }
     else
     {
-      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy> | teleport <x> <y> <yaw_deg>)\n", cmd.c_str());
+      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy> | teleport <x> <y> <yaw_deg> | teleport_at <sim_t> <x> <y> <yaw_deg>)\n", cmd.c_str());
     }
   }
+}
+
+void StdinCommandThread()
+{
+  std::string line;
+  while (std::getline(std::cin, line))
+    HandleCommand(line);
 }
 
 
@@ -475,7 +484,7 @@ namespace
             // scripted teleport (homing rig): base pose set, velocities zeroed
             {
               std::lock_guard<std::mutex> tlk(scripted_teleport.mtx);
-              if (scripted_teleport.pending)
+              if (scripted_teleport.pending && (scripted_teleport.t_apply < 0.0 || d->time >= scripted_teleport.t_apply))
               {
                 if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE)
                 {
@@ -918,6 +927,13 @@ namespace
     std::fflush(stdout);
     uint64_t last_seq = g_bridge->lowcmd_seq();
     uint64_t frames = 0, timeouts = 0, extra_cmds = 0;
+    const char* band_flag_path = std::getenv("ARCHB_BAND_RELEASE_FILE");
+    if (band_flag_path && !band_flag_path[0]) band_flag_path = nullptr;
+    // SIM_TRACE=<file>: per-frame FNV-1a hashes of qpos / qvel / ctrl (determinism forensics: the first differing frame between two runs)
+    FILE* trace = nullptr;
+    if (const char* tp = std::getenv("SIM_TRACE"); tp && tp[0]) trace = std::fopen(tp, "w");
+    auto fnv = [](const double* v, int n) { uint64_t h = 1469598103934665603ULL; const unsigned char* b = reinterpret_cast<const unsigned char*>(v);
+      for (size_t i = 0; i < sizeof(double) * n; ++i) { h ^= b[i]; h *= 1099511628211ULL; } return h; };
     auto t_report = std::chrono::steady_clock::now();
     double sim_t_report = d->time;
     {
@@ -949,6 +965,19 @@ namespace
         if (ahead > 0.0) std::this_thread::sleep_for(std::chrono::duration<double>(ahead));
         if (ahead < -0.5) { t_sync = std::chrono::steady_clock::now(); sim_sync = d->time; }   // fell behind: re-sync
       }
+      // elastic-band release: MovementModule writes the flag during its policy step, while this loop is blocked on its
+      // command, so checking here (not from a 100 ms wall-clock thread) releases on the SAME frame every run
+      if (band_flag_path && elastic_band.enable_)
+      {
+        struct stat sb;
+        if (stat(band_flag_path, &sb) == 0)
+        {
+          elastic_band.enable_ = false;
+          anchor_pub::engage_request() = true;
+          std::printf("[BAND] policy-engaged flag seen -> elastic band released (frame %llu, sim_t=%.3f)\n", (unsigned long long)frames, d->time);
+          std::fflush(stdout);
+        }
+      }
       {
         const std::lock_guard<std::recursive_mutex> lock(g_headless_mtx);
         mju_zero(d->xfrc_applied, 6 * m->nbody);   // what mjv_applyPerturbForce does every GUI step: no force outlives its frame (the released band's last pull did)
@@ -956,10 +985,13 @@ namespace
         PublishSidecar();
         ApplyElasticBand();
         g_bridge->apply_lowcmd(g_lockstep ? delay : 0);
+        if (trace) std::fprintf(trace, "%llu %.4f ctrl %016llx qpos %016llx qvel %016llx\n", (unsigned long long)frames, d->time,
+                                (unsigned long long)fnv(d->ctrl, m->nu), (unsigned long long)fnv(d->qpos, m->nq), (unsigned long long)fnv(d->qvel, m->nv));
         mj_step(m, d);
         g_bridge->publish_state();
       }
       ++frames;
+      if (trace && (frames % 500) == 0) std::fflush(trace);
       const auto now = std::chrono::steady_clock::now();
       const double wall = std::chrono::duration<double>(now - t_report).count();
       if (wall >= report_s)
@@ -1053,6 +1085,14 @@ void *UnitreeSdk2BridgeThread(void *arg)
                 reinterpret_cast<const std_msgs::msg::dds_::String_ *>(msg)->data());
           });
   policy_status_sub->InitChannel();
+  // rt/sim_cmd (2026-10-28): the same commands as stdin over DDS, so the homing commander can schedule
+  // "teleport_at <sim_t> x y yaw" in SIM time (lock-step determinism: every trial starts at a planned frame)
+  static auto sim_cmd_sub =
+      std::make_shared<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>>(
+          "rt/sim_cmd", [](const void *msg) {
+            HandleCommand(reinterpret_cast<const std_msgs::msg::dds_::String_ *>(msg)->data());
+          });
+  sim_cmd_sub->InitChannel();
 
   // Sim2sim arm-command publisher (rt/arm_pose_cmd): keyboard presets (and later
   // the mjUI GUI) publish arm poses for the controller's External mode.
@@ -1364,20 +1404,7 @@ int main(int argc, char **argv)
     unitree_thread_h.detach();
     std::thread stdin_thread_h(StdinCommandThread);
     stdin_thread_h.detach();
-    if (const char *band_flag = std::getenv("ARCHB_BAND_RELEASE_FILE"); band_flag && band_flag[0])
-    {
-      std::thread band_thread([flag = std::string(band_flag)]() {
-        struct stat sb;
-        while (stat(flag.c_str(), &sb) != 0)
-          std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        elastic_band.enable_ = false;
-        anchor_pub::engage_request() = true;
-        std::printf("[BAND] policy-engaged flag seen -> elastic band released\n");
-        std::fflush(stdout);
-      });
-      band_thread.detach();
-    }
-    HeadlessLoop();   // never returns
+    HeadlessLoop();   // never returns (the band-release flag is polled per frame inside the loop: a deterministic release frame)
     std::exit(0);
   }
 

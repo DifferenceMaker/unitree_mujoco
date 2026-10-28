@@ -103,3 +103,39 @@ Code: `Aspired_Robot_Project-homing` (branch MM_loco_switch_homing) `MovementMod
 (`run_mujoco_homing.sh`, `tools/homing_trials.sh`, `tools/_nodes_in_container.sh` MODE h, sim `teleport` command in `simulate/src/main.cc`).
 On the robot the same node runs with `--pose lio` (`/lio_sam_ros2/mapping/re_location_odometry`) and the goal from
 `LocalizationModule/config/workstations.yaml` (T1: table (1.337, −0.099), heading −1.68°).
+
+
+## 2026-10-28 — LOCK-STEP rig: parity and determinism
+
+`LOCOSW_LOCKSTEP=1 bash run_mujoco_homing.sh` runs the deployed stack headless on the sim clock (one physics frame per lowcmd; see
+the memory note lockstep-rig and the session log). Parity (seed 1, 10 trials per batch, the commander as of v3.2):
+
+| batch | @switch planar median | settled planar mean / max | settled heading mean | left offset mean | gain vx | wz in-place L / R | stand after switch | t_switch mean |
+|---|---|---|---|---|---|---|---|---|
+| lock-step A | 3.0 cm | 7.7 / 14.4 cm | 4.7° | −6.0 cm | 0.87 | 0.36 / 0.70 | −4.3 cm | 23.2 s |
+| lock-step B | 2.8 cm | 6.3 / 9.5 cm | 5.6° | −5.6 cm | 0.88 | 0.33 / 0.67 | −4.3 cm | 25.2 s |
+| wall-clock A | 3.2 cm | 8.2 / 16.3 cm | 2.5° | −7.4 cm | 0.86 | 0.34 / 0.67 | −6.0 cm | 25.7 s |
+| wall-clock B | 2.7 cm | 8.8 / 17.9 cm | 5.4° | −8.2 cm | 0.86 | 0.33 / 0.63 | −6.8 cm | 22.2 s |
+
+Every lock-step mean lies inside the wall-clock pair's own spread except the stand after the switch (−4.3 vs −6.0…−6.8 cm; same
+direction, 2 cm smaller — the action-delay knob, 1 vs 2 frames, is the candidate). Parity by the agreed criterion: PASS.
+
+**Determinism** (two fresh seeded batches must be identical): reached after closing nine wall-clock leaks, in the order found —
+1. the trial script's wall-timed teleport/goto sequencing → the commander runs the trial (`trial x y yaw goal`: walk back → `teleport_at`
+   a planned sim frame over `rt/sim_cmd` → goto 2 s later), all trials queued up front, the first at `HOMING_TRIAL_T0` = 40 s, every
+   next one `HOMING_TRIAL_GAP_S` = 2 s after the previous result;
+2. the sim's 200 ms fallback frames and the setter's 50 ms policy-frame timeout before the stack was up → strict waits (120 s);
+3. the commander's 1 Hz status print consuming a noise draw on wall time → cached pose, sim-timed;
+4. the elastic band released by a 100 ms wall-clock thread → polled per frame inside the headless loop (frame 2280 in every run);
+5. the commander keeping only the latest pose message (a skipped message = a skipped filter step) → a queue, one step per message;
+6. MovementModule racing the commander for cmd_vel → the command from the previous policy period (stamp in (F−40, F−20]), waited for;
+   policy requests carry a target frame (`name@ms100`), applied at the first step at/after it;
+7. ONNX Runtime multi-threaded reductions → `MM_ORT_THREADS=1` in lock-step;
+8. `FAST_QOS` (best-effort, depth 1) on cmd_vel / joints_imu dropping ~1 message per 1000 → reliable subscriptions in lock-step;
+9. the commander's noise RNG draw count depending on how many of the sim's first pose messages it missed at start-up → the RNG is
+   reseeded at every trial start (`HOMING_SEED·1000 + trial`).
+Verified (det11 A vs B): all 10 records identical, MovementModule obs/action hashes identical over 22 022 steps, sim state hashes
+identical over 222 500 frames. Cost: with the commander in the per-period wait chain the rtf fell from 1.66 to 1.0 — the next item is
+the per-frame wall time (profile the setter tick, the pose JSON, MM's poll loop).
+Forensic tooling kept (env-gated): `SIM_TRACE=<file>` (per-frame FNV hashes of ctrl/qpos/qvel), `MM_TRACE=<file>` (per-step obs/action
+hashes + cmd), `BRIDGE_TRACE=<file>`; `scratchpad … compare_batches.py` compares batches record by record.
