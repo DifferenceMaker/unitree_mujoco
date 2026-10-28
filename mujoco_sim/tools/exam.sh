@@ -13,11 +13,11 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-PAR=8; PIN=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1
+PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
   --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
-  --no-stairs) STAIRS=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
+  --no-stairs) STAIRS=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"
 vendor() {  # vendor <slug> -> prints the vendored policy name
@@ -44,7 +44,7 @@ worker() {  # worker <instance k>
   export LOCOSW_INSTANCE="$k"
   # CPU pinning (7950X: CPU i and i+16 share core i): <= 8 instances -> 2 cores (4 threads) each, else 1 core (2 threads) each
   if [[ $PIN -eq 1 ]]; then
-    if [[ $PAR -le 8 ]]; then local a=$(( 2 * (k - 1) )); export LOCOSW_CPUS="$a,$((a + 1)),$((a + 16)),$((a + 17))"
+    if [[ $PAR -le 8 ]]; then local a=$(( (2 * (k - 1)) % 16 )); export LOCOSW_CPUS="$a,$((a + 1)),$((a + 16)),$((a + 17))"
     else local a=$(( (k - 1) % 16 )); export LOCOSW_CPUS="$a,$((a + 16))"; fi
   fi
   while name="$(pop)"; [[ -n "$name" ]]; do
@@ -55,11 +55,14 @@ worker() {  # worker <instance k>
     (cd "$SIM" && HOMING_WALK="$name" HOMING_BALANCE="$BALANCE" LOCOSW_LOCKSTEP=1 HOMING_SEED="$SEED" METRICS=0 bash run_mujoco_homing.sh > "$EX/rig_$name.log" 2>&1 &)
     for i in $(seq 1 60); do [[ "$(readlink "$SIM/logs/stack_locosw_latest_$k.log" 2>/dev/null)" != "$link0" ]] && break; sleep 1; done
     local L="$SIM/logs/stack_locosw_latest_$k.log"; local ok=0
+    # ready = the walk policy ENGAGED (+ a short settle) or MM's BALANCE STABLE announce, whichever first: a walk policy that fidgets at a
+    # zero command never satisfies the stable gate (lm7f_kit_footbonus6 / gforce_bank on the first run) and the exam does not need it
     for i in $(seq 1 300); do
       grep -q "BALANCE STABLE" "$L" 2>/dev/null && [[ $i -gt 10 ]] && { ok=1; break; }
+      grep -q "policy ENGAGED" "$L" 2>/dev/null && [[ $i -gt 10 ]] && { sleep 6; ok=1; break; }
       grep -q "Traceback\|refused\|sim died" "$L" 2>/dev/null && [[ $i -gt 30 ]] && break; sleep 1; done
     if [[ $ok -ne 1 ]]; then
-      echo "[$k] $(date +%T) $name: !! rig did not reach BALANCE STABLE"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
+      echo "[$k] $(date +%T) $name: !! rig did not engage the policy"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
       echo "$name NO_STABLE_STAND" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
     fi
     sleep 3
@@ -80,7 +83,7 @@ worker() {  # worker <instance k>
     echo "[$k] $(date +%T) $name: done in $((t1 - t0)) s"
   done
 }
-for k in $(seq 1 "$PAR"); do worker "$k" & sleep "${EXAM_STAGGER_S:-8}"; done
+for k in $(seq "$FIRST" "$((FIRST + PAR - 1))"); do worker "$k" & sleep "${EXAM_STAGGER_S:-8}"; done   # --first-instance: leave lower instances to other work
 wait
 T_END=$(date +%s)
 echo "##### $(date +%T) EXAM DONE: $NP policies on $PAR instances in $(( (T_END - T_START) / 60 )) min $(( (T_END - T_START) % 60 )) s"
