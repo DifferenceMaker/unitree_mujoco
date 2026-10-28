@@ -13,11 +13,11 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-PAR=8; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1
+PAR=8; PIN=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
   --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
-  --no-stairs) STAIRS=0; shift;; --no-homing) HOMING=0; shift;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
+  --no-stairs) STAIRS=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"
 vendor() {  # vendor <slug> -> prints the vendored policy name
@@ -35,16 +35,21 @@ Q="$EX/queue.txt"; : > "$Q"
 for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name" >> "$Q" || echo "$slug NOT VENDORED" >> "$EX/not_vendored.txt"; done
 NP=$(wc -l < "$Q"); [[ $NP -gt 0 ]] || { echo "nothing to examine"; exit 2; }
 [[ $PAR -gt $NP ]] && PAR=$NP
-echo "##### $(date +%T) EXAM $TAG: $NP policies, $PAR instances, seed $SEED, n $N, balance $BALANCE, stairs $STAIRS homing $HOMING -> $EX"
+echo "##### $(date +%T) EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stairs $STAIRS homing $HOMING -> $EX"
 T_START=$(date +%s)
 pop() { ( flock 9; local l; l=$(head -1 "$Q"); [[ -n "$l" ]] && { tail -n +2 "$Q" > "$Q.tmp" && mv "$Q.tmp" "$Q"; echo "$l"; } ) 9>"$Q.lock"; }
 
 worker() {  # worker <instance k>
   local k="$1" name t0 t1 link0 i
   export LOCOSW_INSTANCE="$k"
+  # CPU pinning (7950X: CPU i and i+16 share core i): <= 8 instances -> 2 cores (4 threads) each, else 1 core (2 threads) each
+  if [[ $PIN -eq 1 ]]; then
+    if [[ $PAR -le 8 ]]; then local a=$(( 2 * (k - 1) )); export LOCOSW_CPUS="$a,$((a + 1)),$((a + 16)),$((a + 17))"
+    else local a=$(( (k - 1) % 16 )); export LOCOSW_CPUS="$a,$((a + 16))"; fi
+  fi
   while name="$(pop)"; [[ -n "$name" ]]; do
     t0=$(date +%s)
-    echo "[$k] $(date +%T) $name: launch"
+    echo "[$k] $(date +%T) $name: launch${LOCOSW_CPUS:+ on cpus $LOCOSW_CPUS}"
     bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; sleep 1
     link0="$(readlink "$SIM/logs/stack_locosw_latest_$k.log" 2>/dev/null)"
     (cd "$SIM" && HOMING_WALK="$name" HOMING_BALANCE="$BALANCE" LOCOSW_LOCKSTEP=1 HOMING_SEED="$SEED" METRICS=0 bash run_mujoco_homing.sh > "$EX/rig_$name.log" 2>&1 &)

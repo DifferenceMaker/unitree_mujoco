@@ -89,7 +89,7 @@ if [[ "$PROFILE" == "keys" ]]; then
 fi
 if [[ "$PROFILE" == "stop" ]]; then
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { kill "$(cat "$MJ_PIDFILE")" 2>/dev/null; rm -f "$MJ_PIDFILE"; }
+  if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { p=$(cat "$MJ_PIDFILE"); pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null; rm -f "$MJ_PIDFILE"; }
   else pkill -x unitree_mujoco 2>/dev/null || true; fi
   pkill -f "balance_metrics.py" 2>/dev/null || true
   echo "stopped."; exit 0
@@ -156,7 +156,7 @@ echo ">>> [scene] robot_scene -> $SCENE (LOCOSW_SCENE overrides)"
 
 # ── sweep leftovers from an aborted run ──────────────────────────────────────
 docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { kill "$(cat "$MJ_PIDFILE")" 2>/dev/null && echo ">>> [sweep] killed this instance's leftover sim"; rm -f "$MJ_PIDFILE"; }
+if [[ -n "$INST" ]]; then [[ -f "$MJ_PIDFILE" ]] && { p=$(cat "$MJ_PIDFILE"); pkill -P "$p" 2>/dev/null; kill "$p" 2>/dev/null && echo ">>> [sweep] killed this instance's leftover sim"; rm -f "$MJ_PIDFILE"; }
 else pkill -x unitree_mujoco 2>/dev/null && echo ">>> [sweep] killed a leftover unitree_mujoco sim"; fi
 pkill -f "balance_metrics.py" 2>/dev/null && echo ">>> [sweep] killed a leftover balance_metrics"
 
@@ -176,7 +176,7 @@ cleanup() {
   [[ -n "${KHOLD_PID:-}" ]] && kill "$KHOLD_PID" 2>/dev/null
   [[ -n "${SHOLD_PID:-}" ]] && kill "$SHOLD_PID" 2>/dev/null
   docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
-  [[ -n "${MJ_PID:-}" ]] && kill "$MJ_PID" 2>/dev/null
+  [[ -n "${MJ_PID:-}" ]] && { pkill -P "$MJ_PID" 2>/dev/null; kill "$MJ_PID" 2>/dev/null; }
   [ -e "$BAND_FLAG" ] && unlink "$BAND_FLAG"
 }
 trap cleanup EXIT INT TERM
@@ -211,9 +211,10 @@ else
   LOCKSTEP_ENV=()
   echo ">>> [1] launching unitree_mujoco (h1_2, $SCENE) on lo, domain 1 — stdin <- $SFIFO"
 fi
-( cd "$MUJOCO/simulate" && env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 "${LOCKSTEP_ENV[@]}" \
+PIN=(); [[ -n "${LOCOSW_CPUS:-}" ]] && PIN=(taskset -c "$LOCOSW_CPUS")   # instances: pin the sim (and the container below) to a core set
+( cd "$MUJOCO/simulate" && exec "${PIN[@]}" env -u WAYLAND_DISPLAY GLFW_PLATFORM=x11 "${LOCKSTEP_ENV[@]}" \
     ARCHB_BAND_RELEASE_FILE="$BAND_FLAG" ARCHB_RECORD_FILE="$RECORD_FILE" \
-    "$MJ_BIN" -r h1_2 -i "$SDK_DOM" -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &
+    "$MJ_BIN" -r h1_2 -i "$SDK_DOM" -n lo < "$SFIFO" ) >"$MJ_LOG" 2>&1 &   # exec: MJ_PID is the sim itself, not a wrapper shell (the instance stop killed only the wrapper on 2026-10-28)
 MJ_PID=$!
 echo "$MJ_PID" > "$MJ_PIDFILE"
 echo "    pid $MJ_PID, log $MJ_LOG"
@@ -264,7 +265,7 @@ echo "    drive:   bash $SIM/run_mujoco_loco_switch.sh keys   |  printf '\\033[A
 echo "    push:    echo \"push 0.5 0\" > $SFIFO"
 echo "    scenario: bash $SIM/tools/loco_switch_scenario.sh"
 echo "    stack log: $STACK_LOG"
-docker run --rm --name "$CONTAINER" --network host --ipc=host \
+docker run --rm --name "$CONTAINER" --network host --ipc=host ${LOCOSW_CPUS:+--cpuset-cpus "$LOCOSW_CPUS"} \
   -e ROS_DOMAIN_ID="$ROS_DOM" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN="$SDK_DOM" -e SIM_DDS_DOMAIN="$SDK_DOM" ${INST:+-e LOCOSW_INSTANCE="$INST"} \
   ${HOMING_CMD_FILE:+-e HOMING_CMD_FILE="$HOMING_CMD_FILE"} ${HOMING_LOG:+-e HOMING_LOG="$HOMING_LOG"} ${HOMING_STAIRS_LOG:+-e HOMING_STAIRS_LOG="$HOMING_STAIRS_LOG"} \
