@@ -17,6 +17,20 @@
 #include "param.h"
 #include "physics_joystick.h"
 #include "walk_hud.h"
+#include <atomic>
+#include <deque>
+
+// Lock-step (2026-10-28): count received lowcmd messages so the headless loop can step one
+// physics frame per command (post_communication runs inside the subscription's lock).
+template <class Base>
+class CountedSub : public Base
+{
+public:
+    using Base::Base;
+    std::atomic<uint64_t> seq{0};
+protected:
+    void post_communication() override { seq.fetch_add(1, std::memory_order_relaxed); }
+};
 
 #define MOTOR_SENSOR_NUM 3
 
@@ -44,6 +58,10 @@ public:
     }
 
     virtual void start() {}
+    // Lock-step hooks (2026-10-28): the headless loop drives the bridge instead of the 1 kHz RecurrentThread.
+    virtual uint64_t lowcmd_seq() { return 0; }
+    virtual void apply_lowcmd(int delay_frames) {}   // PD from the lowcmd received delay_frames frames ago -> ctrl
+    virtual void publish_state() {}                   // one lowstate (+ highstate / IMU / bms) from the current mj_data
 
     void printSceneInformation()
     {
@@ -212,21 +230,47 @@ public:
             "unitree_bridge", UT_CPU_ID_NONE, 1000, [this]() { this->run(); });
     }
 
+    uint64_t lowcmd_seq() override { return lowcmd->seq.load(std::memory_order_relaxed); }
+
+    void pd_from(const typename LowCmd_t::MsgType& msg)
+    {
+        for(int i(0); i<num_motor_; i++) {
+            auto & m = msg.motor_cmd()[i];
+            mj_data_->ctrl[i] = m.tau() +
+                                m.kp() * (m.q() - mj_data_->sensordata[i]) +
+                                m.kd() * (m.dq() - mj_data_->sensordata[i + num_motor_]);
+        }
+    }
+
+    // PD from the lowcmd on the wire. delay_frames > 0 (lock-step) = a wire delay: the command snapshotted
+    // delay_frames calls ago is applied (the robot's obs-age + action-path latency, ~4 ms = 2 frames at 500 Hz).
+    void apply_lowcmd(int delay_frames) override
+    {
+        if(!mj_data_) return;
+        if (delay_frames <= 0) {
+            std::lock_guard<std::mutex> lock(lowcmd->mutex_);
+            pd_from(lowcmd->msg_);
+            return;
+        }
+        {
+            std::lock_guard<std::mutex> lock(lowcmd->mutex_);
+            delay_q_.push_back(lowcmd->msg_);
+        }
+        while ((int)delay_q_.size() > delay_frames + 1) delay_q_.pop_front();
+        if ((int)delay_q_.size() == delay_frames + 1) pd_from(delay_q_.front());
+    }
+
     virtual void run()
     {
         if(!mj_data_) return;
         if(lowstate->joystick) { lowstate->joystick->update(); }
-        // lowcmd
-        {
-            std::lock_guard<std::mutex> lock(lowcmd->mutex_);
-            for(int i(0); i<num_motor_; i++) {
-                auto & m = lowcmd->msg_.motor_cmd()[i];
-                mj_data_->ctrl[i] = m.tau() +
-                                    m.kp() * (m.q() - mj_data_->sensordata[i]) +
-                                    m.kd() * (m.dq() - mj_data_->sensordata[i + num_motor_]);
-            }
-        }
+        apply_lowcmd(0);
+        publish_state();
+    }
 
+    void publish_state() override
+    {
+        if(!mj_data_) return;
         // lowstate
         if(lowstate->trylock()) {
             // walk HUD: actual yaw-frame base velocity (cmd-vs-actual bars).
@@ -330,15 +374,16 @@ public:
     std::unique_ptr<HighState_t> highstate;
     std::unique_ptr<WirelessController_t> wireless_controller;
     std::shared_ptr<LowCmd_t> lowcmd;
+    std::deque<typename LowCmd_t::MsgType> delay_q_;   // lock-step wire delay (apply_lowcmd)
     std::unique_ptr<LowState_t> lowstate;
     
 private:
     unitree::common::RecurrentThreadPtr thread_;
 };
 
-using Go2Bridge = RobotBridge<unitree::robot::go2::subscription::LowCmd, unitree::robot::go2::publisher::LowState>;
+using Go2Bridge = RobotBridge<CountedSub<unitree::robot::go2::subscription::LowCmd>, unitree::robot::go2::publisher::LowState>;
 
-class G1Bridge : public RobotBridge<unitree::robot::g1::subscription::LowCmd, unitree::robot::g1::publisher::LowState>
+class G1Bridge : public RobotBridge<CountedSub<unitree::robot::g1::subscription::LowCmd>, unitree::robot::g1::publisher::LowState>
 {
 public:
     G1Bridge(mjModel *model, mjData *data) : RobotBridge(model, data)
@@ -357,9 +402,9 @@ public:
         secondary_imustate = std::make_unique<IMUState_t>("rt/secondary_imu");
     }
 
-    void run() override
+    void publish_state() override
     {
-        RobotBridge::run();
+        RobotBridge::publish_state();
 
         // secondary IMU state
         if (secondary_imustate->trylock()) {

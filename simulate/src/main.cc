@@ -121,6 +121,16 @@ static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::Str
 //   world) — read by mujoco_sim/tools/reward_oracle.py, which runs the ISAAC reward functions on this state.
 static std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> g_sim_pose_pub;
 
+// Lock-step / headless (2026-10-28, the walk-policy benchmark rig). SIM_HEADLESS=1: no GLFW, no mj::Simulate --
+// HeadlessLoop owns model, data and the mutex. SIM_LOCKSTEP=1 (headless only): the physics advances ONE frame per
+// lowcmd received on the wire (the Bridge setter in lock-step sends exactly one per lowstate), publishes one lowstate
+// per frame stamped with sim time, and applies the command through a wire-delay FIFO of SIM_LOCKSTEP_ACT_DELAY_FRAMES
+// frames (default 2 = 4 ms, the robot's obs-age + action-path latency). Without a command for SIM_LOCKSTEP_FALLBACK_MS
+// (default 200) the frame steps anyway, so a stack that is not up yet never deadlocks the sim. Every control-side
+// clock then comes from the lowstate tick (MovementModule MM_CLOCK=sim, Bridge BRIDGE_LOCKSTEP=1).
+inline bool g_lockstep = false;
+inline UnitreeSDK2BridgeBase* g_bridge = nullptr;   // set by UnitreeSdk2BridgeThread; driven by HeadlessLoop in lock-step
+
 // Scripted push (sim2sim harness): an instantaneous world-frame base velocity
 // change requested from the stdin command thread, applied to the free-joint
 // linear DoFs inside the physics lock. Free-joint translational qvel is
@@ -433,102 +443,10 @@ namespace
   }
 
   // simulate in background thread (while rendering in main thread)
-  void PhysicsLoop(mj::Simulate &sim)
+  // ── per-step helpers shared by the GUI PhysicsLoop and the headless lock-step loop (2026-10-28) ──
+  // scripted push / teleport from the stdin command thread (applied inside the physics lock)
+  void ApplyScriptedCommands()
   {
-    // cpu-sim syncronization point
-    std::chrono::time_point<mj::Simulate::Clock> syncCPU;
-    mjtNum syncSim = 0;
-
-    // ChannelFactory::Instance()->Init(0);
-    // UnitreeDds ud(d);
-
-    // run until asked to exit
-    while (!sim.exitrequest.load())
-    {
-      if (sim.droploadrequest.load())
-      {
-        sim.LoadMessage(sim.dropfilename);
-        mjModel *mnew = LoadModel(sim.dropfilename, sim);
-        sim.droploadrequest.store(false);
-
-        mjData *dnew = nullptr;
-        if (mnew)
-          dnew = mj_makeData(mnew);
-        if (dnew)
-        {
-          sim.Load(mnew, dnew, sim.dropfilename);
-
-          mj_deleteData(d);
-          mj_deleteModel(m);
-
-          m = mnew;
-          d = dnew;
-          mj_forward(m, d);
-
-          // allocate ctrlnoise
-          free(ctrlnoise);
-          ctrlnoise = (mjtNum *)malloc(sizeof(mjtNum) * m->nu);
-          mju_zero(ctrlnoise, m->nu);
-        }
-        else
-        {
-          sim.LoadMessageClear();
-        }
-      }
-
-      if (sim.uiloadrequest.load())
-      {
-        sim.uiloadrequest.fetch_sub(1);
-        sim.LoadMessage(sim.filename);
-        mjModel *mnew = LoadModel(sim.filename, sim);
-        mjData *dnew = nullptr;
-        if (mnew)
-          dnew = mj_makeData(mnew);
-        if (dnew)
-        {
-          sim.Load(mnew, dnew, sim.filename);
-
-          mj_deleteData(d);
-          mj_deleteModel(m);
-
-          m = mnew;
-          d = dnew;
-          mj_forward(m, d);
-
-          // allocate ctrlnoise
-          free(ctrlnoise);
-          ctrlnoise = static_cast<mjtNum *>(malloc(sizeof(mjtNum) * m->nu));
-          mju_zero(ctrlnoise, m->nu);
-        }
-        else
-        {
-          sim.LoadMessageClear();
-        }
-      }
-
-      // sleep for 1 ms or yield, to let main thread run
-      //  yield results in busy wait - which has better timing but kills battery life
-      if (sim.run && sim.busywait)
-      {
-        std::this_thread::yield();
-      }
-      else
-      {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-      }
-
-      {
-        // lock the sim mutex
-        const std::unique_lock<std::recursive_mutex> lock(sim.mtx);
-
-        // run only if model is present
-        if (m)
-        {
-          // running
-          if (sim.run)
-          {
-            bool stepped = false;
-
             // scripted push (harness): apply pending base velocity change
             {
               std::lock_guard<std::mutex> plk(scripted_push.mtx);
@@ -580,6 +498,11 @@ namespace
               }
             }
 
+  }
+
+  // desk balls, grasp rig, anchor point and the rt/sim_base_pose ground-truth state (every 10th call ~ 50 Hz)
+  void PublishSidecar()
+  {
             // desk reach-target balls: reflect the live arm-targets file
             // (alt-click or hand-typed lines) at the current torso pose.
             click_target::update_balls(m, d);
@@ -683,10 +606,10 @@ namespace
                   char* js = jsbuf.data();
                   const int jscap = static_cast<int>(jsbuf.size());
                   int n = std::snprintf(js, jscap,
-                      "{\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
+                      "{\"t\":%.4f,\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
                       "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f],"
                       "\"ucnt\":%d,\"umax\":%.1f,\"th\":[%.1f,%.1f],\"fc\":[%.1f,%.1f]",
-                      d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
+                      d->time, d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
                       d->qpos[qa + 3], d->qpos[qa + 4], d->qpos[qa + 5], d->qpos[qa + 6],
                       d->qvel[va], d->qvel[va + 1], d->qvel[va + 2],
                       d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5],
@@ -761,6 +684,129 @@ namespace
               }
             }
 
+  }
+
+  // elastic band (suspension harness) force on the base link
+  void ApplyElasticBand()
+  {
+                // elastic band on base link
+                if (param::config.enable_elastic_band == 1)
+                {
+                  if (elastic_band.enable_)
+                  {
+                    std::vector<double> x = {d->qpos[0], d->qpos[1], d->qpos[2]};
+                    std::vector<double> dx = {d->qvel[0], d->qvel[1], d->qvel[2]};
+
+                    elastic_band.Advance(x, dx);
+
+                    d->xfrc_applied[param::config.band_attached_link] = elastic_band.f_[0];
+                    d->xfrc_applied[param::config.band_attached_link + 1] = elastic_band.f_[1];
+                    d->xfrc_applied[param::config.band_attached_link + 2] = elastic_band.f_[2];
+                  }
+                }
+
+  }
+
+  void PhysicsLoop(mj::Simulate &sim)
+  {
+    // cpu-sim syncronization point
+    std::chrono::time_point<mj::Simulate::Clock> syncCPU;
+    mjtNum syncSim = 0;
+
+    // ChannelFactory::Instance()->Init(0);
+    // UnitreeDds ud(d);
+
+    // run until asked to exit
+    while (!sim.exitrequest.load())
+    {
+      if (sim.droploadrequest.load())
+      {
+        sim.LoadMessage(sim.dropfilename);
+        mjModel *mnew = LoadModel(sim.dropfilename, sim);
+        sim.droploadrequest.store(false);
+
+        mjData *dnew = nullptr;
+        if (mnew)
+          dnew = mj_makeData(mnew);
+        if (dnew)
+        {
+          sim.Load(mnew, dnew, sim.dropfilename);
+
+          mj_deleteData(d);
+          mj_deleteModel(m);
+
+          m = mnew;
+          d = dnew;
+          mj_forward(m, d);
+
+          // allocate ctrlnoise
+          free(ctrlnoise);
+          ctrlnoise = (mjtNum *)malloc(sizeof(mjtNum) * m->nu);
+          mju_zero(ctrlnoise, m->nu);
+        }
+        else
+        {
+          sim.LoadMessageClear();
+        }
+      }
+
+      if (sim.uiloadrequest.load())
+      {
+        sim.uiloadrequest.fetch_sub(1);
+        sim.LoadMessage(sim.filename);
+        mjModel *mnew = LoadModel(sim.filename, sim);
+        mjData *dnew = nullptr;
+        if (mnew)
+          dnew = mj_makeData(mnew);
+        if (dnew)
+        {
+          sim.Load(mnew, dnew, sim.filename);
+
+          mj_deleteData(d);
+          mj_deleteModel(m);
+
+          m = mnew;
+          d = dnew;
+          mj_forward(m, d);
+
+          // allocate ctrlnoise
+          free(ctrlnoise);
+          ctrlnoise = static_cast<mjtNum *>(malloc(sizeof(mjtNum) * m->nu));
+          mju_zero(ctrlnoise, m->nu);
+        }
+        else
+        {
+          sim.LoadMessageClear();
+        }
+      }
+
+      // sleep for 1 ms or yield, to let main thread run
+      //  yield results in busy wait - which has better timing but kills battery life
+      if (sim.run && sim.busywait)
+      {
+        std::this_thread::yield();
+      }
+      else
+      {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      }
+
+      {
+        // lock the sim mutex
+        const std::unique_lock<std::recursive_mutex> lock(sim.mtx);
+
+        // run only if model is present
+        if (m)
+        {
+          // running
+          if (sim.run)
+          {
+            bool stepped = false;
+
+            ApplyScriptedCommands();
+
+            PublishSidecar();
+
             // record cpu time at start of iteration
             const auto startCPU = mj::Simulate::Clock::now();
 
@@ -826,21 +872,7 @@ namespace
                   measured = true;
                 }
 
-                // elastic band on base link
-                if (param::config.enable_elastic_band == 1)
-                {
-                  if (elastic_band.enable_)
-                  {
-                    std::vector<double> x = {d->qpos[0], d->qpos[1], d->qpos[2]};
-                    std::vector<double> dx = {d->qvel[0], d->qvel[1], d->qvel[2]};
-
-                    elastic_band.Advance(x, dx);
-
-                    d->xfrc_applied[param::config.band_attached_link] = elastic_band.f_[0];
-                    d->xfrc_applied[param::config.band_attached_link + 1] = elastic_band.f_[1];
-                    d->xfrc_applied[param::config.band_attached_link + 2] = elastic_band.f_[2];
-                  }
-                }
+                ApplyElasticBand();
 
                 // call mj_step
                 mj_step(m, d);
@@ -870,6 +902,72 @@ namespace
           }
         }
       } // release std::lock_guard<std::mutex>
+    }
+  }
+
+  // ── headless loop (SIM_HEADLESS=1): no GUI; lock-step when SIM_LOCKSTEP=1, else free-running at wall time ──
+  std::recursive_mutex g_headless_mtx;
+  void HeadlessLoop()
+  {
+    const int delay = [] { const char* v = std::getenv("SIM_LOCKSTEP_ACT_DELAY_FRAMES"); return v ? std::atoi(v) : 2; }();
+    const double fallback_ms = [] { const char* v = std::getenv("SIM_LOCKSTEP_FALLBACK_MS"); return v ? std::atof(v) : 200.0; }();
+    const double report_s = [] { const char* v = std::getenv("SIM_LOCKSTEP_REPORT_S"); return v ? std::atof(v) : 10.0; }();
+    while (g_bridge == nullptr) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    std::printf("[HEADLESS] loop up: dt=%.4f s/frame, lockstep=%d, act delay %d frames (%.1f ms), fallback %.0f ms\n",
+                m->opt.timestep, g_lockstep ? 1 : 0, delay, delay * m->opt.timestep * 1000.0, fallback_ms);
+    std::fflush(stdout);
+    uint64_t last_seq = g_bridge->lowcmd_seq();
+    uint64_t frames = 0, timeouts = 0, extra_cmds = 0;
+    auto t_report = std::chrono::steady_clock::now();
+    double sim_t_report = d->time;
+    {
+      const std::lock_guard<std::recursive_mutex> lock(g_headless_mtx);
+      g_bridge->publish_state();   // the first lowstate: the stack sees the robot before any command exists
+    }
+    // wall-time pacing for the non-lock-step headless mode
+    auto t_sync = std::chrono::steady_clock::now();
+    double sim_sync = d->time;
+    while (true)
+    {
+      if (g_lockstep)
+      {
+        // wait for the next command on the wire (one per frame from the lock-step Bridge setter), or the fallback
+        const auto t0 = std::chrono::steady_clock::now();
+        while (g_bridge->lowcmd_seq() <= last_seq)
+        {
+          if (std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count() > fallback_ms) { ++timeouts; break; }
+          std::this_thread::sleep_for(std::chrono::microseconds(20));
+        }
+        const uint64_t seq = g_bridge->lowcmd_seq();
+        if (seq > last_seq + 1) extra_cmds += seq - last_seq - 1;   // more than one command per frame = the setter is not lock-stepped
+        last_seq = seq;
+      }
+      else
+      {
+        // free-running: pace to wall time (no faster than real time)
+        const double ahead = (d->time - sim_sync) - std::chrono::duration<double>(std::chrono::steady_clock::now() - t_sync).count();
+        if (ahead > 0.0) std::this_thread::sleep_for(std::chrono::duration<double>(ahead));
+        if (ahead < -0.5) { t_sync = std::chrono::steady_clock::now(); sim_sync = d->time; }   // fell behind: re-sync
+      }
+      {
+        const std::lock_guard<std::recursive_mutex> lock(g_headless_mtx);
+        ApplyScriptedCommands();
+        PublishSidecar();
+        ApplyElasticBand();
+        g_bridge->apply_lowcmd(g_lockstep ? delay : 0);
+        mj_step(m, d);
+        g_bridge->publish_state();
+      }
+      ++frames;
+      const auto now = std::chrono::steady_clock::now();
+      const double wall = std::chrono::duration<double>(now - t_report).count();
+      if (wall >= report_s)
+      {
+        std::printf("[HEADLESS] sim_t=%.1f s  rtf=%.2f  frames=%llu  cmd_timeouts=%llu  extra_cmds=%llu\n",
+                    d->time, (d->time - sim_t_report) / wall, (unsigned long long)frames, (unsigned long long)timeouts, (unsigned long long)extra_cmds);
+        std::fflush(stdout);
+        t_report = now; sim_t_report = d->time;
+      }
     }
   }
 } // namespace
@@ -1037,7 +1135,13 @@ void *UnitreeSdk2BridgeThread(void *arg)
   } else {
     interface = std::make_unique<Go2Bridge>(m, d);
   }
-  interface->start();
+  g_bridge = interface.get();
+  if (g_lockstep) {
+    std::printf("[LOCKSTEP] bridge driven by the headless loop (no 1 kHz thread): one frame per lowcmd, one lowstate per frame\n");
+    std::fflush(stdout);
+  } else {
+    interface->start();
+  }
   
   while (true)
   {
@@ -1237,6 +1341,43 @@ int main(int argc, char **argv)
 
   if(param::config.robot_scene.is_relative()) {
     param::config.robot_scene = proj_dir.parent_path() / "unitree_robots" / param::config.robot / param::config.robot_scene;
+  }
+
+  // ── headless / lock-step entry (SIM_HEADLESS=1; SIM_LOCKSTEP=1 implies it) ──
+  if (const char* hl = std::getenv("SIM_HEADLESS"); (hl && hl[0] == '1') || [] { const char* l = std::getenv("SIM_LOCKSTEP"); return l && l[0] == '1'; }())
+  {
+    g_lockstep = [] { const char* l = std::getenv("SIM_LOCKSTEP"); return l && l[0] == '1'; }();
+    char err[1000] = "";
+    const std::string scene = param::config.robot_scene.string();
+    m = mj_loadXML(scene.c_str(), nullptr, err, sizeof err);
+    if (!m) { std::fprintf(stderr, "[HEADLESS] load failed: %s\n", err); std::exit(2); }
+    d = mj_makeData(m);
+    mj_forward(m, d);
+    const double total_mass = mj_getTotalmass(m);
+    std::printf("\n============================================================\n"
+                " unitree_mujoco HEADLESS%s  |  robot=%s\n scene=%s\n nq=%d  nv=%d  nbody=%d  total_mass=%.3f kg\n"
+                "============================================================\n\n",
+                g_lockstep ? " LOCK-STEP" : "", param::config.robot.c_str(), scene.c_str(), m->nq, m->nv, m->nbody, total_mass);
+    std::fflush(stdout);
+    std::thread unitree_thread_h(UnitreeSdk2BridgeThread, nullptr);
+    unitree_thread_h.detach();
+    std::thread stdin_thread_h(StdinCommandThread);
+    stdin_thread_h.detach();
+    if (const char *band_flag = std::getenv("ARCHB_BAND_RELEASE_FILE"); band_flag && band_flag[0])
+    {
+      std::thread band_thread([flag = std::string(band_flag)]() {
+        struct stat sb;
+        while (stat(flag.c_str(), &sb) != 0)
+          std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        elastic_band.enable_ = false;
+        anchor_pub::engage_request() = true;
+        std::printf("[BAND] policy-engaged flag seen -> elastic band released\n");
+        std::fflush(stdout);
+      });
+      band_thread.detach();
+    }
+    HeadlessLoop();   // never returns
+    std::exit(0);
   }
 
   // simulate object encapsulates the UI
