@@ -5,8 +5,7 @@ The exam = `tools/exam.sh` (N lock-step headless rigs): per policy **Test 1 stai
 **Test 2 homing** (`tools/homing_trials.sh --n 10 --seed 1`). Same seed = same starts; on the lock-step rig a run is reproducible bit for
 bit (det12/det13, seqA/seqB). Records: `homing_<policy>.jsonl` (one line per trial), `stairs_<policy>.jsonl` (one line per staircase),
 the 10 Hz CSVs, and the per-policy `exam/<tag>_<date>.json` written into the milestone (fleetdeck draws the sheets from it).
-Numbers are FLAGS and a ranking aid; the operator's eye on the rig is the verdict (RL Bible rule 34). Status column: live = recorded
-today; planned = in this round's implementation.
+Numbers are FLAGS and a ranking aid; the operator's eye on the rig is the verdict (RL Bible rule 34). Status column: live = recorded by the current code (the stance metrics since 2026-10-29 midday); planned = not yet.
 
 ## Test 1 — staircase (sim truth, free floor at (−3, 0, 0), 113 s of sim time)
 Segments: stand 10 s; vx 0.05 / 0.10 / 0.15 (8 s each), −0.10 (6 s); vy +0.10 / −0.10 (6 s); wz +0.3 / −0.3 / +0.5 / −0.5 / +0.8 / −0.8
@@ -25,11 +24,11 @@ Segments: stand 10 s; vx 0.05 / 0.10 / 0.15 (8 s each), −0.10 (6 s); vy +0.10 
 | swing_height | max foot rise above its segment-start height while in the air | m | < 0.02 shuffles, > 0.10 stamps | "lift looks good", "shuffle" | live |
 | z_min | lowest base height in the segment | m | < 0.55 = fell (the staircase aborts: `fell`) | "fell", "squats" | live |
 | fell | first segment and time the base went below 0.55 m | — | any = the policy fell during the script | — | live |
-| **feet separation** | lateral distance between the two ankle bodies in the base frame, mean and start→end trend per segment | m | trend < −0.03 m over the stand = the legs draw inward; mean < 0.18 narrow stance | "legs draw inward", "legs apart, good" | planned |
-| **stagger** | fore-aft offset between the feet in the base frame (left minus right), mean and \|mean\| | m | \|stagger\| > 0.08 while standing = one foot ahead of the other | "one leg in front of the other until it needs to step" | planned |
-| **toe angle L / R** | foot yaw relative to the base heading (+ = toe out), mean per segment | deg | \|toe\| > 10° = toe-out / toe-in stance; L ≠ R = asymmetric | "feet parallel", "toed out", "rotate inward" | planned |
-| **joint jitter** | std of the high-passed (sample-to-sample difference) knee and hip pitch angles over the segment, per side | deg | stand: > 0.5° = the "twerking" oscillation; walking: compare rows at equal speed | "wiggles up and down", "twerking" | planned |
-| footprint | the two feet's positions in the base frame over the stand (scatter) — drawn, not scored | m | — | the stance picture | planned |
+| **feet separation** | lateral distance between the two ankle bodies in the base frame, mean and start→end trend per segment | m | trend < −0.03 m over the stand = the legs draw inward; mean < 0.18 narrow stance | "legs draw inward", "legs apart, good" | live |
+| **stagger** | fore-aft offset between the feet in the base frame (left minus right), mean and \|mean\| | m | \|stagger\| > 0.08 while standing = one foot ahead of the other | "one leg in front of the other until it needs to step" | live |
+| **toe angle L / R** | foot yaw relative to the base heading (+ = toe out), mean per segment | deg | \|toe\| > 10° = toe-out / toe-in stance; L ≠ R = asymmetric | "feet parallel", "toed out", "rotate inward" | live |
+| **joint jitter** | std of the high-passed (sample-to-sample difference) knee and hip pitch angles over the segment, per side | deg | stand: > 0.5° = the "twerking" oscillation; walking: compare rows at equal speed | "wiggles up and down", "twerking" | live |
+| footprint | the two feet's positions in the base frame over the stand (scatter) — drawn, not scored | m | — | the stance picture | planned (fleetdeck draws separation/stagger/toe over time instead) |
 
 ## Test 2 — homing (teleport 3–5 m from the table edge, goto, balance switch at the stop, 10 s settle; 10 trials, seed 1)
 
@@ -48,7 +47,7 @@ Segments: stand 10 s; vx 0.05 / 0.10 / 0.15 (8 s each), −0.10 (6 s); vy +0.10 
 | n_turns / t_turn_s | in-place turn episodes and their total time | count, s | — | — | live |
 | n_pulses / n_realign | full-command heading pulses at the stop; re-approaches after a hold drift | count | many pulses = the small-command turn is dead | "doesn't turn at small commands" | live |
 | t_switch / t_total | sim seconds from goto to the switch / to the record | s | time score | — | live |
-| trajectory (CSV, 10 Hz) | t, phase, raw + filtered pose, commanded / measured / truth velocity, errors, distance to the pre-pose | — | the map / velocity / error sheets | — | live (2 Hz copy in the milestone JSON: planned) |
+| trajectory (CSV, 10 Hz) | t, phase, raw + filtered pose, commanded / measured / truth velocity, errors, distance to the pre-pose | — | the map / velocity / error sheets | — | live (2 Hz copy in the milestone JSON: live) |
 
 ## Score (tools/exam_report.py, 0–100; a ranking aid, the weights are a choice)
 tracking 40 = mean over the 12 staircase command segments of min(gain, 1) (a fall = 0) · placement 20 = 1 − min(settled planar mean / 0.10, 1)
@@ -60,3 +59,8 @@ once their ranges are known from the first run that records them.
 Agreement with the eye at the ends (gforce_airtime top; angmom rows + full bottom; footbonus6_still the stillest stand). The eye saw
 three things the exam did not measure: vertical "twerking" (posture) — base-z std is normal (2.7 mm standing), the oscillation is in the
 joints → joint jitter; the inward leg draw (clear9, footbonus6, drall) → feet separation; "one leg in front of the other" (airtime) → stagger.
+
+## First stance numbers (lm7f_kit_gforce_resets_posture, one staircase, 2026-10-29)
+stand 10 s: separation 0.296 m with a −2.9 cm trend (the legs draw in), stagger −7.3 cm (right foot ahead), toe L 0.4° / R 3.4°, knee jitter
+0.52 deg/sample, hip 0.21 — the "twerking" row reads 0.52; walking 0.10 m/s: knee jitter 1.05 (the gait's own swing, compare rows at equal speed).
+The ranges for a stance score come from the first full wave that records these.
