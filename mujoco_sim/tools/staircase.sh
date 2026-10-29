@@ -11,7 +11,9 @@ START=""; TO=240
 while [[ $# -gt 0 ]]; do case "$1" in --start) START="$2"; shift 2;; --timeout) TO="$2"; shift 2;; *) echo "unknown arg: $1"; exit 1;; esac; done
 SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"
 CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL="$SIM/logs/staircase$SFX.jsonl"
-for _i in $(seq 1 120); do grep -q "\[homing\] pose=" "$LOG" 2>/dev/null && break; sleep 0.5; done
+# the commander of THIS run must be up: its banner in a log NEWER than the command file (a stale "latest" symlink after a relaunch fooled
+# the hand-run smokes on 2026-10-29: the command landed before the commander took its file offset and was never read)
+for _i in $(seq 1 240); do L2="$(readlink -f "$LOG" 2>/dev/null)"; [[ -n "$L2" && "$L2" -nt "$CMD" ]] && grep -q "\[homing\] pose=" "$L2" 2>/dev/null && break; sleep 0.5; done
 grep -q "\[homing\] pose=" "$LOG" || { echo "FATAL: homing_commander not up in $LOG"; exit 2; }
 touch "$JL"; n0=$(wc -l < "$JL")
 echo "stairs $START" | sed 's/ *$//' >> "$CMD"

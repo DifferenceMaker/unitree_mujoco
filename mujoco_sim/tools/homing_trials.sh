@@ -23,7 +23,9 @@ SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"; CONTAINER="archb_locosw$SFX"   # in
 SFIFO="$SIM/logs/.sim_stdin$SFX"; CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL="$SIM/logs/homing_trials$SFX.jsonl"
 TRAJ="$SIM/logs/homing_traj$SFX"; BENCH="${HOMING_BENCH_FILE:-$SIM/results/HOMING_BENCH.md}"; STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
 [[ -p "$SFIFO" ]] || { echo "FATAL: sim stdin FIFO $SFIFO missing -- is run_mujoco_homing.sh running?"; exit 2; }
-for _i in $(seq 1 120); do grep -q "\[homing\] pose=" "$LOG" 2>/dev/null && break; sleep 0.5; done
+# the commander of THIS run must be up: its banner in a log NEWER than the command file (a stale "latest" symlink after a relaunch fooled
+# the hand-run smokes on 2026-10-29: the command landed before the commander took its file offset and was never read)
+for _i in $(seq 1 240); do L2="$(readlink -f "$LOG" 2>/dev/null)"; [[ -n "$L2" && "$L2" -nt "$CMD" ]] && grep -q "\[homing\] pose=" "$L2" 2>/dev/null && break; sleep 0.5; done
 grep -q "\[homing\] pose=" "$LOG" || { echo "FATAL: homing_commander not up in $LOG"; exit 2; }
 WALK="$(grep -m1 -o 'ACTIVE POLICY: [^:]*' "$LOG" | sed 's/ACTIVE POLICY: //')"; BAL="$(grep -m1 -o 'SHADOW POLICY[^:]*: [^:]*' "$LOG" | sed 's/.*: //')"   # "SHADOW POLICY (MM_SWITCH_POLICIES env): <name>: kind=..."
 [[ -n "$TAG" ]] || TAG="${WALK:-walk}_seed${SEED}"

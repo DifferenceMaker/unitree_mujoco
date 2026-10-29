@@ -614,11 +614,12 @@ namespace
                   static std::vector<char> jsbuf(32768);
                   char* js = jsbuf.data();
                   const int jscap = static_cast<int>(jsbuf.size());
+                  static unsigned long long pose_seq = 0;   // "seq" (2026-10-29): the commander counts gaps = dropped pose messages
                   int n = std::snprintf(js, jscap,
-                      "{\"t\":%.4f,\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
+                      "{\"seq\":%llu,\"t\":%.4f,\"p\":[%.4f,%.4f,%.4f],\"q\":[%.5f,%.5f,%.5f,%.5f],"
                       "\"v\":[%.4f,%.4f,%.4f],\"w\":[%.4f,%.4f,%.4f],"
                       "\"ucnt\":%d,\"umax\":%.1f,\"th\":[%.1f,%.1f],\"fc\":[%.1f,%.1f]",
-                      d->time, d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
+                      pose_seq++, d->time, d->qpos[qa], d->qpos[qa + 1], d->qpos[qa + 2],
                       d->qpos[qa + 3], d->qpos[qa + 4], d->qpos[qa + 5], d->qpos[qa + 6],
                       d->qvel[va], d->qvel[va + 1], d->qvel[va + 2],
                       d->qvel[va + 3], d->qvel[va + 4], d->qvel[va + 5],
@@ -633,6 +634,20 @@ namespace
                   add_body("fl", fl_id); add_body("fr", fr_id);
                   // foot body indices into "xb"/"vb"/"wb"/"cf" (the staircase exam reads the feet's world yaw rate + floor contact)
                   if (n > 0 && n < jscap - 64) n += std::snprintf(js + n, jscap - n, ",\"fli\":%d,\"fri\":%d", fl_id, fr_id);
+                  // stance sheet (2026-10-29): "fyaw" = each foot's yaw relative to the base heading (+ = toe out for the left foot's
+                  // convention left+, i.e. a plain yaw difference; the consumer applies the side sign), "qj" = the robot's joint positions
+                  // after the free joint (27 for the H1-2 walk body) for the knee / hip jitter metric
+                  {
+                    auto yaw_of_quat = [](const mjtNum* q) { return std::atan2(2.0 * (q[0] * q[3] + q[1] * q[2]), 1.0 - 2.0 * (q[2] * q[2] + q[3] * q[3])); };
+                    const double base_yaw = yaw_of_quat(d->qpos + qa + 3);
+                    auto rel = [&](int bid) { if (bid < 0) return 0.0; double y = yaw_of_quat(d->xquat + 4 * bid) - base_yaw; while (y > M_PI) y -= 2 * M_PI; while (y < -M_PI) y += 2 * M_PI; return y; };
+                    if (n > 0 && n < jscap - 64) n += std::snprintf(js + n, jscap - n, ",\"fyaw\":[%.4f,%.4f]", rel(fl_id), rel(fr_id));
+                    if (n > 0 && n < jscap - 64) {
+                      n += std::snprintf(js + n, jscap - n, ",\"qj\":[");
+                      for (int k = qa + 7; k < m->nq && n < jscap - 32; ++k) n += std::snprintf(js + n, jscap - n, "%s%.4f", k > qa + 7 ? "," : "", d->qpos[k]);
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    }
+                  }
                   add_body("tl", tl_id); add_body("tr", tr_id);
                   // ---- v4: all bodies — world position "xb", linear "vb" and angular
                   // "wb" velocity (mj_objectVelocity, world frame), and "cf" = net
@@ -1399,6 +1414,7 @@ int main(int argc, char **argv)
   if (const char* hl = std::getenv("SIM_HEADLESS"); (hl && hl[0] == '1') || [] { const char* l = std::getenv("SIM_LOCKSTEP"); return l && l[0] == '1'; }())
   {
     g_lockstep = [] { const char* l = std::getenv("SIM_LOCKSTEP"); return l && l[0] == '1'; }();
+    if (g_lockstep) lockstep_sync_publish() = true;   // synchronous lowstate publish in lock-step (see unitree_sdk2_bridge.h)
     char err[1000] = "";
     const std::string scene = param::config.robot_scene.string();
     m = mj_loadXML(scene.c_str(), nullptr, err, sizeof err);

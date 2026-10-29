@@ -34,55 +34,17 @@ def load(p):
     except FileNotFoundError: return []
 def mean(v, d=None): return st.mean(v) if v else d
 def clamp01(x): return max(0.0, min(1.0, x))
-SEGS = ["vx05", "vx10", "vx15", "vxm10", "vyL10", "vyR10", "wzL03", "wzR03", "wzL05", "wzR05", "wzL08", "wzR08"]
+import importlib.util
+_spec = importlib.util.spec_from_file_location("exam_score", os.path.join(os.path.dirname(os.path.abspath(__file__)), "exam_score.py"))
+exam_score = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(exam_score)
+SEGS = exam_score.SEGS
 
 rows = []
 for nm in names:
     H = load(f"{EX}/homing_{nm}.jsonl"); S = load(f"{EX}/stairs_{nm}.jsonl"); S = S[-1] if S else None
-    r = {"name": nm, "t_s": times.get(nm)}
-    ok = [x for x in H if x.get("result") == "ARRIVED"]
-    r["n"] = len(H); r["arrived"] = len(ok)
-    if ok:
-        r["planar"] = mean([x["final_err"]["planar_m"] for x in ok])
-        r["planar_sw"] = st.median([x["err_at_switch"]["planar_m"] for x in ok if x.get("err_at_switch")] or [float("nan")])
-        r["head"] = mean([abs(x["final_err"]["heading_deg"]) for x in ok])
-        sd = [x["settle_drift"] for x in ok if x.get("settle_drift")]
-        r["stand_left"] = mean([-d["lateral_m"] for d in sd]); r["stand_turn"] = mean([-d["heading_deg"] for d in sd])
-        tr = [x.get("track") or {} for x in ok]
-        r["g_vx"] = mean([t["vx"][0] for t in tr if t.get("vx")]); r["g_wzL"] = mean([t["wz_inplace_left"][0] for t in tr if t.get("wz_inplace_left")])
-        r["g_wzR"] = mean([t["wz_inplace_right"][0] for t in tr if t.get("wz_inplace_right")])
-        r["eff"] = mean([x["path_eff"] for x in ok if x.get("path_eff")]); r["t_mean"] = mean([x["t_total"] for x in ok])
-    segs = {s["name"]: s for s in (S or {}).get("segments", [])} if S else {}
-    stands = [s for s in (S or {}).get("segments", []) if s["name"] == "stand"] if S else []
-    r["fell"] = (S or {}).get("fell") if S else None
-    r["stairs"] = (S or {}).get("result") if S else None
-    g = {}
-    for k in SEGS:
-        s = segs.get(k); gv = None
-        if s and s.get("gain"): gv = next(iter(s["gain"].values()))
-        g[k] = gv
-    r["gains"] = g
-    if stands:
-        r["stand10_drift"] = stands[0].get("drift_xy"); r["stand10_yaw"] = stands[0].get("yaw_change_deg"); r["stand10_lifts"] = sum(stands[0].get("lifts") or [0, 0])
-        r["stand_lifts_all"] = sum(sum(s.get("lifts") or [0, 0]) for s in stands)
-    if segs.get("vx10"):
-        r["vx10_yaw"] = segs["vx10"].get("yaw_change_deg"); r["vx10_left"] = (segs["vx10"].get("dx_body") or [None, None])[1]
-    piv = [segs[k]["pivot_rad_s"] for k in ("wzL05", "wzR05", "wzL08", "wzR08") if segs.get(k) and segs[k].get("pivot_rad_s") is not None]
-    r["pivot05"] = mean(piv); r["lifts05"] = [sum(segs[k].get("lifts") or [0, 0]) for k in ("wzL08", "wzR08") if segs.get(k)]
-    r["swing"] = max([max(segs[k].get("swing_height") or [0, 0]) for k in ("vx10", "vx15") if segs.get(k)] or [None])
-    # score
-    trk = mean([clamp01(v) if v is not None and v > 0 else 0.0 for v in g.values()], 0.0) if S else 0.0
-    fell = bool(r["fell"]) or (S is not None and S.get("result") != "DONE")
-    if fell: trk = 0.0
-    plc = 1 - min((r.get("planar") or 1.0) / 0.10, 1.0) if ok else 0.0
-    stl = 0.5 * (1 - min((r.get("stand10_drift") if r.get("stand10_drift") is not None else 1.0) / 0.10, 1.0)) + \
-          0.5 * (1 - min(abs(r.get("stand_left") if r.get("stand_left") is not None else 1.0) / 0.10, 1.0))
-    # turn: a stepping turn that actually turns -- (1 - pivot / 0.5 rad/s) x min(mean |gain| of the 0.8 turns, 1); no turn = 0
-    g08 = [abs(g[k]) for k in ("wzL08", "wzR08") if g.get(k) is not None]
-    trn = (1 - min((r.get("pivot05") if r.get("pivot05") is not None else 0.5) / 0.5, 1.0)) * (min(mean(g08, 0.0), 1.0) if g08 else 0.0)
-    srv = (r["arrived"] / r["n"] if r["n"] else 0.0) * (0.0 if fell else 1.0)
-    r["score"] = round(40 * trk + 20 * plc + 20 * stl + 10 * trn + 10 * srv, 1)
-    r["parts"] = (round(40 * trk, 1), round(20 * plc, 1), round(20 * stl, 1), round(10 * trn, 1), round(10 * srv, 1))
+    r = exam_score.score_policy(H, S)
+    r["name"] = nm; r["t_s"] = times.get(nm)
+    p = r["parts"]; r["parts"] = (p["tracking"], p["placement"], p["stillness"], p["turn"], p["survival"])
     rows.append(r)
 rows.sort(key=lambda r: -r["score"])
 

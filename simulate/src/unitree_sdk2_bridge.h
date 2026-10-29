@@ -24,6 +24,12 @@
 
 // Lock-step (2026-10-28): count received lowcmd messages so the headless loop can step one
 // physics frame per command (post_communication runs inside the subscription's lock).
+// lock-step SYNCHRONOUS lowstate publish (2026-10-29): the dds_wrapper RealTimePublisher hands msg_ to a background thread that polls
+// with 1 ms sleeps; at a ~1 ms frame rate its trylock() fails under load, the frame's lowstate is never published, the Bridge setter's
+// 0.5 s wait times out and ticks on the stale state -> one policy frame skipped per ~100-200 s per rig when rigs share the box (the
+// cc_1..4 traces). In lock-step the loop writes msg_ under the lock and publishes it itself on the same topic, synchronously.
+inline bool& lockstep_sync_publish() { static bool v = false; return v; }
+
 // lock-step wake-up: the headless loop sleeps on this condition variable and is woken by the DDS receive thread the moment the
 // next lowcmd lands (2026-10-28 evening: replaces a 20 us sleep-poll whose real granularity was ~70 us per frame)
 inline std::mutex& lockstep_cmd_mutex() { static std::mutex m; return m; }
@@ -279,11 +285,19 @@ public:
         publish_state();
     }
 
+    std::shared_ptr<unitree::robot::ChannelPublisher<typename LowState_t::MsgType>> lowstate_direct_;   // lock-step: synchronous rt/lowstate
+
     void publish_state() override
     {
         if(!mj_data_) return;
         // lowstate
-        if(lowstate->trylock()) {
+        const bool sync = lockstep_sync_publish();
+        if (sync && !lowstate_direct_) {
+            lowstate_direct_ = std::make_shared<unitree::robot::ChannelPublisher<typename LowState_t::MsgType>>("rt/lowstate");
+            lowstate_direct_->InitChannel();
+        }
+        if (sync) lowstate->lock();
+        if(sync || lowstate->trylock()) {
             // walk HUD: actual yaw-frame base velocity (cmd-vs-actual bars).
             walk_hud::update_actual(mj_model_, mj_data_);
             // stamp tick with sim time (ms) — the real robot's tick advances,
@@ -360,7 +374,8 @@ public:
             }
             
             lowstate->msg_.tick() = std::round(mj_data_->time / 1e-3);
-            lowstate->unlockAndPublish();
+            if (sync) { lowstate_direct_->Write(lowstate->msg_, 0); lowstate->unlock(); }   // published NOW, never skipped
+            else lowstate->unlockAndPublish();
         }
         // highstate
         if(highstate->trylock()) {

@@ -32,7 +32,7 @@ vendor() {  # vendor <slug> -> prints the vendored policy name
   echo "$name"
 }
 Q="$EX/queue.txt"; : > "$Q"
-for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name" >> "$Q" || echo "$slug NOT VENDORED" >> "$EX/not_vendored.txt"; done
+for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name $slug" >> "$Q" || echo "$slug NOT VENDORED" >> "$EX/not_vendored.txt"; done
 NP=$(wc -l < "$Q"); [[ $NP -gt 0 ]] || { echo "nothing to examine"; exit 2; }
 [[ $PAR -gt $NP ]] && PAR=$NP
 echo "##### $(date +%T) EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stairs $STAIRS homing $HOMING -> $EX"
@@ -47,7 +47,8 @@ worker() {  # worker <instance k>
     if [[ $PAR -le 8 ]]; then local a=$(( (2 * (k - 1)) % 16 )); export LOCOSW_CPUS="$a,$((a + 1)),$((a + 16)),$((a + 17))"
     else local a=$(( (k - 1) % 16 )); export LOCOSW_CPUS="$a,$((a + 16))"; fi
   fi
-  while name="$(pop)"; [[ -n "$name" ]]; do
+  while item="$(pop)"; [[ -n "$item" ]]; do
+    name="${item%% *}"; slug="${item##* }"; [[ "$slug" == "$name" ]] && slug="$(ls "$AIL/milestone_checkpoints" | grep -E "^${name}_20[0-9-]+$" | tail -1)"
     t0=$(date +%s)
     echo "[$k] $(date +%T) $name: launch${LOCOSW_CPUS:+ on cpus $LOCOSW_CPUS}"
     bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; sleep 1
@@ -55,20 +56,19 @@ worker() {  # worker <instance k>
     (cd "$SIM" && HOMING_WALK="$name" HOMING_BALANCE="$BALANCE" LOCOSW_LOCKSTEP=1 HOMING_SEED="$SEED" METRICS=0 bash run_mujoco_homing.sh > "$EX/rig_$name.log" 2>&1 &)
     for i in $(seq 1 60); do [[ "$(readlink "$SIM/logs/stack_locosw_latest_$k.log" 2>/dev/null)" != "$link0" ]] && break; sleep 1; done
     local L="$SIM/logs/stack_locosw_latest_$k.log"; local ok=0
-    # ready = the walk policy ENGAGED (+ a short settle) or MM's BALANCE STABLE announce, whichever first: a walk policy that fidgets at a
-    # zero command never satisfies the stable gate (lm7f_kit_footbonus6 / gforce_bank on the first run) and the exam does not need it
+    # ready = the homing commander is up. The first queued item (the staircase) is then sent BEFORE the walk policy engages, so the
+    # commander's scheduler starts it on the fixed sim frame TRIAL_T0 = 40 s (it waits for the policy itself, on the sim clock) -- a
+    # wall-clock send after sim 40 s made the start frame depend on the host load and two same-seed exams differed (tp5 vs lm7f19).
     for i in $(seq 1 300); do
-      grep -q "BALANCE STABLE" "$L" 2>/dev/null && [[ $i -gt 10 ]] && { ok=1; break; }
-      grep -q "policy ENGAGED" "$L" 2>/dev/null && [[ $i -gt 10 ]] && { sleep 6; ok=1; break; }
+      grep -q "\[homing\] pose=" "$L" 2>/dev/null && { ok=1; break; }
       grep -q "Traceback\|refused\|sim died" "$L" 2>/dev/null && [[ $i -gt 30 ]] && break; sleep 1; done
     if [[ $ok -ne 1 ]]; then
-      echo "[$k] $(date +%T) $name: !! rig did not engage the policy"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
-      echo "$name NO_STABLE_STAND" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
+      echo "[$k] $(date +%T) $name: !! rig / commander did not come up"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
+      echo "$name NO_COMMANDER" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
     fi
-    sleep 3
     if [[ $STAIRS -eq 1 ]]; then
       local s0; s0=$(wc -l < "$SIM/logs/staircase_$k.jsonl" 2>/dev/null || echo 0)
-      bash "$SIM/tools/staircase.sh" > "$EX/stairs_$name.log" 2>&1; tail -n +"$((s0 + 1))" "$SIM/logs/staircase_$k.jsonl" > "$EX/stairs_$name.jsonl"   # only THIS run's record (never a previous policy's)
+      bash "$SIM/tools/staircase.sh" --timeout 420 > "$EX/stairs_$name.log" 2>&1; tail -n +"$((s0 + 1))" "$SIM/logs/staircase_$k.jsonl" > "$EX/stairs_$name.jsonl"   # only THIS run's record (never a previous policy's)
       echo "[$k] $(date +%T) $name: staircase $(head -1 "$EX/stairs_$name.log" | cut -c1-80)"
     fi
     if [[ $HOMING -eq 1 ]]; then
@@ -78,6 +78,9 @@ worker() {  # worker <instance k>
       echo "[$k] $(date +%T) $name: homing $(grep -E '^trials' "$EX/homing_$name.log" | tail -1 | cut -c1-60) | $(grep -E '^settled' "$EX/homing_$name.log" | tail -1 | cut -c21-110)"
     fi
     M=$(ls -t "$SIM"/logs/mujoco_locosw_*_"$k".log 2>/dev/null | head -1); [[ -n "$M" ]] && grep -E 'HEADLESS\] sim_t' "$M" | tail -1 | sed "s/^/[$k]    /"
+    # the exam record that travels with the milestone (fleetdeck draws the sheets from it) -- JSON in git, no PNG
+    python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --instance "$k" 2>&1 | sed "s/^/[$k]    /"
+    grep -c "POSE GAP" "$L" 2>/dev/null | sed "s/^/[$k]    pose gaps: /"
     bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1
     t1=$(date +%s); echo "$name $((t1 - t0))" >> "$EX/times.txt"
     echo "[$k] $(date +%T) $name: done in $((t1 - t0)) s"
