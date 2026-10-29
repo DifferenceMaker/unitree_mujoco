@@ -7,6 +7,37 @@ bit (det12/det13, seqA/seqB). Records: `homing_<policy>.jsonl` (one line per tri
 the 10 Hz CSVs, and the per-policy `exam/<tag>_<date>.json` written into the milestone (fleetdeck draws the sheets from it).
 Numbers are FLAGS and a ranking aid; the operator's eye on the rig is the verdict (RL Bible rule 34). Status column: live = recorded by the current code (the stance metrics since 2026-10-29 midday); planned = not yet.
 
+## Test 0 — the HANDOVER (LIVE 2026-10-29 evening: tools/handover.sh, run first by exam.sh; `--no-handover` skips it; operator: "Maybe the test starts with balance and then goes into locomotion and then walks to the table and the rest of the exam")
+Why: the 10-29 hardware test failed at the switch (gforce_airtime stepped backwards and drew the legs in right after p14h_stancewide -> walk;
+footbonus6_still stumbled at the handover), and the exam never measured it: its stand starts after a teleport, with a walk policy that has
+stood for 40 s. Test 0 runs FIRST, from the real entry state: the balance policy (CURRENT_BALANCE) stands 10 s holding an arm pose, the
+commander switches to the walk at a zero command, and the next 8 s are recorded; then the walk -> balance leg (stop, switch back, 10 s).
+Arm set (one leg per pose, the same seed): default arms; RIGHT ARM UP + LEFT ARM AT THE SIDE (ActionModule go_to_start: right hand
+(0.25, 0.49, 0.35), left hand (0.05, 0.315, -0.056), torso frame, y outward); both arms forward at desk height; both arms up.
+
+| metric | definition | units | flags | eye verdict it maps to | status |
+|---|---|---|---|---|---|
+Implementation: three queue items per policy (`handover X Y YAW POSE`), each = segments `bal_stand` (10 s, arms ramped to the pose over
+2 s on /BridgeModule/joint_set_arms), `walk_after` (8 s from the frame the walk became active), `bal_after` (10 s from the switch back).
+Every segment carries the staircase's per-segment metrics (lifts, drift_xy, dx_body, yaw_change_deg, z_min, sep_mean / sep_trend,
+stagger, toe, jitter); the record adds `switch_wait_s` (request -> active, the gate's delay) and the 10 Hz rows. Arms: the right-up pose is
+the joint-space median of p14h_stancewide's bank cluster held at the go_to_start IK target; both_forward is an approximate joint pose.
+
+| metric (segment walk_after unless noted) | flags | eye verdict it maps to |
+|---|---|---|
+| lifts | any = "it steps at the handover" | "stumbles at handover" |
+| sep_trend | < −0.01 m = the inward draw | "legs rotated inwards" |
+| dx_body (forward, left) | forward < −0.01 m = the backward creep | "steps backwards and keeps moving backwards" |
+| yaw_change_deg | \|x\| > 3° = the stand turns at the switch | "legs rotated inwards" (the feet yaw with the turn) |
+| z_min vs bal_stand | a dip > 0.01 m | "sags at the switch" |
+| bal_after: the same | the reverse leg (walk -> balance) | "shifts right when the balance takes over" |
+| switch_wait_s | > 1 s = the gate held the switch (knee load / gyro) | — |
+
+First run (t0dev, 2026-10-29, the two policies that failed on the robot that day): after the switch the separation fell 2-9 cm in every
+pose (gforce_airtime both_forward 0.342 -> 0.249 m; footbonus6_still right_up -7.3 cm), the stand turned -4..-9 deg, gforce_airtime lifted
+a foot 5-6 times with the arms at default / right-up; the balance's switch back widened the feet again (+6..+9 cm). The exam reproduces the
+hardware failure (inward legs at the handover); torso-rate rms is not in the record yet.
+
 ## Test 1 — staircase (sim truth, free floor at (−3, 0, 0), 113 s of sim time)
 Segments: stand 10 s; vx 0.05 / 0.10 / 0.15 (8 s each), −0.10 (6 s); vy +0.10 / −0.10 (6 s); wz +0.3 / −0.3 / +0.5 / −0.5 / +0.8 / −0.8
 (6 s each); 2 s stands between, 3 s at the end. Steady window = the segment minus its first 1.5 s.

@@ -42,10 +42,14 @@ def traj_rows(fname, every=5, cols=None):
 
 homing = load(f"{EX}/homing_{name}.jsonl")
 stairs = load(f"{EX}/stairs_{name}.jsonl"); stairs = stairs[-1] if stairs else None
+handover = load(f"{EX}/handover_{name}.jsonl")   # exam Test 0 (2026-10-29): one record per arm pose
 H_COLS = ["t", "phase", "x", "y", "yaw_deg", "fx", "fy", "fyaw_deg", "cmd_vx", "cmd_vy", "cmd_wz", "ovx", "ovy", "owz", "along", "lat", "head_deg"]
 for r in homing:
     cols, rows = traj_rows(r.get("traj_file"), every=5, cols=H_COLS)   # 10 Hz -> 2 Hz
     r["traj"] = {"hz": 2, "cols": cols, "rows": rows} if rows else None
+for r in handover:
+    cols, rows = traj_rows(r.get("traj_file"), every=1)
+    r["rows"] = {"hz": 10, "cols": cols, "rows": rows} if rows else None
 if stairs:
     cols, rows = traj_rows(stairs.get("traj_file"), every=1)           # 10 Hz, every row (the stance sheet needs the lifts)
     stairs["rows"] = {"hz": 10, "cols": cols, "rows": rows} if rows else None
@@ -66,7 +70,7 @@ except OSError:
     pass
 rec = {"meta": {"tag": a.tag, "stamp": stamp, "seed": a.seed, "n": a.n, "balance": a.balance, "walk": name, "slug": slug, "mode": "lock-step headless",
                 "rig": rig, "score": score, "metrics_doc": "unitree_mujoco/mujoco_sim/results/EXAM_METRICS.md"},
-       "homing": homing, "stairs": stairs}
+       "homing": homing, "stairs": stairs, "handover": handover}
 out_local = f"{EX}/exam_{name}.json"
 json.dump(rec, open(out_local, "w"), separators=(",", ":"))
 msd = os.path.join(a.ail, "milestone_checkpoints", slug)

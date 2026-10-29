@@ -13,11 +13,11 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1
+PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
   --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
-  --no-stairs) STAIRS=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
+  --no-stairs) STAIRS=0; shift;; --no-handover) HANDOVER=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"
 vendor() {  # vendor <slug> -> prints the vendored policy name
@@ -65,6 +65,11 @@ worker() {  # worker <instance k>
     if [[ $ok -ne 1 ]]; then
       echo "[$k] $(date +%T) $name: !! rig / commander did not come up"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
       echo "$name NO_COMMANDER" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
+    fi
+    if [[ $HANDOVER -eq 1 ]]; then   # Test 0 (2026-10-29): balance -> walk -> balance from three arm poses, FIRST (the hardware failure)
+      local o0; o0=$(wc -l < "$SIM/logs/handover_$k.jsonl" 2>/dev/null || echo 0)
+      bash "$SIM/tools/handover.sh" --timeout 600 > "$EX/handover_$name.log" 2>&1; tail -n +"$((o0 + 1))" "$SIM/logs/handover_$k.jsonl" > "$EX/handover_$name.jsonl"
+      echo "[$k] $(date +%T) $name: handover $(grep -c '^HANDOVER' "$EX/handover_$name.log") records $(grep -o 'FAIL[a-z_]*' "$EX/handover_$name.log" | sort | uniq -c | tr '\n' ' ')"
     fi
     if [[ $STAIRS -eq 1 ]]; then
       local s0; s0=$(wc -l < "$SIM/logs/staircase_$k.jsonl" 2>/dev/null || echo 0)
