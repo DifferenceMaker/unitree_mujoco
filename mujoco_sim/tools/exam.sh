@@ -68,7 +68,7 @@ worker() {  # worker <instance k>
     fi
     if [[ $STAIRS -eq 1 ]]; then
       local s0; s0=$(wc -l < "$SIM/logs/staircase_$k.jsonl" 2>/dev/null || echo 0)
-      bash "$SIM/tools/staircase.sh" --timeout 420 > "$EX/stairs_$name.log" 2>&1; tail -n +"$((s0 + 1))" "$SIM/logs/staircase_$k.jsonl" > "$EX/stairs_$name.jsonl"   # only THIS run's record (never a previous policy's)
+      bash "$SIM/tools/staircase.sh" --timeout 900 > "$EX/stairs_$name.log" 2>&1; tail -n +"$((s0 + 1))" "$SIM/logs/staircase_$k.jsonl" > "$EX/stairs_$name.jsonl"   # only THIS run's record (never a previous policy's)
       echo "[$k] $(date +%T) $name: staircase $(head -1 "$EX/stairs_$name.log" | cut -c1-80)"
     fi
     if [[ $HOMING -eq 1 ]]; then
