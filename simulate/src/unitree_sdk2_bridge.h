@@ -79,6 +79,8 @@ public:
     virtual uint64_t lowcmd_seq() { return 0; }
     virtual void apply_lowcmd(int delay_frames) {}   // PD from the lowcmd received delay_frames frames ago -> ctrl
     virtual void publish_state() {}                   // one lowstate (+ highstate / IMU / bms) from the current mj_data
+    int num_motor() const { return num_motor_; }
+    std::vector<double> q_target_;                    // exam #2 (2026-10-30): the joint targets of the lowcmd last applied ("qt" in rt/sim_base_pose)
 
     void printSceneInformation()
     {
@@ -251,8 +253,10 @@ public:
 
     void pd_from(const typename LowCmd_t::MsgType& msg)
     {
+        if ((int)q_target_.size() != num_motor_) q_target_.assign(num_motor_, 0.0);
         for(int i(0); i<num_motor_; i++) {
             auto & m = msg.motor_cmd()[i];
+            q_target_[i] = m.q();
             mj_data_->ctrl[i] = m.tau() +
                                 m.kp() * (m.q() - mj_data_->sensordata[i]) +
                                 m.kd() * (m.dq() - mj_data_->sensordata[i + num_motor_]);

@@ -141,8 +141,36 @@ struct ScriptedPush
   bool pending = false;
   double vx = 0.0;
   double vy = 0.0;
+  double t_apply = -1.0;   // push_at (exam #2 push test, 2026-10-30): apply at the first frame with d->time >= t_apply
 };
 inline ScriptedPush scripted_push;
+
+// Scripted RESET (exam #2, 2026-10-30): after a fall a teleport keeps the fallen height and joints, so the exam continues with
+// "reset_at <sim_t> x y yaw": base at (x, y, yaw), height + joint angles from the STANDING snapshot taken at the first teleport
+// (the robot standing under its policy), every velocity zeroed -- the Isaac reset the policies trained with.
+struct ScriptedReset
+{
+  std::mutex mtx;
+  bool pending = false;
+  double x = 0.0, y = 0.0, yaw_deg = 0.0, t_apply = -1.0;
+  std::vector<double> stand_qpos;   // empty until the first teleport
+};
+inline ScriptedReset scripted_reset;
+
+// Exam counters (exam #2, 2026-10-30), accumulated EVERY physics frame after mj_step and published in rt/sim_base_pose:
+//   "en"  = [sum |tau_i * qdot_i| dt (J), sum tau_i^2 dt (N^2 m^2 s)] over the body motors, cumulative since start
+//   "fpk" = per-foot peak vertical floor-contact force since the previous pose message (N; a 50 Hz sample misses the impact peak)
+//   "nfc" = cumulative frames with a NON-foot robot body touching the floor (> 5 N): knees, hands, pelvis -- the literal crawl
+//   "nfb" = the name of the last such body
+struct ExamCounters
+{
+  double en_mech = 0.0, en_tau2 = 0.0;
+  double fpk[2] = {0.0, 0.0};
+  unsigned long long nfc = 0;
+  std::string nfb;
+  int floor_geom = -2, fl_id = -2, fr_id = -2;
+};
+inline ExamCounters exam_ctr;
 
 // Scripted teleport (homing rig, 2026-10-27): place the free-joint base at a world pose
 // (x, y, yaw) with the current height and joint angles, velocities zeroed -- the Isaac
@@ -169,18 +197,36 @@ void HandleCommand(const std::string &line)
     std::string cmd;
     if (!(iss >> cmd))
       return;
-    if (cmd == "push")
+    if (cmd == "push" || cmd == "push_at")
     {
-      double vx, vy;
-      if (!(iss >> vx >> vy))
+      double vx, vy, t_at = -1.0;
+      bool ok = (cmd == "push") ? bool(iss >> vx >> vy) : bool(iss >> t_at >> vx >> vy);
+      if (!ok)
       {
-        std::printf("[PUSH] usage: push <vx> <vy>   (m/s, world frame)\n");
+        std::printf("[PUSH] usage: push <vx> <vy> | push_at <sim_t> <vx> <vy>   (m/s, world frame)\n");
         return;
       }
       std::lock_guard<std::mutex> lk(scripted_push.mtx);
       scripted_push.vx = vx;
       scripted_push.vy = vy;
+      scripted_push.t_apply = t_at;
       scripted_push.pending = true;
+    }
+    else if (cmd == "reset" || cmd == "reset_at")
+    {
+      double x, y, yaw, t_at = -1.0;
+      bool ok = (cmd == "reset") ? bool(iss >> x >> y >> yaw) : bool(iss >> t_at >> x >> y >> yaw);
+      if (!ok)
+      {
+        std::printf("[RESET] usage: reset <x> <y> <yaw_deg> | reset_at <sim_t> <x> <y> <yaw_deg>   (standing height + joints from the first teleport)\n");
+        return;
+      }
+      std::lock_guard<std::mutex> lk(scripted_reset.mtx);
+      scripted_reset.x = x;
+      scripted_reset.y = y;
+      scripted_reset.yaw_deg = yaw;
+      scripted_reset.t_apply = t_at;
+      scripted_reset.pending = true;
     }
     else if (cmd == "teleport" || cmd == "teleport_at")
     {
@@ -200,7 +246,7 @@ void HandleCommand(const std::string &line)
     }
     else
     {
-      std::printf("[CMD] unknown: '%s' (commands: push <vx> <vy> | teleport <x> <y> <yaw_deg> | teleport_at <sim_t> <x> <y> <yaw_deg>)\n", cmd.c_str());
+      std::printf("[CMD] unknown: '%s' (commands: push[_at] [<sim_t>] <vx> <vy> | teleport[_at] [<sim_t>] <x> <y> <yaw_deg> | reset[_at] [<sim_t>] <x> <y> <yaw_deg>)\n", cmd.c_str());
     }
   }
 }
@@ -459,7 +505,7 @@ namespace
             // scripted push (harness): apply pending base velocity change
             {
               std::lock_guard<std::mutex> plk(scripted_push.mtx);
-              if (scripted_push.pending)
+              if (scripted_push.pending && (scripted_push.t_apply < 0.0 || d->time >= scripted_push.t_apply))
               {
                 if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE)
                 {
@@ -488,6 +534,14 @@ namespace
               {
                 if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE)
                 {
+                  {   // the standing snapshot for reset_at: the first teleport of a robot that stands (base above 0.8 m)
+                    std::lock_guard<std::mutex> rlk(scripted_reset.mtx);
+                    if (scripted_reset.stand_qpos.empty() && d->qpos[2] > 0.8)
+                    {
+                      scripted_reset.stand_qpos.assign(d->qpos, d->qpos + m->nq);
+                      std::printf("[RESET] standing snapshot taken at sim_t=%.3f (z %.3f)\n", d->time, d->qpos[2]);
+                    }
+                  }
                   const double half = 0.5 * scripted_teleport.yaw_deg * M_PI / 180.0;
                   d->qpos[0] = scripted_teleport.x;
                   d->qpos[1] = scripted_teleport.y;
@@ -507,6 +561,79 @@ namespace
               }
             }
 
+            // scripted reset (exam #2): the standing snapshot at (x, y, yaw), velocities zeroed
+            {
+              std::lock_guard<std::mutex> rlk(scripted_reset.mtx);
+              if (scripted_reset.pending && (scripted_reset.t_apply < 0.0 || d->time >= scripted_reset.t_apply))
+              {
+                if (m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE && (int)scripted_reset.stand_qpos.size() == m->nq)
+                {
+                  for (int k = 2; k < m->nq; ++k) d->qpos[k] = scripted_reset.stand_qpos[k];
+                  const double half = 0.5 * scripted_reset.yaw_deg * M_PI / 180.0;
+                  d->qpos[0] = scripted_reset.x;
+                  d->qpos[1] = scripted_reset.y;
+                  d->qpos[3] = std::cos(half); d->qpos[4] = 0.0; d->qpos[5] = 0.0; d->qpos[6] = std::sin(half);
+                  for (int k = 0; k < m->nv; ++k) d->qvel[k] = 0.0;
+                  mj_forward(m, d);
+                  std::printf("[RESET] sim_t=%.3f -> x=%.3f y=%.3f yaw=%.1f deg (standing snapshot z %.3f)\n",
+                              d->time, scripted_reset.x, scripted_reset.y, scripted_reset.yaw_deg, d->qpos[2]);
+                }
+                else
+                {
+                  std::printf("[RESET] ignored: no standing snapshot yet (a teleport of a standing robot takes it)\n");
+                }
+                std::fflush(stdout);
+                scripted_reset.pending = false;
+              }
+            }
+
+  }
+
+  // exam counters (see ExamCounters): every physics frame, after mj_step (actuator_force / actuator_velocity / contacts of that step)
+  void AccumulateExamCounters()
+  {
+    static const bool on = [] { const char* e = std::getenv("SIM_EXAM_COUNTERS"); return !(e && std::string(e) == "0"); }();   // A/B switch (rig speed)
+    if (!on) return;
+    ExamCounters& c = exam_ctr;
+    if (c.floor_geom == -2)
+    {
+      c.floor_geom = mj_name2id(m, mjOBJ_GEOM, "floor");
+      c.fl_id = mj_name2id(m, mjOBJ_BODY, "left_ankle_roll_link");
+      c.fr_id = mj_name2id(m, mjOBJ_BODY, "right_ankle_roll_link");
+    }
+    const int nmot = g_bridge ? g_bridge->num_motor() : m->nu;
+    const double dt = m->opt.timestep;
+    for (int i = 0; i < nmot && i < m->nu; ++i)
+    {
+      const double tau = d->actuator_force[i];
+      c.en_mech += std::fabs(tau * d->actuator_velocity[i]) * dt;
+      c.en_tau2 += tau * tau * dt;
+    }
+    if (c.floor_geom < 0) return;
+    double fz[2] = {0.0, 0.0};
+    bool nonfoot = false;
+    for (int k = 0; k < d->ncon; ++k)
+    {
+      const mjContact& con = d->contact[k];
+      int other;
+      if (con.geom1 == c.floor_geom) other = con.geom2;
+      else if (con.geom2 == c.floor_geom) other = con.geom1;
+      else continue;
+      const int b = m->geom_bodyid[other];
+      mjtNum f6[6];
+      mj_contactForce(m, d, k, f6);   // contact frame: f6[0] = normal force (the floor normal is world z)
+      if (b == c.fl_id) fz[0] += f6[0];
+      else if (b == c.fr_id) fz[1] += f6[0];
+      else if (f6[0] > 5.0 && b > 0)
+      {
+        nonfoot = true;
+        const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+        c.nfb = bn ? bn : "?";
+      }
+    }
+    if (nonfoot) ++c.nfc;
+    c.fpk[0] = std::max(c.fpk[0], fz[0]);
+    c.fpk[1] = std::max(c.fpk[1], fz[1]);
   }
 
   // desk balls, grasp rig, anchor point and the rt/sim_base_pose ground-truth state (every 10th call ~ 50 Hz)
@@ -647,6 +774,24 @@ namespace
                       for (int k = qa + 7; k < m->nq && n < jscap - 32; ++k) n += std::snprintf(js + n, jscap - n, "%s%.4f", k > qa + 7 ? "," : "", d->qpos[k]);
                       if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
                     }
+                  }
+                  // exam #2 (2026-10-30): energy / foot-peak / crawl counters (ExamCounters) + per-joint torque, velocity, target
+                  if (n > 0 && n < jscap - 256) {
+                    ExamCounters& ec = exam_ctr;
+                    n += std::snprintf(js + n, jscap - n, ",\"en\":[%.3f,%.1f],\"fpk\":[%.1f,%.1f],\"nfc\":%llu,\"nfb\":\"%s\"",
+                                       ec.en_mech, ec.en_tau2, ec.fpk[0], ec.fpk[1], ec.nfc, ec.nfb.c_str());
+                    ec.fpk[0] = ec.fpk[1] = 0.0;
+                    const int nmot = g_bridge ? std::min(g_bridge->num_motor(), m->nu) : m->nu;
+                    auto add_vec = [&](const char* key, int cnt, auto get) {
+                      if (n <= 0 || n >= jscap - 64) return;
+                      n += std::snprintf(js + n, jscap - n, ",\"%s\":[", key);
+                      for (int k = 0; k < cnt && n < jscap - 32; ++k) n += std::snprintf(js + n, jscap - n, "%s%.3f", k ? "," : "", get(k));
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    };
+                    add_vec("tq", nmot, [&](int k) { return (double)d->actuator_force[k]; });
+                    add_vec("dq", m->nv - 6, [&](int k) { return (double)d->qvel[va + 6 + k]; });
+                    if (g_bridge && (int)g_bridge->q_target_.size() == nmot)
+                      add_vec("qt", nmot, [&](int k) { return g_bridge->q_target_[k]; });
                   }
                   add_body("tl", tl_id); add_body("tr", tr_id);
                   // ---- v4: all bodies — world position "xb", linear "vb" and angular
@@ -875,6 +1020,7 @@ namespace
 
               // run single step, let next iteration deal with timing
               mj_step(m, d);
+              AccumulateExamCounters();
               stepped = true;
             }
 
@@ -902,6 +1048,7 @@ namespace
 
                 // call mj_step
                 mj_step(m, d);
+                AccumulateExamCounters();
                 stepped = true;
 
                 // break if reset
@@ -1011,6 +1158,7 @@ namespace
         if (trace) std::fprintf(trace, "%llu %.4f ctrl %016llx qpos %016llx qvel %016llx\n", (unsigned long long)frames, d->time,
                                 (unsigned long long)fnv(d->ctrl, m->nu), (unsigned long long)fnv(d->qpos, m->nq), (unsigned long long)fnv(d->qvel, m->nv));
         mj_step(m, d);
+        AccumulateExamCounters();
         g_bridge->publish_state();
         last_state_policy = ((static_cast<long long>(std::llround(d->time * 1000.0))) % 20) == 0;   // the lowstate just published carries this tick
       }

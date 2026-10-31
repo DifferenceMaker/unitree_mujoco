@@ -20,6 +20,38 @@ def load(p):
     try: return [json.loads(l) for l in open(p) if l.strip()]
     except FileNotFoundError: return []
 
+if glob.glob(f"{a.exam_dir}/ladders_*.jsonl"):   # EXAM #2 (2026-10-30): the score by quality (exam_score.score_v2)
+    names = sorted(os.path.basename(p)[len("ladders_"):-len(".jsonl")] for p in glob.glob(f"{a.exam_dir}/ladders_*.jsonl"))
+    R = {}
+    for nm in names:
+        L = load(f"{a.exam_dir}/ladders_{nm}.jsonl"); Pu = load(f"{a.exam_dir}/pushes_{nm}.jsonl")
+        R[nm] = es.score_v2(load(f"{a.exam_dir}/handover_{nm}.jsonl"), L[-1] if L else None, Pu[-1] if Pu else None, load(f"{a.exam_dir}/homing_{nm}.jsonl"))
+    new = {k: v for k, v in R.items() if k.startswith(a.new)}; old = {k: v for k, v in R.items() if k.startswith(a.old)}
+    Q = list(es.QUALITIES); out = []; P = out.append
+    mk = lambda r, k: next((m for m in r["metrics"] if m["key"] == k), {})
+    P(f"## Exam #2 table — {a.new} ({len(new)} rows), same rig and run as {a.old} ({len(old)} rows) · {os.path.basename(a.exam_dir)}"); P("")
+    P("| # | policy | score | " + " | ".join(f"{q} /{es.QUALITIES[q]}" for q in Q) + " | falls | track vx / vy / wz | pushes | homing |")
+    P("|" + "---|" * (len(Q) + 7))
+    for i, (nm, r) in enumerate(sorted(new.items(), key=lambda kv: -kv[1]["score"]), 1):
+        P(f"| {i} | {nm} | **{r['score']:.1f}** | " + " | ".join(str(r["parts"][q]) for q in Q) + f" | {len(r['falls'])} | "
+          + " / ".join(f"{mk(r, k).get('s', 0):.2f}" for k in ("track_vx", "track_vy", "track_wz")) + f" | {mk(r, 'pushes').get('label', '').split(':')[0]} | {mk(r, 'homing').get('label', '').split(':')[0]} |")
+    P("")
+    if new and old:
+        osc = sorted((r["score"] for r in old.values()), reverse=True); nsc = sorted((r["score"] for r in new.values()), reverse=True)
+        ob = max(old.items(), key=lambda kv: kv[1]["score"]); nb = max(new.items(), key=lambda kv: kv[1]["score"]); omed = st.median(osc)
+        P(f"## {a.new} vs {a.old} (same rig, same run)"); P("")
+        P(f"- **Score:** {sum(1 for x in nsc if x > ob[1]['score'])} of {len(nsc)} {a.new} rows beat the best {a.old} row ({ob[0]} {ob[1]['score']:.1f}); "
+          f"{sum(1 for x in nsc if x > omed)} of {len(nsc)} beat the {a.old} median ({omed:.1f}). Best {a.new}: {nb[0]} {nb[1]['score']:.1f}."); P("")
+        P(f"| quality | best {a.old} | best {a.new} | {a.new} rows beating the {a.old} best |"); P("|---|---|---|---|")
+        for q in Q:
+            bo = max(old.items(), key=lambda kv: kv[1]["parts"][q]); bn = max(new.items(), key=lambda kv: kv[1]["parts"][q])
+            beat = [k for k, r in sorted(new.items(), key=lambda kv: -kv[1]["parts"][q]) if r["parts"][q] > bo[1]["parts"][q]]
+            P(f"| {q} | {bo[0]} ({bo[1]['parts'][q]}) | {bn[0]} ({bn[1]['parts'][q]}) | {', '.join(beat) if beat else 'none'} |")
+    txt = "\n".join(out); print(txt)
+    if a.md:
+        open(a.md, "w").write(txt + "\n"); print(f"\n-> {a.md}")
+    raise SystemExit(0)
+
 names = sorted({os.path.basename(p)[len("homing_"):-len(".jsonl")] for p in glob.glob(f"{a.exam_dir}/homing_*.jsonl")} |
                {os.path.basename(p)[len("stairs_"):-len(".jsonl")] for p in glob.glob(f"{a.exam_dir}/stairs_*.jsonl")})
 R = {}

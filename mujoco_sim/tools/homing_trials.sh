@@ -2,7 +2,9 @@
 # homing_trials.sh -- N homing trials on the running homing rig (run_mujoco_homing.sh): per trial the robot is TELEPORTED to a random
 # start 3-5 m from the table (random heading), the commander is told the goal (table edge centre + approach heading), the trial ends
 # ARRIVED (balance switched, settled SETTLE_S) or FAIL_*; then the walk policy is requested back for the next trial.
-#   bash mujoco_sim/tools/homing_trials.sh [--n 10] [--goal "0.35 0 0"] [--dmin 3] [--dmax 5] [--seed 1] [--settle 25] [--tag NAME] [--no-plot]
+#   bash mujoco_sim/tools/homing_trials.sh [--n 10] [--goal "0.35 0 0"] [--dmin 3] [--dmax 5] [--seed 1] [--settle 25] [--ring] [--tag NAME] [--no-plot]
+# --ring (exam #2, 2026-10-30): starts all around the desk (360 deg around the goal; behind the desk the commander plans around it with
+# HOMING_DESK) instead of the +-60 deg fan in front of the edge.
 # The same --seed gives the same starts: run it per walk policy (HOMING_WALK=... bash run_mujoco_homing.sh) and the batches compare.
 # Results: mujoco_sim/logs/homing_trials.jsonl (one JSON line per trial, written by the commander), the trajectory CSVs in
 # mujoco_sim/logs/homing_traj/ (10 Hz: pose, commanded / measured / sim-truth velocity, errors), two tables printed here
@@ -14,10 +16,10 @@
 # with the opposite sign -- along + = still short, lateral + = must go left, heading + = must turn left.)
 set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-N=10; GOAL="0.35 0 0"; DMIN=3.0; DMAX=5.0; SEED=1; SETTLE=25; CONTAINER=archb_locosw; TAG=""; PLOT=1
+N=10; GOAL="0.35 0 0"; DMIN=3.0; DMAX=5.0; SEED=1; SETTLE=25; CONTAINER=archb_locosw; TAG=""; PLOT=1; RING=0
 while [[ $# -gt 0 ]]; do case "$1" in
   --n) N="$2"; shift 2;; --goal) GOAL="$2"; shift 2;; --dmin) DMIN="$2"; shift 2;; --dmax) DMAX="$2"; shift 2;;
-  --seed) SEED="$2"; shift 2;; --settle) SETTLE="$2"; shift 2;; --tag) TAG="$2"; shift 2;; --no-plot) PLOT=0; shift;;
+  --seed) SEED="$2"; shift 2;; --settle) SETTLE="$2"; shift 2;; --tag) TAG="$2"; shift 2;; --no-plot) PLOT=0; shift;; --ring) RING=1; shift;;
   *) echo "unknown arg: $1"; exit 1;; esac; done
 SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"; CONTAINER="archb_locosw$SFX"   # instances (2026-10-28): the rig launched with the same LOCOSW_INSTANCE
 SFIFO="$SIM/logs/.sim_stdin$SFX"; CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL="$SIM/logs/homing_trials$SFX.jsonl"
@@ -43,13 +45,13 @@ for t in $(seq 1 "$N"); do
   # start pose: distance d in [DMIN, DMAX] from the goal, direction spread +-60 deg around the approach line (behind the table edge), random heading
   read -r SX SY SYAW <<< "$(python3 -c "
 import math,random; random.seed($SEED*1000+$t)
-d=random.uniform($DMIN,$DMAX); th=math.radians($GPSI)+math.pi+math.radians(random.uniform(-60,60))
+d=random.uniform($DMIN,$DMAX); u=random.uniform(-60,60); th=math.radians($GPSI)+(random.uniform(0,2*math.pi) if $RING else math.pi+math.radians(u))
 print(f'{$GX+d*math.cos(th):.3f} {$GY+d*math.sin(th):.3f} {random.uniform(-180,180):.1f}')")"
   echo "=== trial $t: teleport to ($SX, $SY, $SYAW deg), goal ($GOAL)"
   # the COMMANDER runs the trial (2026-10-28): walk policy back -> teleport at a planned SIM time (rt/sim_cmd teleport_at) ->
   # goto HOMING_TRIAL_DROP_S later -- every input lands on a planned frame, so a lock-step batch is reproducible bit for bit
   n0=$(mark); echo "trial $SX $SY $SYAW $GOAL" >> "$CMD"
-  if wait_result "$n0" $((150 + SETTLE)); then tail -1 "$JL" | python3 -c "
+  if wait_result "$n0" $((${HOMING_TIMEOUT_S:-90} + 60 + SETTLE)); then tail -1 "$JL" | python3 -c "
 import sys,json
 r=json.loads(sys.stdin.readline()); e=r.get('final_err') or {}; s=r.get('err_at_switch') or {}
 def off(d): return (-d['along_m'], -d['lateral_m'], -d['heading_deg']) if d else (None,)*3   # to-go error -> the robot's offset (fwd, left, CCW)

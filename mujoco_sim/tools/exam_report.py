@@ -16,7 +16,7 @@ Numbers are FLAGS and a ranking aid; the operator's eye on the rig is the verdic
 import argparse, glob, json, os, statistics as st, sys, datetime
 
 ap = argparse.ArgumentParser()
-ap.add_argument("exam_dir"); ap.add_argument("--seed", default="?"); ap.add_argument("--n", default="?"); ap.add_argument("--balance", default="?")
+ap.add_argument("exam_dir"); ap.add_argument("--exam", default="1"); ap.add_argument("--seed", default="?"); ap.add_argument("--n", default="?"); ap.add_argument("--balance", default="?")
 ap.add_argument("--tag", default=""); ap.add_argument("--wall", type=int, default=0); ap.add_argument("--parallel", default="?")
 a = ap.parse_args()
 EX = a.exam_dir
@@ -38,6 +38,37 @@ import importlib.util
 _spec = importlib.util.spec_from_file_location("exam_score", os.path.join(os.path.dirname(os.path.abspath(__file__)), "exam_score.py"))
 exam_score = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(exam_score)
 SEGS = exam_score.SEGS
+
+if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v2), one row per policy
+    names = sorted({os.path.basename(p)[len("ladders_"):-len(".jsonl")] for p in glob.glob(f"{EX}/ladders_*.jsonl")} | set(names))
+    R = []
+    for nm in names:
+        H = load(f"{EX}/homing_{nm}.jsonl"); L = load(f"{EX}/ladders_{nm}.jsonl"); P = load(f"{EX}/pushes_{nm}.jsonl"); HO = load(f"{EX}/handover_{nm}.jsonl")
+        sc = exam_score.score_v2(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)
+        m = {x["key"]: x for x in sc["metrics"]}
+        R.append((nm, sc, m))
+    R.sort(key=lambda t: -t[1]["score"])
+    Q = list(exam_score.QUALITIES)
+    hdr = "| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |"
+    lines = [hdr, "|" + "---|" * (len(Q) + 9)]
+    for i, (nm, sc, m) in enumerate(R, 1):
+        held = m["pushes"]["label"].split("held ")[1].split(":")[0] if "pushes" in m else "-"
+        arr = m["homing"]["label"].split("arrived ")[1].split(":")[0] if "homing" in m else "-"
+        trk = "/".join(f"{m[k]['s']:.2f}" for k in ("track_vx", "track_vy", "track_wz"))
+        lines.append(f"| {i} | {nm} | **{sc['score']}** | " + " | ".join(str(sc["parts"][q]) for q in Q) +
+                     f" | {len(sc['falls'])} | {trk} | {held} | {arr} | {m['stand_drift']['value']} | {times.get(nm) or '-'} |")
+    stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+    head = (f"## EXAM #2 {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
+            f"wall {a.wall // 60} min {a.wall % 60} s\n\nScore by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, "
+            f"stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. "
+            f"Track = mean rung score per ladder. Records: {EX}\n")
+    block = head + "\n" + "\n".join(lines) + "\n"
+    print(block)
+    open(f"{EX}/EXAM.md", "w").write(block)
+    with open(f"{SIM}/results/EXAM.md", "a") as fh:
+        fh.write(block + "\n")
+    print(f"-> {EX}/EXAM.md and {SIM}/results/EXAM.md")
+    sys.exit(0)
 
 rows = []
 for nm in names:

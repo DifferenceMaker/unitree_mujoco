@@ -265,7 +265,11 @@ echo "    drive:   bash $SIM/run_mujoco_loco_switch.sh keys   |  printf '\\033[A
 echo "    push:    echo \"push 0.5 0\" > $SFIFO"
 echo "    scenario: bash $SIM/tools/loco_switch_scenario.sh"
 echo "    stack log: $STACK_LOG"
+# exam #2 knobs (2026-10-30): forwarded only when set, so a hardware-like run keeps the commander defaults
+HOMING_EX2=(); for _v in HOMING_TURN_LAW HOMING_K_TURN HOMING_RESCUE_S HOMING_RESCUE_DEG HOMING_DESK HOMING_DESK_MARGIN HOMING_TIMEOUT_S HOMING_PUSH_LOG; do
+  [[ -n "${!_v:-}" ]] && HOMING_EX2+=(-e "$_v=${!_v}"); done
 docker run --rm --name "$CONTAINER" --network host --ipc=host ${LOCOSW_CPUS:+--cpuset-cpus "$LOCOSW_CPUS"} \
+  "${HOMING_EX2[@]}" \
   -e ROS_DOMAIN_ID="$ROS_DOM" -e ROS_LOCALHOST_ONLY=1 \
   -e BRIDGE_DDS_DOMAIN="$SDK_DOM" -e SIM_DDS_DOMAIN="$SDK_DOM" ${INST:+-e LOCOSW_INSTANCE="$INST"} \
   ${HOMING_CMD_FILE:+-e HOMING_CMD_FILE="$HOMING_CMD_FILE"} ${HOMING_LOG:+-e HOMING_LOG="$HOMING_LOG"} ${HOMING_STAIRS_LOG:+-e HOMING_STAIRS_LOG="$HOMING_STAIRS_LOG"} ${HOMING_HANDOVER_LOG:+-e HOMING_HANDOVER_LOG="$HOMING_HANDOVER_LOG"} \

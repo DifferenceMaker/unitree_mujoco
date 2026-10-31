@@ -245,3 +245,35 @@ Score = 40 tracking + 20 placement + 20 stillness + 10 turn + 10 survival (tools
 | 31 | lm7f_kit_full | **17.4** | 10.3/0.0/7.1/0.0/0.0 | 0/10 | - | - / - | - | -/- | - | -0.00/0.02/0.01/-0.01 | -0.05/0.06 | 0.01/0.24 | 0.61/0.63 | 0.81/0.71 | 0.029 / -3.2 / 2 | 0.93 | [12, 12] | 0.004 | - | 993 |
 | 32 | lm7f_kit_gforce_resets_angmom_posture | **15.3** | 7.9/0.0/7.4/0.0/0.0 | 0/10 | - | - / - | - | -/- | - | -0.01/-0.02/0.01/-0.04 | -0.03/0.01 | -0.03/0.28 | 0.06/0.54 | 0.72/0.76 | 0.026 / -4.3 / 0 | 0.68 | [12, 14] | 0.001 | - | 697 |
 
+## EXAM t0dev — 2026-10-29 18:55 — 0 policies, seed 1, homing n 10, balance p14h_stancewide, 2 instances, wall 3 min 16 s
+
+Score = 40 tracking + 20 placement + 20 stillness + 10 turn + 10 survival (tools/exam_report.py). Gains = achieved / commanded (homing: pose-differenced; staircase: sim truth). Stand left: + = the robot stands LEFT of the stop line (sign = side). Pivot = mean |foot yaw rate| of a loaded foot during the 0.5 rad/s turns (sliding turn high, stepping turn ~0). Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/t0dev_2026-10-29_18-52-43
+
+| # | policy | score | trk/plc/still/turn/surv | homing arrived | settled planar m | stand left m / turned deg | gain vx | wz L/R | eff | stairs vx .05/.10/.15/-.10 | vy L/R | wz .3 L/R | wz .5 L/R | wz .8 L/R | stand10 drift m / yaw deg / lifts | pivot rad/s | lifts .8 | swing m | fell | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM stairsreg — 2026-10-29 18:59 — 1 policies, seed 1, homing n 10, balance p14h_stancewide, 1 instances, wall 3 min 4 s
+
+Score = 40 tracking + 20 placement + 20 stillness + 10 turn + 10 survival (tools/exam_report.py). Gains = achieved / commanded (homing: pose-differenced; staircase: sim truth). Stand left: + = the robot stands LEFT of the stop line (sign = side). Pivot = mean |foot yaw rate| of a loaded foot during the 0.5 rad/s turns (sliding turn high, stepping turn ~0). Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/stairsreg_2026-10-29_18-56-50
+
+| # | policy | score | trk/plc/still/turn/surv | homing arrived | settled planar m | stand left m / turned deg | gain vx | wz L/R | eff | stairs vx .05/.10/.15/-.10 | vy L/R | wz .3 L/R | wz .5 L/R | wz .8 L/R | stand10 drift m / yaw deg / lifts | pivot rad/s | lifts .8 | swing m | fell | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7f_kit_gforce_resets | **34.2** | 24.9/0.0/9.3/0.0/0.0 | 0/0 | - | - / - | - | -/- | - | 0.95/1.03/1.10/0.80 | 0.28/0.90 | 0.03/0.06 | 0.48/0.39 | 0.79/0.80 | 0.007 / 0.8 / 1 | 0.56 | [20, 18] | 0.030 | - | 184 |
+
+## EXAM #2 exam2smoke — 2026-10-30 17:19 — 1 policies, seed 1, homing n 3, balance p14h_stancewide, 1 instances, wall 13 min 15 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/exam2smoke_2026-10-30_17-06-35
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7f_kit_alive5 | **54.5** | 10.0 | 17.1 | 10.3 | 6.3 | 3.9 | 4.5 | 2.4 | 0 | 0.80/0.79/0.09 | 24/24 | 3/3 | 0.0838 | 795 |
+
+## EXAM #2 exam2 — 2026-10-31 14:01 — 2 policies, seed 1, homing n 10, balance p14h_stancewide, 2 instances, wall 12 min 34 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/exam2_2026-10-31_13-48-41
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7f_kit_alive5 | **55.1** | 10.0 | 18.4 | 10.2 | 4.6 | 4.5 | 3.9 | 3.5 | 0 | 0.82/0.77/0.08 | 24/24 | 10/10 | 0.0515 | 742 |
+| 2 | lm7f_kit_gforce_airtime | **51.9** | 10.0 | 16.2 | 5.9 | 6.5 | 3.7 | 5.2 | 4.4 | 0 | 0.23/0.79/0.12 | 24/24 | 10/10 | 0.1658 | 746 |
+

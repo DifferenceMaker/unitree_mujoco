@@ -1,8 +1,8 @@
 # The standardized walk exam — metric catalogue
 
 One list of every number the exam records, how it is computed, its units, what it flags and which eye verdict it corresponds to.
-The exam = `tools/exam.sh` (N lock-step headless rigs): per policy **Test 1 staircase** (`tools/staircase.sh`, commander `stairs`) then
-**Test 2 homing** (`tools/homing_trials.sh --n 10 --seed 1`). Same seed = same starts; on the lock-step rig a run is reproducible bit for
+The exam = `tools/exam.sh` (N lock-step headless rigs): per policy **Test 0 handover** (`tools/handover.sh`, 3 arm poses), then **Test 1
+staircase** (`tools/staircase.sh`, commander `stairs`), then **Test 2 homing** (`tools/homing_trials.sh --n 10 --seed 1`). Same seed = same starts; on the lock-step rig a run is reproducible bit for
 bit (det12/det13, seqA/seqB). Records: `homing_<policy>.jsonl` (one line per trial), `stairs_<policy>.jsonl` (one line per staircase),
 the 10 Hz CSVs, and the per-policy `exam/<tag>_<date>.json` written into the milestone (fleetdeck draws the sheets from it).
 Numbers are FLAGS and a ranking aid; the operator's eye on the rig is the verdict (RL Bible rule 34). Status column: live = recorded by the current code (the stance metrics since 2026-10-29 midday); planned = not yet.
@@ -13,10 +13,9 @@ footbonus6_still stumbled at the handover), and the exam never measured it: its 
 stood for 40 s. Test 0 runs FIRST, from the real entry state: the balance policy (CURRENT_BALANCE) stands 10 s holding an arm pose, the
 commander switches to the walk at a zero command, and the next 8 s are recorded; then the walk -> balance leg (stop, switch back, 10 s).
 Arm set (one leg per pose, the same seed): default arms; RIGHT ARM UP + LEFT ARM AT THE SIDE (ActionModule go_to_start: right hand
-(0.25, 0.49, 0.35), left hand (0.05, 0.315, -0.056), torso frame, y outward); both arms forward at desk height; both arms up.
+(0.25, 0.49, 0.35), left hand (0.05, 0.315, -0.056), torso frame, y outward); both arms forward at desk height. Three poses — the code
+(`tools/handover.sh`: default, right_up_left_side, both_forward) has no "both arms up" pose (this line listed a fourth until 2026-10-30).
 
-| metric | definition | units | flags | eye verdict it maps to | status |
-|---|---|---|---|---|---|
 Implementation: three queue items per policy (`handover X Y YAW POSE`), each = segments `bal_stand` (10 s, arms ramped to the pose over
 2 s on /BridgeModule/joint_set_arms), `walk_after` (8 s from the frame the walk became active), `bal_after` (10 s from the switch back).
 Every segment carries the staircase's per-segment metrics (lifts, drift_xy, dx_body, yaw_change_deg, z_min, sep_mean / sep_trend,
@@ -62,6 +61,10 @@ Segments: stand 10 s; vx 0.05 / 0.10 / 0.15 (8 s each), −0.10 (6 s); vy +0.10 
 | footprint | the two feet's positions in the base frame over the stand (scatter) — drawn, not scored | m | — | the stance picture | planned (fleetdeck draws separation/stagger/toe over time instead) |
 
 ## Test 2 — homing (teleport 3–5 m from the table edge, goto, balance switch at the stop, 10 s settle; 10 trials, seed 1)
+Stop pose: the torso front **0.25 m** from the desk edge (operator 2026-10-30: the working distance; `exam.sh --stop-dist`, recorded as
+`meta.stop_dist`), the base 0.15 m further back -> stop pose (−0.05, 0, 0°) for the desk edge at (0.35, 0). Records without `stop_dist`
+(everything before 2026-10-30) used the commander default 0.35 m -> stop pose (−0.15, 0, 0°). Placement errors are relative to the stop
+pose, so the numbers compare; the approach is 10 cm closer to the desk.
 
 | metric | definition | units | flags | eye verdict it maps to | status |
 |---|---|---|---|---|---|
