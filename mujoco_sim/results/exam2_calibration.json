@@ -1,0 +1,208 @@
+{
+ "version": "v1-2026-10-31",
+ "date": "2026-10-31 15:39",
+ "source": "26 Exam #2 records",
+ "records": [
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_airtime_clear9_2026-10-28/exam/land_lm7h_2026-10-31_14-29-42.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_bank_2026-10-28/exam/land_lm7h_2026-10-31_14-30-26.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_drall_2026-10-28/exam/land_lm7h_2026-10-31_14-30-57.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_energy_cot_2026-10-28/exam/land_lm7h_2026-10-31_15-38-26.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_energy_gated_2026-10-28/exam/land_lm7h_2026-10-31_14-32-54.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_fric_2026-10-28/exam/land_lm7h_2026-10-31_14-31-30.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_fric_pc_2026-10-28/exam/land_lm7h_2026-10-31_14-30-39.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_pc_2026-10-28/exam/land_lm7h_2026-10-31_14-37-09.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_pivot_2026-10-28/exam/land_lm7h_2026-10-31_14-48-00.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_still_alive10_2026-10-28/exam/land_lm7h_2026-10-31_14-51-20.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_still_stand15_2026-10-28/exam/land_lm7h_2026-10-31_14-49-29.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_trunk_2026-10-28/exam/land_lm7h_2026-10-31_14-45-56.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7g_trunk_still_2026-10-28/exam/land_lm7h_2026-10-31_14-47-42.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_c1_stance_2026-10-29/exam/land_lm7h_2026-10-31_14-48-28.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_c2_nostep_2026-10-29/exam/land_lm7h_2026-10-31_14-53-03.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h1_bank_2026-10-29/exam/land_lm7h_2026-10-31_15-03-40.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h2_stance_2026-10-29/exam/land_lm7h_2026-10-31_15-09-21.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h3_nostep_2026-10-29/exam/land_lm7h_2026-10-31_15-06-08.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h4_still_2026-10-29/exam/land_lm7h_2026-10-31_15-03-18.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h4p_pivot_2026-10-29/exam/land_lm7h_2026-10-31_15-05-22.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h6_pc_2026-10-29/exam/land_lm7h_2026-10-31_15-09-14.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_a_h6e_energy_2026-10-29/exam/land_lm7h_2026-10-31_15-08-18.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_b_h3_nostep_2026-10-29/exam/land_lm7h_2026-10-31_15-14-17.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7h_b_h4_still_2026-10-29/exam/land_lm7h_2026-10-31_15-14-17.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7f_kit_alive5_2026-10-26/exam/exam2_2026-10-31_14-01-03.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7f_kit_gforce_airtime_2026-10-27/exam/exam2_2026-10-31_14-01-15.json"
+ ],
+ "rule": "provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= 0.5 x median; the rest kept",
+ "cal": {
+  "stand_drift": [
+   0.01,
+   0.1
+  ],
+  "stand_yaw": [
+   1,
+   10
+  ],
+  "stand_lifts": [
+   0,
+   3
+  ],
+  "stand_rate": [
+   0.04085,
+   0.0964
+  ],
+  "stand_sep_trend": [
+   0.0,
+   0.03
+  ],
+  "stand_stagger": [
+   0.01,
+   0.08
+  ],
+  "stand_toe": [
+   2,
+   10
+  ],
+  "stand_jitter": [
+   0.2,
+   1.0
+  ],
+  "stop_settle": [
+   1.0,
+   4.0
+  ],
+  "stop_steps": [
+   1,
+   5
+  ],
+  "stop_resid": [
+   0.005,
+   0.05
+  ],
+  "stop_over_m": [
+   0.1,
+   0.6
+  ],
+  "stop_over_deg": [
+   5,
+   30
+  ],
+  "walk_tilt": [
+   1.5,
+   6.0
+  ],
+  "walk_rate": [
+   0.143685,
+   0.241262
+  ],
+  "walk_sag": [
+   0.03,
+   0.15
+  ],
+  "ho_lifts": [
+   0,
+   2
+  ],
+  "ho_drift": [
+   0.01,
+   0.05
+  ],
+  "ho_sep": [
+   0.01,
+   0.05
+  ],
+  "ho_yaw": [
+   1,
+   5
+  ],
+  "ho_dip": [
+   0.005,
+   0.03
+  ],
+  "ho_jolt": [
+   0.13765,
+   0.47355
+  ],
+  "ho_jump": [
+   11.9175,
+   39.8205
+  ],
+  "ho_wait": [
+   0.5,
+   3.0
+  ],
+  "rung_e": [
+   0.1,
+   0.5
+  ],
+  "impact": [
+   1.181784,
+   1.946188
+  ],
+  "smooth": [
+   0.061572,
+   0.105772
+  ],
+  "smooth_v1": [
+   0.06,
+   0.15
+  ],
+  "pivot": [
+   0.05,
+   0.5
+  ],
+  "slip": [
+   0.057852,
+   0.111563
+  ],
+  "steady": [
+   0.023478,
+   0.038385
+  ],
+  "cot": [
+   0.678811,
+   1.091427
+  ],
+  "stand_tau2": [
+   3451.65,
+   7766.8
+  ],
+  "push_dist": [
+   0.19346,
+   1.10306
+  ],
+  "push_tilt": [
+   2.782,
+   23.856
+  ],
+  "push_rec": [
+   1.02,
+   3.496
+  ],
+  "push_steps": [
+   1,
+   5
+  ],
+  "push_foot": [
+   2.1698,
+   4.6048
+  ],
+  "hm_planar": [
+   0.02,
+   0.1
+  ],
+  "hm_head": [
+   1,
+   5
+  ],
+  "hm_sw": [
+   0.02,
+   0.1
+  ],
+  "hm_prog": [
+   0.25,
+   0.05
+  ],
+  "hm_turn": [
+   0.9,
+   0.3
+  ]
+ }
+}

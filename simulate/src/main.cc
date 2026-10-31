@@ -1107,6 +1107,8 @@ namespace
       const std::lock_guard<std::recursive_mutex> lock(g_headless_mtx);
       g_bridge->publish_state();   // the first lowstate: the stack sees the robot before any command exists
     }
+    bool got_first_cmd = false;          // lock-step bring-up: re-publish the first state until the stack answers (see the wait below)
+    unsigned long long republished = 0;
     // wall-time pacing for the non-lock-step headless mode
     auto t_sync = std::chrono::steady_clock::now();
     double sim_sync = d->time;
@@ -1119,9 +1121,38 @@ namespace
         {
           // sleep until the DDS receive thread signals the next lowcmd (no poll granularity), bounded by the fallback
           std::unique_lock<std::mutex> lk(lockstep_cmd_mutex());
-          lockstep_cmd_cv().wait_for(lk, std::chrono::duration<double, std::milli>(fallback_ms), [&] { return g_bridge->lowcmd_seq() > last_seq; });
+          // Re-publish the UNCHANGED state while waiting (2026-10-31), no step, so the run stays deterministic:
+          //  - bring-up: the one lowstate published before the loop went out before the stack's container subscribed (volatile DDS),
+          //    so the Bridge waited for a state and this loop for a command until the 120 s fallback -- on EVERY rig launch (200 ms);
+          //  - steady state: a lowstate sample lost on the Bridge getter's best-effort reader = MovementModule never sees that
+          //    policy frame, never steps, and the chain stalls (~1 frame in 20 000 on the exam rig) (50 ms; a normal frame takes
+          //    0.5-3 ms). The Bridge setter ignores a repeat of the frame it already answered.
+          const auto deadline = t0 + std::chrono::duration<double, std::milli>(fallback_ms);
+          const auto slice = std::chrono::milliseconds(got_first_cmd ? 50 : 200);
+          while (g_bridge->lowcmd_seq() <= last_seq && std::chrono::steady_clock::now() < deadline)
+          {
+            lockstep_cmd_cv().wait_for(lk, slice, [&] { return g_bridge->lowcmd_seq() > last_seq; });
+            if (g_bridge->lowcmd_seq() <= last_seq && std::chrono::steady_clock::now() < deadline)
+            {
+              lk.unlock();
+              {
+                const std::lock_guard<std::recursive_mutex> glock(g_headless_mtx);
+                g_bridge->publish_state();
+              }
+              ++republished;
+              lk.lock();
+            }
+          }
         }
         if (g_bridge->lowcmd_seq() <= last_seq) ++timeouts;
+        else if (!got_first_cmd)
+        {
+          got_first_cmd = true;
+          std::printf("[HEADLESS] first command after %.1f s (initial state re-published %llu x)\n",
+                      std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), (unsigned long long)republished);
+          republished = 0;
+          std::fflush(stdout);
+        }
         const double waited_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - t0).count();
         if (last_state_policy) { wait_pol_us += waited_us; ++n_pol; } else { wait_oth_us += waited_us; ++n_oth; }
         const uint64_t seq = g_bridge->lowcmd_seq();
@@ -1168,8 +1199,8 @@ namespace
       const double wall = std::chrono::duration<double>(now - t_report).count();
       if (wall >= report_s)
       {
-        std::printf("[HEADLESS] sim_t=%.1f s  rtf=%.2f  frames=%llu  cmd_timeouts=%llu  extra_cmds=%llu  wait/frame: policy %.0f us (n=%llu) other %.0f us (n=%llu)\n",
-                    d->time, (d->time - sim_t_report) / wall, (unsigned long long)frames, (unsigned long long)timeouts, (unsigned long long)extra_cmds,
+        std::printf("[HEADLESS] sim_t=%.1f s  rtf=%.2f  frames=%llu  cmd_timeouts=%llu  extra_cmds=%llu  republished=%llu  wait/frame: policy %.0f us (n=%llu) other %.0f us (n=%llu)\n",
+                    d->time, (d->time - sim_t_report) / wall, (unsigned long long)frames, (unsigned long long)timeouts, (unsigned long long)extra_cmds, (unsigned long long)republished,
                     n_pol ? wait_pol_us / n_pol : 0.0, (unsigned long long)n_pol, n_oth ? wait_oth_us / n_oth : 0.0, (unsigned long long)n_oth);
         wait_pol_us = wait_oth_us = 0.0; n_pol = n_oth = 0;
         std::fflush(stdout);

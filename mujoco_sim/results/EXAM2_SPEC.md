@@ -197,6 +197,23 @@ Possible, two levels:
   CoM projection in the top view.
 
 ## 6. Noise floor and calibration
+
+### Calibration v1-2026-10-31 (done; `tools/exam_calibrate.py`, `results/exam2_calibration.json`)
+What it is: every metric scores through a ramp between a good value g and a bad value b; a guessed pair that every policy beats (or
+fails) gives everyone the same points and measures nothing (before v1: the handover target jump scored 0 for 64 % of switches, push
+distance 0 for 52 % of pushes, speed steadiness full marks for 54 % of policies). The calibration reads the raw values of many exam
+records (`exam_score.raw_values`) and re-sets ONLY the provisional keys (`exam_score.PROV`, the spec's guesses) to the population's
+10th -> 90th percentile, never narrower than half the median (a tight population -- walking torso rate 0.17-0.21 rad/s -- would
+otherwise turn a 20 % difference into the whole weight). Every other key is a definition (the operator's tolerances, physical
+meaning) and is kept; the tool flags it DEAD when > 80 % of the samples sit at one end -- v1: `walk_sag` (all 26 policies sag < 1 cm
+below the balance stand: 100 % full marks), left for the operator. v1 = 26 policies (land_lm7h: lm7h 11 + lm7g 13, + lm7f alive5 /
+gforce_airtime). Every score carries its version (`meta.score.calib`) and the table it used (`meta.score.cal`); `--apply` re-scores
+stored records (the raw data stays; scores are recomputable). Effect: scores +0.5..+3, order nearly unchanged.
+
+### Noise floor (measured 2026-10-31)
+Only homing depends on the seed. 4 policies x seeds 1-3 (homing-only runs, tools/homing_seed.sh): the homing points (= the total)
+move by sd 0.43 on average (0.12-0.73), the largest range 1.7 (lm7g_still_alive10). **Differences under ~1 point are ties.**
+The rest repeats bit for bit only when no policy frame is lost (section 7b); the land_lm7h run lost one frame on 9 of 24 rows.
 The lock-step rig repeats a seed bit for bit, so re-running the same seed shows no noise; the noise is in **which starts the seed
 draws**. One seed = one sample of 10 homing starts. Example: lm7f_kit_alive5's settled errors (4.3, 8.6, 7.2, 9.3, 8.6, 6.2, 1.5,
 5.0, 12.9, 6.9 cm) have a mean of 7.05 cm and a std of 3.1 cm; the standard error of the mean is $\sigma/\sqrt{n}$ = 3.1/√10 = 1.0 cm.
@@ -242,7 +259,19 @@ Where it lives:
 - **Speed:** the "25 % slower" reading was CPU pinning, not code: the same Test 0 on one rig ran at rtf 1.96 pinned to 4 threads
   (`exam.sh` default) and **2.80 unpinned** (`--no-pin`, as `land` runs); the exam counters on / off (`SIM_EXAM_COUNTERS=0`) changed
   nothing (rtf 1.96 vs 1.97, non-policy frames 747 vs 744 µs).
-- **Wall time:** one policy, full Exam #2 with n 10 homing = 742–746 s on a pinned rig (2 rigs in parallel, 2026-10-31).
+- **Wall time:** one policy, full Exam #2 with n 10 homing = 742–746 s on a pinned rig (2 rigs in parallel, 2026-10-31); 24 policies
+  on 8 unpinned rigs = 59 min 39 s (rtf ~1.4 per rig; ~15 min per policy per rig); one policy alone unpinned = 11 min.
+- **Bring-up deadlock (fixed 2026-10-31):** every rig launch lost up to 120 s: the sim published its first lowstate once, before the
+  stack's container subscribed, then both sides waited for the 120 s fallback. The sim now re-publishes the unchanged state every
+  200 ms until the first command (no step; deterministic).
+- **The stall, second cause (fixed 2026-10-31):** the lost sample can also be the lowstate on the Bridge GETTER's reader (the conductor's
+  re-send then repeats the previous frame): the sim re-publishes the unchanged state every 50 ms while it waits for a command; the
+  setter ignores a repeat of the frame it answered. Setter cap: 10 s, and only after 100 answered frames (a 3 s cap cut off slow
+  answers under 8 rigs at the bring-up and at the first exam item = a wall-clock-dependent run).
+- **A refused switch (fixed 2026-10-31):** lm7g_energy_cot's balance switch was never granted under 8-rig load (alone it was) and the
+  commander's queue waited forever (rig 4 lost 45 min). The scheduler now fails such an item after 30 s of sim (`FAIL_switch_start`
+  record, the driver moves on); a Test 1 that never ran scores survival 0. Open: MovementModule's switch gate looks wall-clock
+  dependent (granted alone, refused under load).
 
 ## 8. Training band (recommendation, separate decision)
 Today's walk box: vx (−0.8, 1.2), vy ±0.3, wz ±0.5 or ±0.8. Proposal: vx (−0.5, 1.0), vy ±0.3, wz ±0.8. Homing never asks more than
