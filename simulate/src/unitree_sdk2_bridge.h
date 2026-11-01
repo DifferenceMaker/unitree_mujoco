@@ -8,6 +8,7 @@
 #include <unitree/dds_wrapper/robots/g1/g1.h>
 #include <unitree/idl/hg/BmsState_.hpp>
 #include <unitree/idl/hg/IMUState_.hpp>
+#include <unitree/idl/ros2/String_.hpp>
 
 #include <iostream>
 #include <cstring>
@@ -34,6 +35,16 @@ inline bool& lockstep_sync_publish() { static bool v = false; return v; }
 // next lowcmd lands (2026-10-28 evening: replaces a 20 us sleep-poll whose real granularity was ~70 us per frame)
 inline std::mutex& lockstep_cmd_mutex() { static std::mutex m; return m; }
 inline std::condition_variable& lockstep_cmd_cv() { static std::condition_variable cv; return cv; }
+
+// lock-step COMPACT transport (2026-11-01, exam speed; SIM_LOCKSTEP_COMPACT=1 with BRIDGE_LOCKSTEP_COMPACT=1): every frame publishes
+// rt/lockstep/state (hex of uint32 tick + float32 q[num_motor]) and the full rt/lowstate only on POLICY frames (tick %
+// SIM_LOCKSTEP_POLICY_MS == 0: the only frames the Bridge getter forwards to MovementModule); the Bridge setter answers on
+// rt/lockstep/cmd (hex of uint32 tick + float32 q[n] + float32 tau[n]), written onto the last full rt/lowcmd (kp / kd / dq / mode
+// stay). The setter's Python DDS work per 2 ms frame was LowState deserialize 348 us + CRC 86 us + LowCmd serialize 184 us = most
+// of the 0.81 ms the sim waited per frame (10 rigs, rtf 1.70); the hex String_ costs ~6 us each way. The same float32 values travel
+// on both paths, so the physics is unchanged.
+inline bool& lockstep_compact() { static bool v = false; return v; }
+inline int& lockstep_policy_ms() { static int v = 20; return v; }
 
 template <class Base>
 class CountedSub : public Base
@@ -291,6 +302,45 @@ public:
 
     std::shared_ptr<unitree::robot::ChannelPublisher<typename LowState_t::MsgType>> lowstate_direct_;   // lock-step: synchronous rt/lowstate
 
+    // lock-step COMPACT transport (see lockstep_compact())
+    std::shared_ptr<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>> compact_state_pub_;
+    std::shared_ptr<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>> compact_cmd_sub_;
+    std::atomic<uint64_t> compact_bad_{0};
+
+    static void hex_append(std::string& out, const void* p, size_t n)
+    {
+        static const char* d = "0123456789abcdef";
+        const uint8_t* b = static_cast<const uint8_t*>(p);
+        for (size_t i = 0; i < n; i++) { out.push_back(d[b[i] >> 4]); out.push_back(d[b[i] & 15]); }
+    }
+
+    void on_compact_cmd(const std_msgs::msg::dds_::String_& s)
+    {
+        const std::string& h = s.data();
+        auto nib = [](char c) -> int { return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : -1; };
+        const size_t nbytes = h.size() / 2;
+        if (h.size() % 2 || nbytes < 4 || (nbytes - 4) % 8) { ++compact_bad_; return; }
+        std::vector<uint8_t> b(nbytes);
+        for (size_t i = 0; i < nbytes; i++) {
+            const int hi = nib(h[2 * i]), lo = nib(h[2 * i + 1]);
+            if (hi < 0 || lo < 0) { ++compact_bad_; return; }
+            b[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        const int m = static_cast<int>((nbytes - 4) / 8);   // motors on the wire: q[m] then tau[m]
+        {
+            std::lock_guard<std::mutex> lock(lowcmd->mutex_);
+            for (int i = 0; i < m && i < num_motor_; i++) {
+                float q, tau;
+                std::memcpy(&q, &b[4 + 4 * i], 4);
+                std::memcpy(&tau, &b[4 + 4 * m + 4 * i], 4);
+                lowcmd->msg_.motor_cmd()[i].q() = q;
+                lowcmd->msg_.motor_cmd()[i].tau() = tau;
+            }
+        }
+        { const std::lock_guard<std::mutex> lk(lockstep_cmd_mutex()); lowcmd->seq.fetch_add(1, std::memory_order_release); }
+        lockstep_cmd_cv().notify_all();
+    }
+
     void publish_state() override
     {
         if(!mj_data_) return;
@@ -300,6 +350,16 @@ public:
             lowstate_direct_ = std::make_shared<unitree::robot::ChannelPublisher<typename LowState_t::MsgType>>("rt/lowstate");
             lowstate_direct_->InitChannel();
         }
+        const bool compact = sync && lockstep_compact();
+        if (compact && !compact_state_pub_) {
+            compact_state_pub_ = std::make_shared<unitree::robot::ChannelPublisher<std_msgs::msg::dds_::String_>>("rt/lockstep/state");
+            compact_state_pub_->InitChannel();
+            compact_cmd_sub_ = std::make_shared<unitree::robot::ChannelSubscriber<std_msgs::msg::dds_::String_>>("rt/lockstep/cmd");
+            compact_cmd_sub_->InitChannel([this](const void* p) { this->on_compact_cmd(*static_cast<const std_msgs::msg::dds_::String_*>(p)); }, 1);
+            std::printf("[LOCKSTEP] compact transport: rt/lockstep/state every frame, rt/lowstate on policy frames (every %d ms), "
+                        "commands on rt/lockstep/cmd or rt/lowcmd\n", lockstep_policy_ms());
+        }
+        std::string compact_hex;
         if (sync) lowstate->lock();
         if(sync || lowstate->trylock()) {
             // walk HUD: actual yaw-frame base velocity (cmd-vs-actual bars).
@@ -378,8 +438,20 @@ public:
             }
             
             lowstate->msg_.tick() = std::round(mj_data_->time / 1e-3);
-            if (sync) { lowstate_direct_->Write(lowstate->msg_, 0); lowstate->unlock(); }   // published NOW, never skipped
+            if (compact) {
+                const uint32_t tick = lowstate->msg_.tick();
+                compact_hex.reserve(2 * (4 + 4 * num_motor_));
+                hex_append(compact_hex, &tick, 4);
+                for (int i = 0; i < num_motor_; i++) { const float q = lowstate->msg_.motor_state()[i].q(); hex_append(compact_hex, &q, 4); }
+            }
+            const bool full = !compact || (lockstep_policy_ms() > 0 && lowstate->msg_.tick() % lockstep_policy_ms() == 0);
+            if (sync) { if (full) lowstate_direct_->Write(lowstate->msg_, 0); lowstate->unlock(); }   // published NOW, never skipped
             else lowstate->unlockAndPublish();
+        }
+        if (compact && !compact_hex.empty()) {   // after the full lowstate: the getter's chain to MovementModule starts first
+            std_msgs::msg::dds_::String_ s;
+            s.data() = std::move(compact_hex);
+            compact_state_pub_->Write(s, 0);
         }
         // highstate
         if(highstate->trylock()) {

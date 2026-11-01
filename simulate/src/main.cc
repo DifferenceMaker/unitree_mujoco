@@ -527,6 +527,19 @@ namespace
               }
             }
 
+            // the standing snapshot for reset_at, taken at sim 10 s (2026-11-01): the policy is engaged (~4.6 s) and standing there,
+            // before the exam's first item (sim 15 s). The first-teleport rule alone missed it when a robot was already down at its first
+            // teleport (land_lm7h_r2: lm7g_energy_cot fell while its balance switches were refused; every reset then had nothing)
+            {
+              std::lock_guard<std::mutex> rlk(scripted_reset.mtx);
+              if (scripted_reset.stand_qpos.empty() && d->time >= 10.0 && m->njnt > 0 && m->jnt_type[0] == mjJNT_FREE && d->qpos[2] > 0.8)
+              {
+                scripted_reset.stand_qpos.assign(d->qpos, d->qpos + m->nq);
+                std::printf("[RESET] standing snapshot taken at sim_t=%.3f (z %.3f)\n", d->time, d->qpos[2]);
+                std::fflush(stdout);
+              }
+            }
+
             // scripted teleport (homing rig): base pose set, velocities zeroed
             {
               std::lock_guard<std::mutex> tlk(scripted_teleport.mtx);
@@ -1594,6 +1607,10 @@ int main(int argc, char **argv)
   {
     g_lockstep = [] { const char* l = std::getenv("SIM_LOCKSTEP"); return l && l[0] == '1'; }();
     if (g_lockstep) lockstep_sync_publish() = true;   // synchronous lowstate publish in lock-step (see unitree_sdk2_bridge.h)
+    if (g_lockstep) {   // the compact lock-step transport (2026-11-01, see unitree_sdk2_bridge.h)
+      const char* c = std::getenv("SIM_LOCKSTEP_COMPACT"); lockstep_compact() = c && c[0] == '1';
+      const char* pm = std::getenv("SIM_LOCKSTEP_POLICY_MS"); if (pm) lockstep_policy_ms() = std::atoi(pm);
+    }
     char err[1000] = "";
     const std::string scene = param::config.robot_scene.string();
     m = mj_loadXML(scene.c_str(), nullptr, err, sizeof err);

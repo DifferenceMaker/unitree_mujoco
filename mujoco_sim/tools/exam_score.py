@@ -141,13 +141,19 @@ CAL_DEFAULT = {
     "rung_e": (0.1, 0.5),
     "impact": (1.5, 3.5), "smooth": (0.03, 0.10), "smooth_v1": (0.06, 0.15), "pivot": (0.05, 0.5), "slip": (0.02, 0.15), "steady": (0.03, 0.15),
     "cot": (0.4, 1.2), "stand_tau2": (1500, 6000),
-    "push_dist": (0.05, 0.5), "push_tilt": (3, 20), "push_rec": (1, 4), "push_steps": (1, 5), "push_foot": (2.0, 6.0),
+    "push_dist": (0.05, 0.5), "push_tilt": (3, 20), "push_rec": (1, 4), "push_steps": (2, 6), "push_foot": (2.0, 6.0),   # steps: operator "max 2-3 steps"
     "hm_planar": (0.02, 0.10), "hm_head": (1, 5), "hm_sw": (0.02, 0.10), "hm_prog": (0.25, 0.05), "hm_turn": (0.9, 0.3),
+    # 2026-11-01 (operator: counter-sway, swinging arms, chaotic recoveries; energy = actuation over ALL phases): first guesses -> calibrate
+    "arm_sway": (0.3, 3.0), "push_counter": (1.0, 8.0), "push_sway": (0.15, 0.6), "push_sep": (2.0, 12.0), "push_arm": (3.0, 25.0),
+    "push_energy": (200.0, 1000.0), "en_all_tau2": (3000.0, 9000.0), "en_all_power": (100.0, 350.0),
 }
 # PROVISIONAL keys = the spec's first guesses (no physical anchor): the calibration sets them from the population (p10 -> p90);
 # every other key is a definition the calibration keeps (and only flags when dead: > 80 % of the samples at one end)
 PROV = {"stand_rate", "walk_rate", "ho_jolt", "ho_jump", "impact", "smooth", "smooth_v1", "slip", "steady", "cot", "stand_tau2",
-        "push_dist", "push_tilt", "push_rec", "push_foot"}
+        "push_dist", "push_tilt", "push_rec", "push_foot",
+        "arm_sway", "push_counter", "push_sway", "push_sep", "push_arm", "push_energy", "en_all_tau2", "en_all_power"}
+# one push = 1.0: upright and no counter-sway first, few coordinated steps, still arms (operator 2026-11-01)
+PUSH_W = {"tilt": 0.15, "counter": 0.15, "sway": 0.10, "steps": 0.15, "sep": 0.10, "rec": 0.10, "dist": 0.10, "foot": 0.05, "arm": 0.10}
 HO_W = {"lifts": 0.25, "drift": 0.2, "sep": 0.15, "yaw": 0.1, "dip": 0.1, "jolt": 0.1, "jump": 0.05, "wait": 0.05}   # one switch = 1.0
 CAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results", "exam2_calibration.json")
 
@@ -227,7 +233,19 @@ def raw_values(handover, ladders, pushes, homing):
         p = s.get("push")
         if not p: continue
         V["pushes"].append({"held": bool(p.get("held")), "dist": p.get("dist_m"), "tilt": p.get("tilt_peak_deg"),
-                            "rec": p.get("recovery_s") if p.get("recovery_s") is not None else 5.0, "steps": max(p.get("steps") or 0, 0), "foot": p.get("foot_peak_bw")})
+                            "rec": p.get("recovery_s") if p.get("recovery_s") is not None else 5.0, "steps": max(p.get("steps") or 0, 0), "foot": p.get("foot_peak_bw"),
+                            "counter": p.get("counter_sway_deg"), "sway": p.get("sway_rate_rms"), "sep": p.get("sep_dev_cm"), "arm": p.get("arm_peak_deg"),
+                            "energy": p.get("energy_J")})
+    # arm sway (2026-11-01): the arm joints' angle std in the 20 s stand, the stops and the walking rungs up to 0.5 m/s
+    arm_segs = ([stand] if stand else []) + [s for s, _, _ in stops] + walk
+    V["arm_sway"] = mean([s["arm_std_deg"] for s in arm_segs if s and s.get("arm_std_deg") is not None])
+    # energy over ALL phases (operator 2026-11-01: "how much the motors get actuated in sum ... for all test phases"): Tests 0-2
+    E = [s.get("energy") for r in handover or [] for s in r.get("segments", [])] + [s.get("energy") for s in (ladders or {}).get("segments", [])] \
+        + [s.get("energy") for s in (pushes or {}).get("segments", [])]
+    E = [e for e in E if e and e.get("P_W") is not None and e.get("mech_J") is not None and e["P_W"] > 0]
+    dur = sum(e["mech_J"] / e["P_W"] for e in E)
+    V["en_all_power"] = sum(e["mech_J"] for e in E) / dur if dur > 0 else None
+    V["en_all_tau2"] = sum(e["tau2"] for e in E) / dur if dur > 0 else None
     V["homing"] = []
     for r in homing or []:
         if r.get("result") != "ARRIVED":
@@ -258,24 +276,26 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
     ran = bool(ladders and ladders.get("segments"))   # a Test 1 that never ran (no record, or FAIL_switch_start) = the exam did not run
     add("survival", "all", "falls", "falls (Tests 0, 1, 3)", len(falls), "", 10, s=(0.5 ** len(falls)) if ran else 0.0, ck="none")
     # ── stability 30 = 20 s stand 7 + stops 5 + walking torso 6 + handover 12
-    add("stability", "ladders", "stand_drift", "20 s stand: drift", V["stand_drift"], "m", 1.5)
-    add("stability", "ladders", "stand_yaw", "20 s stand: heading change", V["stand_yaw"], "deg", 1.0)
-    add("stability", "ladders", "stand_lifts", "20 s stand: foot lifts", V["stand_lifts"], "", 1.5)
+    # stability 30 (2026-11-01) = stand 6 + stops 4 + walking 5 + handover 12 + arms locked 3
+    add("stability", "ladders", "stand_drift", "20 s stand: drift", V["stand_drift"], "m", 1.25)
+    add("stability", "ladders", "stand_yaw", "20 s stand: heading change", V["stand_yaw"], "deg", 0.75)
+    add("stability", "ladders", "stand_lifts", "20 s stand: foot lifts", V["stand_lifts"], "", 1.25)
     add("stability", "ladders", "stand_rate", "20 s stand: torso roll/pitch rate rms", V["stand_rate"], "rad/s", 1.0, prov=True)
     add("stability", "ladders", "stand_sep_trend", "20 s stand: feet separation trend", V["stand_sep_trend"], "m", 0.5)
     add("stability", "ladders", "stand_stagger", "20 s stand: fore-aft stagger", V["stand_stagger"], "m", 0.5)
-    add("stability", "ladders", "stand_toe", "20 s stand: toe angle (mean |L|, |R|)", V["stand_toe"], "deg", 0.5)
+    add("stability", "ladders", "stand_toe", "20 s stand: toe angle (mean |L|, |R|)", V["stand_toe"], "deg", 0.25)
     add("stability", "ladders", "stand_jitter", "20 s stand: knee jitter", V["stand_jitter"], "deg/sample", 0.5)
     ss = [mean([R(x["settle"], "stop_settle"), R(x["steps"], "stop_steps"), R(x["resid"], "stop_resid"),
                 R(x["over_deg"], "stop_over_deg") if x["ax"] == "wz" else R(x["over_m"], "stop_over_m")]) if x["ok"] else 0.0 for x in V["stops"]]
     sv = mean(ss + [0.0] * max(0, EXPECTED_STOPS - len(ss)), 0.0)
     add("stability", "ladders", "stops", f"stops from the ladder tops ({len(ss)}/{EXPECTED_STOPS}): settle time, steps, residual drift, overshoot",
-        sv, "score", 5.0, s=sv, ck="none")
-    add("stability", "ladders", "walk_tilt", "walking (|v| <= 0.5): torso tilt", V["walk_tilt"], "deg", 2.5)
-    add("stability", "ladders", "walk_rate", "walking (|v| <= 0.5): torso roll/pitch rate rms", V["walk_rate"], "rad/s", 2.5, prov=True)
+        sv, "score", 4.0, s=sv, ck="none")
+    add("stability", "ladders", "walk_tilt", "walking (|v| <= 0.5): torso tilt", V["walk_tilt"], "deg", 2.0)
+    add("stability", "ladders", "walk_rate", "walking (|v| <= 0.5): torso roll/pitch rate rms", V["walk_rate"], "rad/s", 2.0, prov=True)
     add("stability", "ladders", "walk_sag", "walking: height sag vs the balance policy's stand", V["walk_sag"], "m", 1.0)
     sw = [sum(w * R(x[k], "ho_" + k) for k, w in HO_W.items()) if x["ok"] else 0.0 for x in V["switches"]]
     hs = mean(sw + [0.0] * max(0, EXPECTED_SWITCHES - len(sw)), 0.0)
+    add("stability", "ladders", "arm_sway", "arms locked: arm joint angle std (stand, stops, walking <= 0.5)", V["arm_sway"], "deg", 3.0, prov=True)
     add("stability", "handover", "handover", f"handover switches ({len(sw)}/{EXPECTED_SWITCHES}): steps, drift, inward draw, turn, dip, jolt, target jump, wait",
         hs, "score", 12.0, s=hs, ck="none")
     # ── tracking 20 = vx 8 + vy 4 + wz 8: per rung ramp(e; rung_e); a rung not run (fall) = 0
@@ -294,14 +314,19 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
     add("gait", "ladders", "swing", "swing height inside 3-10 cm (share of rungs >= 0.2 m/s)", V["swing_share"], "share", 1.0, s=V["swing_share"] or 0.0, ck="none")
     add("gait", "ladders", "steady", "speed steadiness: planar v std within a rung", V["steady"], "m/s", 1.0, prov=True)
     # ── energy 10 = cost of transport at vx 0.3 / 0.5 (6) + standing tau^2 (4)
-    add("energy", "ladders", "cot", "cost of transport at vx 0.3 / 0.5 (mechanical |tau qdot|)", V["cot"], "", 6.0, prov=True)
-    add("energy", "ladders", "stand_tau2", "20 s stand: mean sum tau^2", V["stand_tau2"], "N^2m^2", 4.0, prov=True)
+    # energy 10 (2026-11-01) = actuation over all phases 4 (tau^2 2 + mechanical power 2) + push recovery 2 + cost of transport 2 + stand tau^2 2
+    add("energy", "all", "en_all_tau2", "all phases (Tests 0-2): mean sum tau^2 (motor load)", V["en_all_tau2"], "N^2m^2", 2.0, prov=True)
+    add("energy", "all", "en_all_power", "all phases (Tests 0-2): mean mechanical power sum |tau qdot|", V["en_all_power"], "W", 2.0, prov=True)
+    pe = mean([p["energy"] for p in V["pushes"] if p["held"] and p.get("energy") is not None])
+    add("energy", "pushes", "push_energy", "push recovery: mechanical energy in the 5 s after a kick (held pushes)", pe, "J", 2.0, prov=True)
+    add("energy", "ladders", "cot", "cost of transport at vx 0.3 / 0.5 (mechanical |tau qdot|)", V["cot"], "", 2.0, prov=True)
+    add("energy", "ladders", "stand_tau2", "20 s stand: mean sum tau^2", V["stand_tau2"], "N^2m^2", 2.0, prov=True)
     # ── pushes 10: per push (24) held -> mean of 5 ramps, a fall -> 0
-    ps = [mean([R(p["dist"], "push_dist"), R(p["tilt"], "push_tilt"), R(p["rec"], "push_rec"), R(p["steps"], "push_steps"), R(p["foot"], "push_foot")])
-          if p["held"] else 0.0 for p in V["pushes"]]
+    ps = [sum(w * R(p[k], "push_" + k) for k, w in PUSH_W.items()) if p["held"] else 0.0 for p in V["pushes"]]
     held = sum(1 for p in V["pushes"] if p["held"])
     pv = sum(ps) / max(EXPECTED_PUSHES, len(ps))
-    add("pushes", "pushes", "pushes", f"pushes held {held}/{EXPECTED_PUSHES}: distance, tilt, recovery time, steps, foot peak", pv, "score", 10.0, prov=True, s=pv, ck="none")
+    add("pushes", "pushes", "pushes", f"pushes held {held}/{EXPECTED_PUSHES}: tilt, counter-sway, sway, steps, feet, recovery, distance, foot peak, arms",
+        pv, "score", 10.0, prov=True, s=pv, ck="none")
     # ── homing 10 per trial: settled 4 + heading 1 + at the switch 1 + progress 2 + turn 2 (minus 0.1 per rescue); not arrived = 0
     hv = [0.4 * R(x["planar"], "hm_planar") + 0.1 * R(x["head"], "hm_head") + 0.1 * R(x["sw"], "hm_sw") + 0.2 * R(x["prog"], "hm_prog")
           + 0.2 * max(0.0, R(x["turn"], "hm_turn") - 0.1 * x["rescue"]) if x["ok"] else 0.0 for x in V["homing"]]

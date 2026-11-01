@@ -24,7 +24,8 @@ es = importlib.util.module_from_spec(spec); spec.loader.exec_module(es)
 
 MIN_SPAN = 0.5   # a ramp spans at least half the population median: differences under +-25 % of the typical value cannot swing it end to end
 SCALAR = ["stand_drift", "stand_yaw", "stand_lifts", "stand_rate", "stand_sep_trend", "stand_stagger", "stand_toe", "stand_jitter", "stand_tau2",
-          "walk_tilt", "walk_rate", "walk_sag", "impact", "smooth", "pivot", "slip", "steady", "cot"]
+          "walk_tilt", "walk_rate", "walk_sag", "impact", "smooth", "pivot", "slip", "steady", "cot",
+          "arm_sway", "en_all_tau2", "en_all_power"]   # + 2026-11-01
 
 
 def pct(v, q):
@@ -52,7 +53,7 @@ def samples(recs):
             add("rung_e", e)
         for p in V["pushes"]:
             if p["held"]:
-                for k in ("dist", "tilt", "rec", "steps", "foot"): add("push_" + k, p[k])
+                for k in ("dist", "tilt", "rec", "steps", "foot", "counter", "sway", "sep", "arm", "energy"): add("push_" + k, p.get(k))
         for x in V["homing"]:
             if x["ok"]:
                 for k in ("planar", "head", "sw", "prog", "turn"): add("hm_" + k, x[k])

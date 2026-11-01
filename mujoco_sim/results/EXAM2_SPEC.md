@@ -189,6 +189,28 @@ Reported per phase (stand, each ladder, pushes, homing) on the page.
 | pushes 10 | mean push score over 24 (a fall = 0; per push the mean of distance 5 → 50 cm, tilt peak 3 → 20°, recovery time 1 → 4 s, steps 1 → 5, foot peak 2 → 6 × body weight — the smoke's recoveries peaked 2.9–5.4 BW) *(prov)* |
 | homing 10 | per trial (not arrived = 0): settled 4, heading 1, at the switch 1, progress speed 2, turn gain 2 minus 0.1 per rescue pulse |
 
+### As implemented 2026-11-01 (the operator's three focus items made visible; calibration v2-2026-11-01) — replaces the rows above where they differ
+Operator 2026-11-01: counter-sway after pushes, arms "like pendulums", chaotic recoveries — "We need all of those in the exam to be seen";
+energy "for all test phases". New raw values (commander `homing_commander.py` + `exam_score.raw_values`):
+- **push counter-sway:** the lean along the push direction from the signed roll / pitch minus the pre-push mean,
+  $L = (\theta - \theta_0)\cos a - (\phi - \phi_0)\sin a$ for a push from direction $a$; the first excursion = the largest $|L|$ within 1 s of the
+  kick, the counter-sway = the largest lean to the other side after it. Also torso roll/pitch rate rms after the kick (sway), the feet
+  separation's largest change (coordination), the arms' largest move from their pre-push pose, the mechanical energy of the recovery.
+- **arm sway:** mean over the 14 arm joints of the angle std, over the 20 s stand, the stops and the walking rungs ≤ 0.5 m/s.
+- **all-phase energy:** mean Σ τ² and mean Σ |τ q̇| per second over the segments of Tests 0–2.
+
+| quality | change |
+|---|---|
+| stability 30 | stand 6 (drift 1.25, heading 0.75, lifts 1.25, rate 1, separation trend 0.5, stagger 0.5, toe 0.25, jitter 0.5) · stops 4 · walking 5 (tilt 2, rate 2, sag 1) · handover 12 · **arm sway 3** (0.3 → 3.0° *(prov)*) |
+| energy 10 | **all phases Σ τ² 2** (3000 → 9000 *(prov)*) · **all phases mechanical power 2** (100 → 350 W *(prov)*) · **push recovery energy 2** (200 → 1000 J *(prov)*) · cost of transport 2 · stand Σ τ² 2 |
+| pushes 10 | per push: tilt .15, **counter-sway .15** (1 → 8°), **sway rate .10** (.15 → .6 rad/s), steps .15 (2 → 6), **feet separation .10** (2 → 12 cm), recovery time .10, distance .10, foot peak .05, **arm peak .10** (3 → 25°); all *(prov)* |
+| survival 10 | 0 when Test 1 did not run (a never-granted switch = `FAIL_switch_start`, now after 10 s: operator "max 10 seconds") |
+
+Calibration **v2-2026-11-01** (`results/exam2_calibration.json`): the 25 policies of `land_lm7h_r2_2026-11-01_11-22-18` (lm7h 11 + lm7g 12 +
+lm7f 2; lm7g_energy_cot's record of that run was broken -- its switch was refused -- and excluded). Examples: arm sway 1.16 → 1.96°,
+counter-sway 0.32 → 5.78°, push separation 11.8 → 55.3 mm (was DEAD: 89 % at one end), push energy 577 → 1846 J, all-phase τ²
+7247 → 12190 (was DEAD), all-phase power 95.5 → 165 W. `walk_sag` stays DEAD (operator: "1 cm sag is completely fine").
+
 ## 5. Stance drawing
 Possible, two levels:
 - **Top view (done):** the two soles at true size (26 × 8.6 cm) from the recorded separation, stagger and toe angles.
@@ -218,6 +240,19 @@ The lock-step rig repeats a seed bit for bit, so re-running the same seed shows 
 draws**. One seed = one sample of 10 homing starts. Example: lm7f_kit_alive5's settled errors (4.3, 8.6, 7.2, 9.3, 8.6, 6.2, 1.5,
 5.0, 12.9, 6.9 cm) have a mean of 7.05 cm and a std of 3.1 cm; the standard error of the mean is $\sigma/\sqrt{n}$ = 3.1/√10 = 1.0 cm.
 Exam #1's placement = 20 (1 − ē / 10 cm), so 1 cm = 2 points: two policies 2 points apart on placement are a coin toss.
+
+### Run-to-run spread (measured 2026-11-01) — larger than the floor above
+The same 10 policies ran twice on the same exam timeline (`speed10_2026-11-01_12-23-37` on the old wire, `compact10_2026-11-01_12-40-02`
+on the compact wire, which is bit-identical physics -- section 7c): the totals moved by a mean |Δ| of 2.75 points, sd of the paired
+differences 3.2 → **one run's sd ≈ 3.2 / √2 = 2.3 points** (lm7h_a_h4_still 56.1 → 59.2, lm7g_fric 52.9 → 57.1, lm7h_b_h3_nostep 54.3 → 49.4).
+Where it comes from: two compact rigs with the same policy traced frame by frame are IDENTICAL for 64.28 s, then the first difference is in
+the command (ctrl), not the state, 1.8 s after the walk → balance switch of Test 0: the arm targets (`/BridgeModule/joint_set_arms`) are
+delivered by wall-clock arrival, not stamped to a sim frame, so once their value changes it lands one or two frames apart between runs. The
+contact dynamics of walking amplify that difference until every later test starts from a different state. Typical consequence:
+lm7h_b_h3_nostep's 20 s stand turned 107° (r2: 1.4°) in 2 of 3 runs, it then walked the vx rungs into the desk (tracking 9.4 → 5.8).
+Meaning: one run is one sample of the policy's outcome under tiny timing differences; two policies less than ~2 × 2.3 × √2 ≈ 6.5 points
+apart in single runs are not separable at ~95 %; the mean of 2 runs has sd 2.3 / √2 = 1.6. Frame-stamping the arm stream would make
+re-runs bit-identical (reproducible) but would not remove the spread: any other tiny change moves the outcome the same way.
 
 Calibration run (once, ~1 h on 8 rigs): 4 reference policies (gforce_airtime, still_alive10, footbonus6_still, alive5) × 3 seeds →
 (a) the g/b values from the real distributions, (b) the total score's spread across seeds = the noise floor, printed as score ± floor
@@ -272,6 +307,24 @@ Where it lives:
   commander's queue waited forever (rig 4 lost 45 min). The scheduler now fails such an item after 30 s of sim (`FAIL_switch_start`
   record, the driver moves on); a Test 1 that never ran scores survival 0. Open: MovementModule's switch gate looks wall-clock
   dependent (granted alone, refused under load).
+
+## 7c. Rig speed 2026-11-01 (operator target: "10 policies running in parallel and all take 10 minutes")
+- **Measured** (10 unpinned rigs, old code, per process): Bridge conductor 86 % of a core (a 0.2 ms spin poll), setter 72 %, getter 36 %,
+  MovementModule 25 %, sim 21 %. Per 2 ms frame the sim waited 0.81 ms for the setter on the 9 non-policy frames and 2.9 ms on the policy
+  frame; the setter's Python DDS work per frame was LowState deserialize 348 µs + CRC 86 µs + LowCmd serialize 184 µs.
+- **Fixes (Aspired_Robot_Project-homing):** the conductor sleeps on a guard condition fed by a joints_q pump thread (spin cap 20 ms);
+  MovementModule spin 20 ms; the getter forwards only policy frames in lock-step; the setter treats only a NEWER tick as a new frame
+  (start-up 120 s → 2 s), blocks on its command queue instead of 0.5 ms polls, skips the CRC in lock-step (the sim never checks it); switch
+  timeouts 10 s. **unitree_mujoco:** the standing snapshot at sim 10 s; `exam.sh` TRIAL_T0 15 (was 40), `--no-milestone`, launch stagger 3 s.
+- **The compact wire** (`LOCOSW_COMPACT=1`, default in lock-step; `unitree_sdk2_bridge.h` + setter): every frame the sim publishes
+  `rt/lockstep/state` = hex of uint32 tick + float32 q[27] and the full `rt/lowstate` only on policy frames (the only ones the getter
+  forwards); the setter answers on `rt/lockstep/cmd` = hex of tick + q + tau, written onto the last full `rt/lowcmd` (kp / kd / dq stay; a
+  full lowcmd whenever the setter's constants change). ~6 µs each way instead of 348 / 270 µs. **Proof:** `tools/wire_check.sh` runs the
+  old and the compact wire side by side with SIM_TRACE: identical over 39 358 frames (78.7 s); 2 rigs: rtf 3.12 → 6.31.
+- **Result:** 10 policies on 10 rigs: 13 min 29 s on the old wire (rtf 1.70 each, slowest policy 809 s) → **7 min 12 s** on the compact wire
+  (rtf 3.2 each, slowest 421 s; all handovers done 72 s after the start). CPU per rig now: setter 40 %, getter 14 %, conductor 27 %,
+  MovementModule 28 %, sim 34 %, commander 19 %. The policy frame (~3.0 ms at 10 rigs, 1.3 ms at 2) is the next lever; homing trials that
+  time out (120 s each) set the slowest policy's time.
 
 ## 8. Training band (recommendation, separate decision)
 Today's walk box: vx (−0.8, 1.2), vy ±0.3, wz ±0.5 or ±0.8. Proposal: vx (−0.5, 1.0), vy ±0.3, wz ±0.8. Homing never asks more than
