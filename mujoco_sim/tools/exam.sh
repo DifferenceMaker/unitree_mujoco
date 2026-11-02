@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # exam.sh -- THE standardized walk-policy exam, N rigs in parallel (2026-10-28 evening).
-#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--no-stumble] <slug|name> ...
+#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
 # EXAM #2 (default since 2026-10-30, results/EXAM2_SPEC.md): Test 0 handover -> Test 1 LADDERS (tools/exam2_test.sh ladders: 20 s stand,
 #   then vx / vy / wz in 0.05 rungs up to the top, a stop, back down to the negative top, a stop) -> Test 2 PUSHES (tools/exam2_test.sh
 #   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
@@ -26,10 +26,10 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-EXAM=2; PUSHES=1; STUMBLE=1; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
+EXAM=2; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
-  --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-stumble) STUMBLE=0; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
+  --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-stumble) STUMBLE=0; shift;; --stumble) STUMBLE=1; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
   --no-stairs) STAIRS=0; shift;; --no-handover) HANDOVER=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"

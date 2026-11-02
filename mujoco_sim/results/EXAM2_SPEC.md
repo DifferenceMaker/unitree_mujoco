@@ -151,7 +151,11 @@ next push (that push scores 0). Later: a torso force pulse (closer to a hand pus
 | turn: ALIGN yaw-rate gain over commands ≥ 0.05 rad/s, minus rescues | 0.9, 0 rescues | 0.3 | 2 |
 | a trial that does not arrive scores 0 on all of the above | | | |
 
-### Test 5 — stumble: a rough floor (NEW 2026-11-02, recorded, NOT scored yet)
+### Test 5 — stumble: a rough floor (2026-11-02; OFF by default since the same evening, `exam.sh --stumble` opts in; recorded, NOT scored)
+
+Operator 2026-11-02: the toe-drag question is answered by the scuff counts on the flat ladders (next section); a fixed rough floor would convolute
+the measurement (a terrain test measures terrain walking, not clearance) and, if ever trained on, teaches the terrain rather than clearance. Kept
+as an opt-in probe only.
 Why: on the robot (2026-11-02) `lm7i_combo_soft` at 0.15 m/s scuffed its LEFT toe on the floor and recovered with a huge right step. Its
 exam record of the morning had the number — the 0.15 rung's swing height 1.6 cm L / 2.3 cm R — but the sim floor is perfectly flat (no
 bump ever meets a 1.6 cm toe) and swing height was neither a key column nor a flag. Two changes: swing height is a key column (section
