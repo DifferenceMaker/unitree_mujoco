@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # exam.sh -- THE standardized walk-policy exam, N rigs in parallel (2026-10-28 evening).
-#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] <slug|name> ...
+#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--no-stumble] <slug|name> ...
 # EXAM #2 (default since 2026-10-30, results/EXAM2_SPEC.md): Test 0 handover -> Test 1 LADDERS (tools/exam2_test.sh ladders: 20 s stand,
 #   then vx / vy / wz in 0.05 rungs up to the top, a stop, back down to the negative top, a stop) -> Test 2 PUSHES (tools/exam2_test.sh
 #   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
-#   commander plans around it, turns by the heading error with counted rescue pulses, 120 s timeout). Scored by QUALITY
+#   commander plans around it, turns by the heading error with counted rescue pulses, 120 s timeout) -> Test 5 STUMBLE (2026-11-02,
+#   tools/exam2_test.sh stumble: vx 0.15 / 0.30 for 15 s each on a rough floor, 0.4-2 cm sphere bumps deterministic per --seed, far from the other
+#   tests; swing apex per foot, scuffs / catches = trips, tilt, falls; RECORDED, NOT SCORED yet -- EXAM2_SPEC Test 5). Scored by QUALITY
 #   (tools/exam_score.py score_v2: survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10). --exam 1 = the
 #   2026-10-29 exam below (staircase, the bang-bang commander), kept to reproduce old records.
 # Per policy (milestone slug in aspired-isaac-lab/milestone_checkpoints, or a name already vendored under MovementModule/policy):
@@ -22,10 +24,10 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-EXAM=2; PUSHES=1; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
+EXAM=2; PUSHES=1; STUMBLE=1; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
-  --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
+  --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-stumble) STUMBLE=0; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
   --no-stairs) STAIRS=0; shift;; --no-handover) HANDOVER=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"
@@ -44,10 +46,12 @@ Q="$EX/queue.txt"; : > "$Q"
 for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name $slug" >> "$Q" || echo "$slug NOT VENDORED" >> "$EX/not_vendored.txt"; done
 NP=$(wc -l < "$Q"); [[ $NP -gt 0 ]] || { echo "nothing to examine"; exit 2; }
 [[ $PAR -gt $NP ]] && PAR=$NP
-echo "##### $(date +%T) EXAM #$EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING -> $EX"
+[[ "$EXAM" == 2 ]] || STUMBLE=0
+echo "##### $(date +%T) EXAM #$EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING stumble $STUMBLE -> $EX"
 if [[ "$EXAM" == 2 ]]; then   # the commander knobs of exam #2 (forwarded into the rig by run_mujoco_loco_switch.sh)
   export HOMING_TURN_LAW=p HOMING_DESK="0.8 1.2" HOMING_TIMEOUT_S=120   # the desk scene: top 0.80 deep x 1.20 wide behind the edge (0.35, 0)
   export HOMING_TRIAL_T0="${HOMING_TRIAL_T0:-15}"   # 2026-11-01: the first item at sim 15 s (was 40; the walk engages at ~4.6 s)
+  [[ $STUMBLE -eq 1 && "${EXAM_STUMBLE_FIELD:-1}" == 1 ]] && export LOCOSW_STUMBLE_SEED="$SEED"   # Test 5: the launcher generates <scene>_stumble$SEED.xml (the field exists only at x 50..64 m); EXAM_STUMBLE_FIELD=0 = the same script on the flat (control)
 fi
 T_START=$(date +%s)
 pop() { ( flock 9; local l; l=$(head -1 "$Q"); [[ -n "$l" ]] && { tail -n +2 "$Q" > "$Q.tmp" && mv "$Q.tmp" "$Q"; echo "$l"; } ) 9>"$Q.lock"; }
@@ -69,6 +73,7 @@ worker() {  # worker <instance k>
     (cd "$SIM" && HOMING_WALK="$name" HOMING_BALANCE="$BALANCE" HOMING_STOP_DIST="$STOP_DIST" LOCOSW_LOCKSTEP=1 HOMING_SEED="$SEED" METRICS=0 bash run_mujoco_homing.sh > "$EX/rig_$name.log" 2>&1 &)
     for i in $(seq 1 60); do [[ "$(readlink "$SIM/logs/stack_locosw_latest_$k.log" 2>/dev/null)" != "$link0" ]] && break; sleep 1; done
     local L="$SIM/logs/stack_locosw_latest_$k.log"; local ok=0
+    grep -o 'robot_scene -> [^ ]*' "$EX/rig_$name.log" 2>/dev/null | head -1 | sed "s/^/[$k]    scene= /"   # the scene THIS rig loaded (a stale MJ_SCENE once leaked a scene)
     # ready = the homing commander is up. The first queued item (the staircase) is then sent BEFORE the walk policy engages, so the
     # commander's scheduler starts it on the fixed sim frame TRIAL_T0 = 40 s (it waits for the policy itself, on the sim clock) -- a
     # wall-clock send after sim 40 s made the start frame depend on the host load and two same-seed exams differed (tp5 vs lm7f19).
@@ -104,6 +109,12 @@ worker() {  # worker <instance k>
       HOMING_BENCH_FILE="$EX/bench.md" bash "$SIM/tools/homing_trials.sh" --n "$N" --seed "$SEED" --tag "${TAG}_$name" --no-plot $([[ "$EXAM" == 2 ]] && echo --ring) > "$EX/homing_$name.log" 2>&1
       tail -n +"$((h0 + 1))" "$SIM/logs/homing_trials_$k.jsonl" > "$EX/homing_$name.jsonl"   # only THIS batch's records (a missing trial never pulls in an older one)
       echo "[$k] $(date +%T) $name: homing $(grep -E '^trials' "$EX/homing_$name.log" | tail -1 | cut -c1-60) | $(grep -E '^settled' "$EX/homing_$name.log" | tail -1 | cut -c21-110)"
+    fi
+    if [[ $STUMBLE -eq 1 ]]; then   # exam #2 Test 5 (2026-11-02): LAST, so Tests 0-3 keep their planned frames (their records stay comparable with older runs)
+      local u0; u0=$(wc -l < "$SIM/logs/stumble_$k.jsonl" 2>/dev/null || echo 0); local tu0; tu0=$(date +%s)
+      bash "$SIM/tools/exam2_test.sh" stumble --timeout 300 > "$EX/stumble_$name.log" 2>&1; tail -n +"$((u0 + 1))" "$SIM/logs/stumble_$k.jsonl" > "$EX/stumble_$name.jsonl"
+      echo "[$k] $(date +%T) $name: stumble $(head -1 "$EX/stumble_$name.log" | cut -c1-120) | wall $(( $(date +%s) - tu0 )) s"
+      grep -E '^  vx' "$EX/stumble_$name.log" | sed "s/^/[$k]    /" | cut -c1-200
     fi
     M=$(ls -t "$SIM"/logs/mujoco_locosw_*_"$k".log 2>/dev/null | head -1); [[ -n "$M" ]] && grep -E 'HEADLESS\] sim_t' "$M" | tail -1 | sed "s/^/[$k]    /"
     # the exam record that travels with the milestone (fleetdeck draws the sheets from it) -- JSON in git, no PNG

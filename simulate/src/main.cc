@@ -622,19 +622,22 @@ namespace
       c.en_mech += std::fabs(tau * d->actuator_velocity[i]) * dt;
       c.en_tau2 += tau * tau * dt;
     }
-    if (c.floor_geom < 0) return;
+    // "floor" = every geom of the WORLD body (2026-11-02, exam #2 Test 5): the plane AND the stumble bumps / field
+    // (scene_*_stumble<seed>.xml) -- the counters keyed on the geom named "floor" were blind to a scuff on a bump.
+    // The desk is its own body, the marker balls are mocap bodies: neither counts, as before.
     double fz[2] = {0.0, 0.0};
     bool nonfoot = false;
     for (int k = 0; k < d->ncon; ++k)
     {
       const mjContact& con = d->contact[k];
+      const int b1 = m->geom_bodyid[con.geom1], b2 = m->geom_bodyid[con.geom2];
       int other;
-      if (con.geom1 == c.floor_geom) other = con.geom2;
-      else if (con.geom2 == c.floor_geom) other = con.geom1;
+      if (b1 == 0 && b2 != 0) other = con.geom2;
+      else if (b2 == 0 && b1 != 0) other = con.geom1;
       else continue;
       const int b = m->geom_bodyid[other];
       mjtNum f6[6];
-      mj_contactForce(m, d, k, f6);   // contact frame: f6[0] = normal force (the floor normal is world z)
+      mj_contactForce(m, d, k, f6);   // contact frame: f6[0] = normal force (world z on the plane, the local surface normal on the field)
       if (b == c.fl_id) fz[0] += f6[0];
       else if (b == c.fr_id) fz[1] += f6[0];
       else if (f6[0] > 5.0 && b > 0)

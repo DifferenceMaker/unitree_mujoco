@@ -4,6 +4,8 @@
 The per-policy exam record that travels with the milestone (operator 2026-10-29: "save that data and visually reconstruct it in fleetdeck
 in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/exam/<tag>_<stamp>.json =
   meta        tag, stamp, seed, n, balance, walk, rig (lock-step, sim build), score parts (tools/exam_report.py's formula)
+  stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
+              scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")
   homing      the 10 trial records (homing_<name>.jsonl) + per trial a 2 Hz copy of its 10 Hz trajectory (t, phase, x, y, yaw, cmd, truth vel)
   stairs      the staircase record (stairs_<name>.jsonl) + its 10 Hz rows (STAIRS_COLS incl. the stance columns)
 Sizes: ~150 KB per policy, ~3 MB per 19-row wave -- JSON in git, the PNG sheets are not stored (fleetdeck draws SVG from this file).
@@ -58,11 +60,15 @@ if stairs:
     cols, rows = traj_rows(stairs.get("traj_file"), every=1)           # 10 Hz, every row (the stance sheet needs the lifts)
     stairs["rows"] = {"hz": 10, "cols": cols, "rows": rows} if rows else None
 
-ladders = pushes = None
+ladders = pushes = stumble = None
 if a.exam == "2":
-    import subprocess
+    import re, subprocess
     ladders = load(f"{EX}/ladders_{name}.jsonl"); ladders = ladders[-1] if ladders else None
     pushes = load(f"{EX}/pushes_{name}.jsonl"); pushes = pushes[-1] if pushes else None
+    stumble = load(f"{EX}/stumble_{name}.jsonl"); stumble = stumble[-1] if stumble else None
+    if stumble:
+        cols, rows = traj_rows(stumble.get("traj_file"), every=1)       # 10 Hz, 36 s
+        stumble["rows"] = {"hz": 10, "cols": cols, "rows": [[round(v, 3) if isinstance(v, float) else v for v in r] for r in rows]} if rows else None
     if ladders:
         cols, rows = traj_rows(ladders.get("traj_file"), every=2)       # 10 -> 5 Hz (340 s): the stance / tracking sheets
         ladders["rows"] = {"hz": 5, "cols": cols, "rows": [[round(v, 3) if isinstance(v, float) else v for v in r] for r in rows]} if rows else None
@@ -74,6 +80,7 @@ if a.exam == "2":
                 if "[scene] robot_scene ->" in l: scene = l.split("->")[1].split()[0]; break
         except FileNotFoundError:
             pass
+        scene = re.sub(r"_stumble\d+", "", scene) if scene else scene   # Test 5's generated sibling scene = the same body
         xml = os.path.join(SIM, "..", "unitree_robots", "h1_2", "h1_2_" + (scene or "scene_comx06_armature_hand790.xml")[len("scene_"):].replace("_desk.xml", ".xml"))
         if sq and os.path.exists(xml):
             fkpy = next((c for c in (os.environ.get("EXAM_FK_PY"), os.path.expanduser("~/miniconda3/envs/isaacsim/bin/python"), "python3")
@@ -122,7 +129,7 @@ rec = {"meta": {"exam_version": int(a.exam), "tag": a.tag, "stamp": stamp, "seed
                 "rig": rig, "score": score, "metrics_doc": "unitree_mujoco/mujoco_sim/results/EXAM_METRICS.md"},
        "homing": homing, "stairs": stairs, "handover": handover}
 if a.exam == "2":
-    rec["ladders"], rec["pushes"] = ladders, pushes
+    rec["ladders"], rec["pushes"], rec["stumble"] = ladders, pushes, stumble
     rec["meta"]["metrics_doc"] = "unitree_mujoco/mujoco_sim/results/EXAM2_SPEC.md"
 out_local = f"{EX}/exam_{name}.json"
 json.dump(rec, open(out_local, "w"), separators=(",", ":"))

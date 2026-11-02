@@ -151,6 +151,73 @@ next push (that push scores 0). Later: a torso force pulse (closer to a hand pus
 | turn: ALIGN yaw-rate gain over commands ≥ 0.05 rad/s, minus rescues | 0.9, 0 rescues | 0.3 | 2 |
 | a trial that does not arrive scores 0 on all of the above | | | |
 
+### Test 5 — stumble: a rough floor (NEW 2026-11-02, recorded, NOT scored yet)
+Why: on the robot (2026-11-02) `lm7i_combo_soft` at 0.15 m/s scuffed its LEFT toe on the floor and recovered with a huge right step. Its
+exam record of the morning had the number — the 0.15 rung's swing height 1.6 cm L / 2.3 cm R — but the sim floor is perfectly flat (no
+bump ever meets a 1.6 cm toe) and swing height was neither a key column nor a flag. Two changes: swing height is a key column (section
+"Key columns" below), and the exam walks the policy over a floor with bumps.
+
+**The floor** (`tools/stumble_field.py`, generated into `unitree_robots/h1_2/<scene>_stumble<seed>.xml` at every launch, gitignored,
+`LOCOSW_STUMBLE_SEED` = the exam seed): **sphere bumps** on the plain plane over 14 × 12 m at x 50..64, y −6..6 — far from every other test
+(the ladders walk to −x from x = −3, the pushes stay at x = −3, the homing starts within 5 m of the desk at x = 0.35), so Tests 0–3 never
+touch it and their timelines are unchanged (Test 5 runs LAST). One sphere of radius 0.15 m per 20 × 20 cm cell (±8 cm jitter), buried so
+that its cap stands 0.4..2 cm above the floor (uniform): ~4100 bumps, 26 % of the area covered, 0.4–1 bump under a 26 × 9 cm sole, mean
+ground +0.2 cm. A cap of height h on a sphere of radius R has the rim radius $\sqrt{2Rh - h^2}$ (h = 1 cm: 5.4 cm, 2 cm: 7.5 cm) and meets
+the floor at the slope $\arccos(1 - h/R)$ (21°, 30°): a pebble or a pavement joint, not a wall. The first 10 cm of the field hold no bump rim
+(the robot steps INTO the roughness). Deterministic per `--seed`: every number is SplitMix64(seed, cell row, cell col, salt) / 2^64 — no numpy
+RNG, the same field on every host; the field's checksum (sha1 of its geometry text) is printed at launch and stored in the record
+(`stumble.field.checksum`); `Field.height(x, y)` is exact (the highest cap under the point; checked against MuJoCo raycasts: 0 error).
+The sim's exam counters (`fpk`, the crawl `nfc`) now count every WORLD-body geom as floor (the plane and the bumps; the desk is its own
+body) — the old test on the geom named "floor" was blind to a scuff on a bump. Step cost with the robot on the field: 92 µs vs 69 µs per
+physics step in a python check; the rig's rtf was unchanged (4.1).
+
+*Why not a height field* (`STUMBLE_KIND=hfield` keeps it for A/B): the first implementation was a MuJoCo `<hfield>` (10 cm tiles, heights
+0..AMP, the edge strip flush with the plane). lm7i_combo_soft walked the same spot on the plain plane at 0.14 m/s but on the field it
+stalled at the near edge after the same 9 lifts at AMP 2 cm, 1 cm AND 0.4 cm (bit-identical up to the stall, i.e. not the bumps): the
+prisms' vertical side faces meet a foot that slides at z ≈ 0 with a few mm of contact penetration and act as a wall (the minimum-penetration
+normal is horizontal while the overlap is thinner than the penetration). A policy whose toe drags — exactly the one this test is for — is
+the one a height field traps. Spheres have no faces.
+
+**The run** (`exam2_test.sh stumble`, 36 s of sim, 7–9 s wall measured alone at rtf 4): teleport to the field's start (base 45 cm before the near edge on
+the plain plane, facing +x), 3 s settle, **vx 0.15 for 15 s, vx 0.30 for 15 s**, a 3 s stop. A fall → `reset_at` on the spot, 3 s settle,
+the next rung (the fallen rung is marked). Record: `logs/stumble_<k>.jsonl` → `exam/<tag>_<stamp>.json` key **`stumble`** (older records
+lack it → the table prints "—").
+
+**Metrics per rung** (commander `_stumble_sample` / `_stumble_metrics`, from the 50 Hz foot contact `cf` (> 1 N = loaded), foot world
+position `fl`/`fr`, foot world velocity `vb`, and the sim's per-foot peak floor force since the previous message `fpk`):
+- a **swing** = lift-off (loaded → air) to touchdown (air → loaded) with ≥ 2 airborne samples (a single 20 ms airborne sample = a contact
+  flicker, counted apart); `swings` = [L, R].
+- **clearance** $h(t) = z_{foot}(t) - g(x_{foot}, y_{foot}) - z_{rest}$: the foot body height above the ground under its origin (the same
+  generator: the highest bump cap under the point, exact), minus the foot's rest height from the settle on the flat. `ground_rms` = the rms
+  of $h$ over the LOADED samples: a foot standing on a bump's flank reads a few mm (6–9 mm measured); a wrong mapping would read ~1 cm everywhere.
+- **swing apex** = max $h$ over a swing; per foot the max (`swing_apex` = the key column), mean and MIN over the rung's swings. The rung's
+  `swing_height` IS this ground-corrected apex (`swing_height_raw` keeps the flat-floor definition).
+- a **scuff** = a floor-contact burst of the swing foot: `fpk` > 20 N inside a 20 ms window whose BOTH ends are airborne — a contact that
+  began and ended between two samples (the toe hit a bump and came off again). The lift-off window (it holds the lift-off force) and the
+  touchdown sample are excluded. `scuffed` = swings with ≥ 1 burst, `scuff_bursts` = all bursts, `scuff_pre_apex` = bursts at or before
+  the apex sample.
+- a **catch** = the foot arrested in flight: the planar foot speed drops by more than max(0.5 × its peak so far in the swing, 0.15 m/s)
+  within one 20 ms step, at or before the apex sample (a deceleration ≥ 7.5 m/s² while still rising; a normal landing decelerates over
+  ~100 ms on the way down).
+- **trips** = swings with a scuff or a catch; `trips_per_step` = trips / swings.
+- plus the generic segment numbers: `tilt_max` (peak torso tilt), `lifts`, `dx_body` (lateral drift) and `yaw_change_deg`, `fell`,
+  `on_field_frac` (share of samples with the base inside the field: a policy that turns away walks off it).
+
+**Proposed score (NOT applied; calibration v2 stays):** a new quality row **stumble 5** (taken from stability 30 → 28 and gait 10 → 7, so
+the total stays 100) = per rung (0.15, 0.30) the mean of: trips per step ramp(g 0, b 0.5) 0.4 · the lower foot's apex ramp(g 4 cm, b 1 cm)
+0.3 · peak tilt ramp(g 4°, b 15°) 0.2 · lateral drift ramp(g 5 cm, b 50 cm) 0.1; a fall in the rung = 0; both rungs equal. Example on the
+morning's lm7i_combo_soft numbers (flat floor): apex min(1.6, 2.3) = 1.6 cm → s = (1.6 − 1) / 3 = 0.2 of the 0.3 → the swing alone costs it
+0.24 of 0.5 points per rung before any trip. Calibration ramp: run the 26 policies of calibration v2 (`land_lm7h_r2`) once with Test 5
+(≈ 15 s wall each on 10 rigs), set the two *prov* ends (trips per step, tilt) to the population's p10 → p90 with `exam_calibrate.py`
+(add `stumble_*` keys to `PROV`), keep the apex ends (4 / 1 cm are the operator's clearance tolerance) and the drift ends; then **v3**.
+Open before scoring: seeds per exam (one field per seed — the same seed every landing keeps waves comparable; a second seed = a second
+sample of the bumps).
+
+### Key columns (2026-11-02)
+`EXAM.md` prints, beside the score: `swing .15 L/R cm` and `swing .30 L/R cm` — the FLAT ladder's peak foot lift per foot on the vx +0.15
+and +0.30 rungs (`ladders.segments[].swing_height`; the operator's first flag: below ~2 cm a toe meets any threshold) — and the Test 5
+columns `stumble .15` / `stumble .30` = "apex L/R cm · trips · peak tilt°" per rung, and `stumble falls`. Old records print "—".
+
 ## 4. Stability, gait and energy metrics (all phases)
 Stability 30 = stands 12 + walking torso 6 + handover 12.
 

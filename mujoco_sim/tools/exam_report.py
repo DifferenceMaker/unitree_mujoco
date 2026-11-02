@@ -44,24 +44,34 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
     R = []
     for nm in names:
         H = load(f"{EX}/homing_{nm}.jsonl"); L = load(f"{EX}/ladders_{nm}.jsonl"); P = load(f"{EX}/pushes_{nm}.jsonl"); HO = load(f"{EX}/handover_{nm}.jsonl")
+        U = load(f"{EX}/stumble_{nm}.jsonl")   # Test 5 (2026-11-02): key columns only, not scored
         sc = exam_score.score_v2(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)
         m = {x["key"]: x for x in sc["metrics"]}
-        R.append((nm, sc, m))
+        R.append((nm, sc, m, exam_score.ladder_swing(L[-1] if L else None), exam_score.stumble_summary(U[-1] if U else None)))
     R.sort(key=lambda t: -t[1]["score"])
     Q = list(exam_score.QUALITIES)
-    hdr = "| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |"
-    lines = [hdr, "|" + "---|" * (len(Q) + 9)]
-    for i, (nm, sc, m) in enumerate(R, 1):
+    cm = lambda a: "—" if not a else "/".join("—" if v is None else f"{100 * v:.1f}" for v in a)   # [L, R] m -> "L/R" cm
+    def stu(su, rung):
+        """Test 5 column: 'apexL/apexR cm · trips · tilt' for one rung, '—' when the record / rung is missing"""
+        r = (su or {}).get("rungs", {}).get(rung) if su else None
+        if not r: return "—"
+        return f"{cm(r['apex'])} · {r['trips']}{'' if not r['fell'] else ' FELL'} · {r['tilt_max'] if r['tilt_max'] is not None else '—'}"
+    hdr = ("| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m "
+           "| swing .15 L/R cm | swing .30 L/R cm | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |")
+    lines = [hdr, "|" + "---|" * (len(Q) + 14)]
+    for i, (nm, sc, m, lsw, su) in enumerate(R, 1):
         held = m["pushes"]["label"].split("held ")[1].split(":")[0] if "pushes" in m else "-"
         arr = m["homing"]["label"].split("arrived ")[1].split(":")[0] if "homing" in m else "-"
         trk = "/".join(f"{m[k]['s']:.2f}" for k in ("track_vx", "track_vy", "track_wz"))
         lines.append(f"| {i} | {nm} | **{sc['score']}** | " + " | ".join(str(sc["parts"][q]) for q in Q) +
-                     f" | {len(sc['falls'])} | {trk} | {held} | {arr} | {m['stand_drift']['value']} | {times.get(nm) or '-'} |")
+                     f" | {len(sc['falls'])} | {trk} | {held} | {arr} | {m['stand_drift']['value']} | {cm(lsw.get('vx+0.15'))} | {cm(lsw.get('vx+0.30'))} "
+                     f"| {stu(su, 'vx+0.15')} | {stu(su, 'vx+0.30')} | {su['falls'] if su else '—'} | {times.get(nm) or '-'} |")
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     head = (f"## EXAM #2 {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
             f"wall {a.wall // 60} min {a.wall % 60} s\n\nScore by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, "
             f"stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. "
-            f"Track = mean rung score per ladder. Records: {EX}\n")
+            f"Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Stumble = Test 5 "
+            f"(rough floor: 0.4-2 cm sphere bumps every 20 cm, seed {a.seed}, NOT scored): ground-corrected swing apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: {EX}\n")
     block = head + "\n" + "\n".join(lines) + "\n"
     print(block)
     open(f"{EX}/EXAM.md", "w").write(block)

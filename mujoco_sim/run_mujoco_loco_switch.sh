@@ -144,7 +144,19 @@ fi
 [[ $DESK -eq 1 ]] && SCENE_AUTO="${SCENE_AUTO%.xml}_desk.xml"   # scene_comx06_armature_hand790_desk.xml etc.
 SCENE="${LOCOSW_SCENE:-$SCENE_AUTO}"
 [[ -f "$MUJOCO/unitree_robots/h1_2/$SCENE" ]] || { echo "FATAL: scene $SCENE not in unitree_robots/h1_2/"; exit 2; }
-case "${SCENE%_desk.xml}.xml" in
+# Exam #2 Test 5 "stumble" (2026-11-02): LOCOSW_STUMBLE_SEED=N -> a GENERATED sibling scene <scene>_stumbleN.xml = the scene + a rough
+# floor far from every other test (x 50..64 m; tools/stumble_field.py: sphere bumps 0.4..2 cm every 20 cm, deterministic per seed,
+# gitignored, rewritten per launch -- never a stale field). The commander gets the seed (HOMING_STUMBLE_SEED) to know the ground under
+# the feet. Unset = the plain scene (every non-exam rig).
+SCENE_BASE="$SCENE"
+if [[ -n "${LOCOSW_STUMBLE_SEED:-}" ]]; then
+  SCENE="${SCENE_BASE%.xml}_stumble${LOCOSW_STUMBLE_SEED}.xml"
+  _fld="$(python3 "$SIM/tools/stumble_field.py" --seed "$LOCOSW_STUMBLE_SEED" --base "$MUJOCO/unitree_robots/h1_2/$SCENE_BASE" --out "$MUJOCO/unitree_robots/h1_2/$SCENE")" \
+    || { echo "FATAL: stumble field generation failed (tools/stumble_field.py seed $LOCOSW_STUMBLE_SEED)"; exit 2; }
+  echo ">>> [scene] stumble field: $_fld"
+  export HOMING_STUMBLE_SEED="$LOCOSW_STUMBLE_SEED" HOMING_STUMBLE_PY="${HOMING_STUMBLE_PY:-/unitree_mujoco/mujoco_sim/tools/stumble_field.py}"
+fi
+case "${SCENE_BASE%_desk.xml}.xml" in
   scene_comx06_armature_hand790.xml) XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature_hand790.xml" ;;
   scene_comx06_armature.xml)         XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06_armature.xml" ;;
   *)                                 XML="$MUJOCO/unitree_robots/h1_2/h1_2_comx06.xml" ;;
@@ -269,7 +281,8 @@ echo "    push:    echo \"push 0.5 0\" > $SFIFO"
 echo "    scenario: bash $SIM/tools/loco_switch_scenario.sh"
 echo "    stack log: $STACK_LOG"
 # exam #2 knobs (2026-10-30): forwarded only when set, so a hardware-like run keeps the commander defaults
-HOMING_EX2=(); for _v in HOMING_TURN_LAW HOMING_K_TURN HOMING_RESCUE_S HOMING_RESCUE_DEG HOMING_DESK HOMING_DESK_MARGIN HOMING_TIMEOUT_S HOMING_PUSH_LOG HOMING_TRIAL_T0; do
+HOMING_EX2=(); for _v in HOMING_TURN_LAW HOMING_K_TURN HOMING_RESCUE_S HOMING_RESCUE_DEG HOMING_DESK HOMING_DESK_MARGIN HOMING_TIMEOUT_S HOMING_PUSH_LOG HOMING_TRIAL_T0 \
+                         HOMING_STUMBLE_SEED HOMING_STUMBLE_PY HOMING_STUMBLE_LOG STUMBLE_AMP; do   # + Test 5 stumble (2026-11-02)
   [[ -n "${!_v:-}" ]] && HOMING_EX2+=(-e "$_v=${!_v}"); done
 docker run --rm --name "$CONTAINER" --network host --ipc=host ${LOCOSW_CPUS:+--cpuset-cpus "$LOCOSW_CPUS"} \
   "${HOMING_EX2[@]}" \

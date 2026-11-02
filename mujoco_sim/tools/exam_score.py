@@ -257,6 +257,31 @@ def raw_values(handover, ladders, pushes, homing):
     return V
 
 
+# ── key columns (2026-11-02, the robot's toe scuff): the ladder swing heights at 0.15 / 0.30 and Test 5 "stumble" -- NOT in the score;
+# EXAM2_SPEC Test 5 carries the proposed weight and ramp
+def ladder_swing(ladders, names=("vx+0.15", "vx+0.30")):
+    """{rung name: [L, R] swing height (m) from the flat ladder, None where the rung is missing / fell}"""
+    segs = {s["name"]: s for s in (ladders or {}).get("segments", []) if s.get("name") != "reset"}
+    return {n: (segs[n].get("swing_height") if segs.get(n) and not segs[n].get("fell") else None) for n in names}
+
+
+def stumble_summary(stumble):
+    """the Test 5 headline numbers per rung (None when the record is missing): {rung: {apex [L,R] m, apex_min, trips, scuffed, catches,
+    swings, tilt_max, fell, on_field}} + falls, field (seed, checksum)"""
+    if not stumble:
+        return None
+    out = {"falls": len(stumble.get("falls") or []), "field": stumble.get("field"), "result": stumble.get("result"), "rungs": {}}
+    for s in stumble.get("segments", []):
+        q = s.get("stumble")
+        if not q or not s.get("name", "").startswith("vx"):
+            continue
+        out["rungs"][s["name"]] = {"apex": q.get("swing_apex"), "apex_min": q.get("swing_apex_min"), "apex_mean": q.get("swing_apex_mean"),
+                                   "trips": q.get("trips"), "scuffed": q.get("scuffed"), "catches": q.get("catches"), "swings": q.get("swings"),
+                                   "tilt_max": s.get("tilt_max"), "fell": bool(s.get("fell")), "on_field": q.get("on_field_frac"),
+                                   "ground_rms": q.get("ground_rms"), "drift_lat": (s.get("dx_body") or [None, None])[1], "yaw": s.get("yaw_change_deg")}
+    return out
+
+
 def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
     """handover: list of Test 0 records; ladders / pushes: the Test 1 / Test 2 records (or None); homing: the Test 3 trial records.
     cal: a (g, b) table (default: load_cal() = CAL_DEFAULT + results/exam2_calibration.json)"""
