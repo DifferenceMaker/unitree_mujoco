@@ -190,6 +190,8 @@ inline ScriptedTeleport scripted_teleport;
 // Each applied push is printed with wall + sim timestamps so runs can be
 // reproduced from the log.
 // one parser for the stdin FIFO and the rt/sim_cmd DDS topic (2026-10-28: the commander schedules teleports in SIM time)
+static mjvCamera *g_follow_cam = nullptr;   // the UI camera (main) and the loaded model, for the "follow" stdin command
+static mjModel *g_follow_m = nullptr;
 void HandleCommand(const std::string &line)
 {
   {
@@ -228,6 +230,17 @@ void HandleCommand(const std::string &line)
       scripted_reset.t_apply = t_at;
       scripted_reset.pending = true;
     }
+    else if (cmd == "follow")   // follow [<body>|off] [<distance>] -- tracking camera for recordings (2026-11-02)
+    {
+      mjModel *m = g_follow_m; if (!g_follow_cam) { std::printf("[FOLLOW] camera not ready\n"); return; } mjvCamera &cam = *g_follow_cam;
+      std::string body; double dist = 3.0; iss >> body; iss >> dist;
+      if (body == "off") { cam.type = mjCAMERA_FREE; std::printf("[FOLLOW] off\n"); return; }
+      if (body.empty()) body = "pelvis";
+      int bid = m ? mj_name2id(m, mjOBJ_BODY, body.c_str()) : -1;
+      if (bid < 0) { std::printf("[FOLLOW] no body '%s'\n", body.c_str()); return; }
+      cam.type = mjCAMERA_TRACKING; cam.trackbodyid = bid; cam.distance = dist; cam.azimuth = 135; cam.elevation = -18;
+      std::printf("[FOLLOW] tracking %s at %.1f m\n", body.c_str(), dist);
+    }
     else if (cmd == "teleport" || cmd == "teleport_at")
     {
       double x, y, yaw, t_at = -1.0;
@@ -246,7 +259,7 @@ void HandleCommand(const std::string &line)
     }
     else
     {
-      std::printf("[CMD] unknown: '%s' (commands: push[_at] [<sim_t>] <vx> <vy> | teleport[_at] [<sim_t>] <x> <y> <yaw_deg> | reset[_at] [<sim_t>] <x> <y> <yaw_deg>)\n", cmd.c_str());
+      std::printf("[CMD] unknown: '%s' (commands: push[_at] [<sim_t>] <vx> <vy> | teleport[_at] [<sim_t>] <x> <y> <yaw_deg> | reset[_at] [<sim_t>] <x> <y> <yaw_deg> | follow [<body>|off] [<dist>])\n", cmd.c_str());
     }
   }
 }
@@ -1240,6 +1253,7 @@ void PhysicsThread(mj::Simulate *sim, const char *filename)
     if (d)
     {
       sim->Load(m, d, filename);
+      g_follow_m = m;
       mj_forward(m, d);
 
       // ── startup banner: confirm which robot model actually loaded ──
@@ -1576,6 +1590,7 @@ int main(int argc, char **argv)
   scanPluginLibraries();
 
   mjvCamera cam;
+  g_follow_cam = &cam;
   mjv_defaultCamera(&cam);
 
   mjvOption opt;
