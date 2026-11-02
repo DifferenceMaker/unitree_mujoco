@@ -5,8 +5,10 @@
 #   then vx / vy / wz in 0.05 rungs up to the top, a stop, back down to the negative top, a stop) -> Test 2 PUSHES (tools/exam2_test.sh
 #   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
 #   commander plans around it, turns by the heading error with counted rescue pulses, 120 s timeout) -> Test 5 STUMBLE (2026-11-02,
-#   tools/exam2_test.sh stumble: vx 0.15 / 0.30 for 15 s each on a rough floor, 0.4-2 cm sphere bumps deterministic per --seed, far from the other
-#   tests; swing apex per foot, scuffs / catches = trips, tilt, falls; RECORDED, NOT SCORED yet -- EXAM2_SPEC Test 5). Scored by QUALITY
+#   tools/exam2_test.sh stumble: vx 0.15 / 0.30 for 15 s each on a rough floor, 0.4-1 cm sphere bumps (2 cm until 2026-11-02 evening) deterministic
+#   per --seed, far from the other tests; swing apex per foot, scuffs / catches = trips, tilt, falls; RECORDED, NOT SCORED yet -- EXAM2_SPEC Test 5).
+#   Since 2026-11-02 evening the same swing engine runs on every LADDER segment: the key columns are the FLAT vx 0.15 / 0.30 rungs' scuffed swings
+#   ("scuffs .15" = scuffed/swings) beside their swing heights -- the robot's toe drag happened on a flat floor. Scored by QUALITY
 #   (tools/exam_score.py score_v2: survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10). --exam 1 = the
 #   2026-10-29 exam below (staircase, the bang-bang commander), kept to reproduce old records.
 # Per policy (milestone slug in aspired-isaac-lab/milestone_checkpoints, or a name already vendored under MovementModule/policy):
@@ -93,6 +95,7 @@ worker() {  # worker <instance k>
       local s0; s0=$(wc -l < "$SIM/logs/staircase_$k.jsonl" 2>/dev/null || echo 0)
       bash "$SIM/tools/exam2_test.sh" ladders --timeout 900 > "$EX/ladders_$name.log" 2>&1; tail -n +"$((s0 + 1))" "$SIM/logs/staircase_$k.jsonl" > "$EX/ladders_$name.jsonl"
       echo "[$k] $(date +%T) $name: ladders $(head -1 "$EX/ladders_$name.log" | cut -c1-90)"
+      grep -E '^  vx\+0\.(15|30) ' "$EX/ladders_$name.log" | sed -E "s/^  (vx[^ ]+) .*  sw /[$k]    \1 sw /" | cut -c1-160   # the toe-drag key rungs (2026-11-02)
     fi
     if [[ $PUSHES -eq 1 && "$EXAM" == 2 ]]; then   # exam #2 Test 2: the pushes
       local p0; p0=$(wc -l < "$SIM/logs/pushes_$k.jsonl" 2>/dev/null || echo 0)

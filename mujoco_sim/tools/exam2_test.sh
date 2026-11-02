@@ -10,7 +10,8 @@
 #   0.5 / 1.0 / 1.5 m/s front / back / left / right, 5 s measured after each (183 s). Record -> logs/pushes[$SFX].jsonl.
 # A fall: recorded, the robot reset on the spot (standing snapshot), the script continues (ladders: the next half; pushes: the next push).
 # stumble: teleport to the rough field's start (tools/stumble_field.py START, 45 cm before the field, on the plane), 3 s settle, vx 0.15 for
-#   15 s, vx 0.30 for 15 s, a 3 s stop (36 s): per rung the ground-corrected swing apex per foot, scuffs / catches / trips, tilt, falls.
+#   15 s, vx 0.30 for 15 s, a 3 s stop (36 s): per rung the ground-corrected swing apex per foot, scuffs / catches / trips, tilt, falls
+#   (bumps 0.4-1 cm since 2026-11-02 evening; the same swing engine runs on EVERY ladder segment -> "sw" in the ladders print below).
 #   Record -> logs/stumble[$SFX].jsonl. Without LOCOSW_STUMBLE_SEED the rig has no field: the test runs on the flat (field: null).
 # Start default "-3 0 180": free floor west of the desk, facing away from it (the vx ladder walks ~31 m net to -x).
 set -uo pipefail
@@ -42,11 +43,13 @@ for s in S:
     extra = ""
     if s.get("stop"): extra = f"  stop: settle {s['stop']['settle_s']} s, overshoot {s['stop']['overshoot_m']} m / {s['stop']['overshoot_deg']} deg, steps {s['stop']['steps']}"
     if s.get("push"): p = s["push"]; extra = f"  held {p['held']} dist {p['dist_m']} m tilt {p['tilt_peak_deg']} deg rec {p['recovery_s']} s steps {p['steps']} foot {p['foot_peak_bw']} BW"
-    if s.get("stumble"):
-        q = s["stumble"]; cm = lambda a: "/".join("-" if v is None else f"{100 * v:.1f}" for v in a)
+    if s.get("stumble") or s.get("swing"):
+        q = s.get("stumble") or s["swing"]; cm = lambda a: "/".join("-" if v is None else f"{100 * v:.1f}" for v in a)
         extra = (f"  swings {q['swings']} apex max {cm(q['swing_apex'])} mean {cm(q['swing_apex_mean'])} min {cm(q['swing_apex_min'])} cm"
                  f"  trips {q['trips']} (scuffed {q['scuffed']}, catches {q['catches']}) per step {q['trips_per_step']}  tilt max {s.get('tilt_max')}"
                  f"  on-field {q['on_field_frac']} ground rms {q['ground_rms']}")
+        if not s.get("stumble"):   # a ladder segment (2026-11-02): the short form
+            extra = f"  sw {q['swings']} scuffed {q['scuffed']} catches {q['catches']} apex max {cm(q['swing_apex'])} mean {cm(q['swing_apex_mean'])} cm" + (extra if s.get("stop") else "")
     vs = "" if v[0] is None else f"v ({v[0]:+.3f} {v[1]:+.3f} {v[2]:+.3f})"
     print(f"  {s['name']:22s} cmd {s.get('cmd')} {vs}  tilt {s.get('tilt_mean')} P {e.get('P_W')} W  lifts {s.get('lifts')}{extra}{'  FELL' if s.get('fell') else ''}")
 PY

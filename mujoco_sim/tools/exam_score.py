@@ -265,6 +265,31 @@ def ladder_swing(ladders, names=("vx+0.15", "vx+0.30")):
     return {n: (segs[n].get("swing_height") if segs.get(n) and not segs[n].get("fell") else None) for n in names}
 
 
+def seg_swing(seg):
+    """the swing-engine dict of a segment: 'swing' (ladders + Test 5 since 2026-11-02 evening) or 'stumble' (the first Test 5 records)"""
+    return (seg or {}).get("swing") or (seg or {}).get("stumble")
+
+
+def ladder_scuffs(ladders, names=("vx+0.15", "vx+0.30")):
+    """the toe-drag key column (2026-11-02): {rung: {scuffed, swings [L, R], catches, trips, share}} from the FLAT ladder's swing engine;
+    None where the rung is missing / fell / predates the engine (records before 2026-11-02 evening)"""
+    segs = {s["name"]: s for s in (ladders or {}).get("segments", []) if s.get("name") != "reset"}
+    out = {}
+    for n in names:
+        q = seg_swing(segs.get(n)) if segs.get(n) and not segs[n].get("fell") else None
+        if not q or q.get("swings") is None:
+            out[n] = None; continue
+        ns = sum(q["swings"])
+        out[n] = {"scuffed": q.get("scuffed", 0), "swings": q["swings"], "catches": q.get("catches", 0), "trips": q.get("trips", 0),
+                  "share": (q.get("scuffed", 0) / ns) if ns else None, "apex_mean": q.get("swing_apex_mean"), "apex_min": q.get("swing_apex_min")}
+    return out
+
+
+def scuff_cell(sc):
+    """'scuffed/swings' for the table ('5/33'); '—' before the engine"""
+    return "—" if not sc else f"{sc['scuffed']}/{sum(sc['swings'])}"
+
+
 def stumble_summary(stumble):
     """the Test 5 headline numbers per rung (None when the record is missing): {rung: {apex [L,R] m, apex_min, trips, scuffed, catches,
     swings, tilt_max, fell, on_field}} + falls, field (seed, checksum)"""
@@ -272,7 +297,7 @@ def stumble_summary(stumble):
         return None
     out = {"falls": len(stumble.get("falls") or []), "field": stumble.get("field"), "result": stumble.get("result"), "rungs": {}}
     for s in stumble.get("segments", []):
-        q = s.get("stumble")
+        q = seg_swing(s)
         if not q or not s.get("name", "").startswith("vx"):
             continue
         out["rungs"][s["name"]] = {"apex": q.get("swing_apex"), "apex_min": q.get("swing_apex_min"), "apex_mean": q.get("swing_apex_mean"),

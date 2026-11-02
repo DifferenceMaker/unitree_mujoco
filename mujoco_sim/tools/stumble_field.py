@@ -6,7 +6,8 @@ flagged it because the sim floor is perfectly flat and its swing height (1.6 cm 
 
 The field lives FAR from every other test (x 50..64 m, y -6..6 m: the ladders walk to -x from x = -3, the pushes stay near x = -3, the
 homing starts within 5 m of the desk at x = 0.35, the handover stands at x = -3). Two kinds (STUMBLE_KIND):
-  bumps  (default) -- partially buried SPHERES on the plain plane: radius R, cap heights uniform in [H_MIN, H_MAX] (0.4..2 cm), one per
+  bumps  (default) -- partially buried SPHERES on the plain plane: radius R, cap heights uniform in [H_MIN, H_MAX] (0.4..1 cm; 2 cm until
+         2026-11-02 evening -- the flat ladders now carry the scuff count, Test 5 is a doormat / cable-lip probe, STUMBLE_AMP=0.02 = the old field), one per
          20 x 20 cm cell with a +-8 cm jitter (~28 % of the area covered, 0.4-1 bump under a 26 x 9 cm sole); smooth convex bumps, no
          seams, no boundary walls, no surface coincident with the plane. The first 10 cm of the field hold no bump rim (the robot steps
          INTO the roughness). A bump of cap height h on a sphere of radius R has the rim radius sqrt(2Rh - h^2) (h 1 cm: 5.4 cm; 2 cm:
@@ -43,11 +44,11 @@ GEOM = "stumble_field"
 SP = 0.20                    # one sphere per SP x SP cell
 JIT = 0.08                   # +- jitter of the centre inside the cell (m)
 R = 0.15                     # sphere radius (m)
-H_MIN, H_MAX = 0.004, float(os.environ.get("STUMBLE_AMP", "0.02"))   # cap heights (m); STUMBLE_AMP = the top (a dev / calibration knob, both ends read it)
+H_MIN, H_MAX = 0.004, float(os.environ.get("STUMBLE_AMP", "0.01"))   # cap heights (m); STUMBLE_AMP = the top (default 1 cm since 2026-11-02 evening; 2 cm before = checksum 7b10db2021a4 at seed 1)
 # hfield
 CELL = 0.05                  # sample spacing (m)
 TILE = 0.10                  # tile = 2 x 2 samples share one height
-AMP = float(os.environ.get("STUMBLE_AMP", "0.02"))   # heights in [0, AMP] m (+-1 cm about the mean)
+AMP = float(os.environ.get("STUMBLE_AMP", "0.01"))   # heights in [0, AMP] m (the rejected hfield kind; follows the same knob)
 _M = (1 << 64) - 1
 
 

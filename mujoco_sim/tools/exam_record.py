@@ -10,6 +10,8 @@ in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/ex
   stairs      the staircase record (stairs_<name>.jsonl) + its 10 Hz rows (STAIRS_COLS incl. the stance columns)
 Sizes: ~150 KB per policy, ~3 MB per 19-row wave -- JSON in git, the PNG sheets are not stored (fleetdeck draws SVG from this file).
 Also writes the same file next to the exam's own records (<exam dir>/exam_<name>.json).
+Since 2026-11-02 evening every ladder segment carries "swing" (the Test 5 engine on the flat: swings, scuffed, catches, trips, apex max/mean/min,
+trip_list) + the record z_rest / thresholds; the 5 Hz rows cannot reproduce it (the 50 Hz contact stream is not stored).
 EXAM #2 (--exam 2, 2026-10-30): + ladders (Test 1: the ladder record + its rows at 5 Hz + the stance drawing = tools/stance_fk.py on the
 20 s stand's joint state), pushes (Test 2: the push record + the rows around every push at 10 Hz), meta.exam_version 2 and the score by
 quality (tools/exam_score.py score_v2: every metric with its value, g / b, ramp and points)."""

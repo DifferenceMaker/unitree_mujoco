@@ -522,3 +522,11 @@ Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | lm7i_combo_soft | **59.6** | 10.0 | 18.2 | 9.6 | 6.2 | 7.4 | 6.2 | 2.0 | 0 | 0.87/0.42/0.12 | 24/24 | 1/1 | 0.2744 | 2.5/1.6 | 1.6/2.4 | 9.7/5.2 · 9 · 13.67 | 10.2/15.4 · 10 · 28.46 | 0 | 139 |
 
+## EXAM #2 scuff_dev — 2026-11-02 16:05 — 1 policies, seed 1, homing n 1, balance p14h_stancewide, 1 instances, wall 2 min 2 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Scuffs = the flat ladder's scuffed swings / swings (L+R) at 0.15 / 0.30 (a floor-force burst > 20 N between two airborne 20 ms samples = the toe dragged; '—' = a record before 2026-11-02 evening). Stumble = Test 5 (rough floor: 0.4-1 cm sphere bumps every 20 cm, seed 1, NOT scored): ground-corrected swing apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/scuff_dev_2026-11-02_16-03-06
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | swing .15 L/R cm | swing .30 L/R cm | scuffs .15 | scuffs .30 | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7i_combo_soft | **61.9** | 10.0 | 18.8 | 9.3 | 5.8 | 7.3 | 5.4 | 5.3 | 0 | 0.84/0.46/0.09 | 24/24 | 1/1 | 0.2952 | 1.8/2.4 | 2.1/2.5 | 0/8 | 1/11 | 2.1/2.3 · 1 · 4.66 | 12.3/6.9 · 10 · 17.44 | 0 | 122 |
+

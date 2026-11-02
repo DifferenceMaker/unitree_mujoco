@@ -155,18 +155,26 @@ next push (that push scores 0). Later: a torso force pulse (closer to a hand pus
 Why: on the robot (2026-11-02) `lm7i_combo_soft` at 0.15 m/s scuffed its LEFT toe on the floor and recovered with a huge right step. Its
 exam record of the morning had the number — the 0.15 rung's swing height 1.6 cm L / 2.3 cm R — but the sim floor is perfectly flat (no
 bump ever meets a 1.6 cm toe) and swing height was neither a key column nor a flag. Two changes: swing height is a key column (section
-"Key columns" below), and the exam walks the policy over a floor with bumps.
+"Key columns" below), and the exam walks the policy over a floor with bumps. **Evening 2026-11-02:** the same detector run on the FLAT floor
+(the Test 5 script with `EXAM_STUMBLE_FIELD=0`) already found 5 of 33 swings scuffed at 0.15 and 4 of 42 at 0.30 for the same policy — the
+toe drag needs no bump to be seen, it needs the 50 Hz contact stream. So the swing engine now runs on **every ladder segment** (section
+"Toe drag on the flat ladders" below), the flat scuff count is the key column, and Test 5 is kept as a milder stress probe (top cap 1 cm).
 
 **The floor** (`tools/stumble_field.py`, generated into `unitree_robots/h1_2/<scene>_stumble<seed>.xml` at every launch, gitignored,
 `LOCOSW_STUMBLE_SEED` = the exam seed): **sphere bumps** on the plain plane over 14 × 12 m at x 50..64, y −6..6 — far from every other test
 (the ladders walk to −x from x = −3, the pushes stay at x = −3, the homing starts within 5 m of the desk at x = 0.35), so Tests 0–3 never
 touch it and their timelines are unchanged (Test 5 runs LAST). One sphere of radius 0.15 m per 20 × 20 cm cell (±8 cm jitter), buried so
-that its cap stands 0.4..2 cm above the floor (uniform): ~4100 bumps, 26 % of the area covered, 0.4–1 bump under a 26 × 9 cm sole, mean
-ground +0.2 cm. A cap of height h on a sphere of radius R has the rim radius $\sqrt{2Rh - h^2}$ (h = 1 cm: 5.4 cm, 2 cm: 7.5 cm) and meets
+that its cap stands **0.4..1 cm** above the floor (uniform; `STUMBLE_AMP` = the top, **2 cm until 2026-11-02 evening**, `STUMBLE_AMP=0.02`
+reproduces that field): ~4100 bumps, 26 % of the area covered, 0.4–1 bump under a 26 × 9 cm sole, mean ground +0.2 cm at 2 cm, +0.1 cm at 1 cm.
+A 1 cm cap is a doormat edge or a cable lip, not terrain: that is what the robot's workplace holds. A cap of height h on a sphere of radius R has the rim radius $\sqrt{2Rh - h^2}$ (h = 1 cm: 5.4 cm, 2 cm: 7.5 cm) and meets
 the floor at the slope $\arccos(1 - h/R)$ (21°, 30°): a pebble or a pavement joint, not a wall. The first 10 cm of the field hold no bump rim
 (the robot steps INTO the roughness). Deterministic per `--seed`: every number is SplitMix64(seed, cell row, cell col, salt) / 2^64 — no numpy
 RNG, the same field on every host; the field's checksum (sha1 of its geometry text) is printed at launch and stored in the record
 (`stumble.field.checksum`); `Field.height(x, y)` is exact (the highest cap under the point; checked against MuJoCo raycasts: 0 error).
+**Checksums at seed 1:** `d774b40ebe0b` = the 1 cm field (default since 2026-11-02 evening), `7b10db2021a4` = the 2 cm field (the three
+`stumble_dev` records of 2026-11-02 14:33 and 14:40). The record carries the amplitude itself: `stumble.field.h = [0.004, 0.02]` (old) /
+`[0.004, 0.01]` (new), so a reader never has to guess from the checksum; Test 5 numbers across the two amplitudes are NOT comparable (the 2 cm
+runs tripped 5 / 13 swings per rung for lm7i_combo_soft; the 1 cm field is read fresh below).
 The sim's exam counters (`fpk`, the crawl `nfc`) now count every WORLD-body geom as floor (the plane and the bumps; the desk is its own
 body) — the old test on the geom named "floor" was blind to a scuff on a bump. Step cost with the robot on the field: 92 µs vs 69 µs per
 physics step in a python check; the rig's rtf was unchanged (4.1).
@@ -203,7 +211,8 @@ position `fl`/`fr`, foot world velocity `vb`, and the sim's per-foot peak floor 
 - plus the generic segment numbers: `tilt_max` (peak torso tilt), `lifts`, `dx_body` (lateral drift) and `yaw_change_deg`, `fell`,
   `on_field_frac` (share of samples with the base inside the field: a policy that turns away walks off it).
 
-**Proposed score (NOT applied; calibration v2 stays):** a new quality row **stumble 5** (taken from stability 30 → 28 and gait 10 → 7, so
+**Proposed score (NOT applied; calibration v2 stays; superseded in part by the toe-drag item of the next section — the flat scuff share
+is the first candidate, Test 5 the stress probe):** a new quality row **stumble 5** (taken from stability 30 → 28 and gait 10 → 7, so
 the total stays 100) = per rung (0.15, 0.30) the mean of: trips per step ramp(g 0, b 0.5) 0.4 · the lower foot's apex ramp(g 4 cm, b 1 cm)
 0.3 · peak tilt ramp(g 4°, b 15°) 0.2 · lateral drift ramp(g 5 cm, b 50 cm) 0.1; a fall in the rung = 0; both rungs equal. Example on the
 morning's lm7i_combo_soft numbers (flat floor): apex min(1.6, 2.3) = 1.6 cm → s = (1.6 − 1) / 3 = 0.2 of the 0.3 → the swing alone costs it
@@ -213,10 +222,68 @@ morning's lm7i_combo_soft numbers (flat floor): apex min(1.6, 2.3) = 1.6 cm → 
 Open before scoring: seeds per exam (one field per seed — the same seed every landing keeps waves comparable; a second seed = a second
 sample of the bumps).
 
+### Toe drag on the flat ladders (2026-11-02 evening)
+**What runs:** the Test 5 swing engine (`_stumble_sample` / `_stumble_metrics`, the same code) on every segment of the ladders record — the
+20 s stand, the 74 rungs of vx / vy / wz in both directions, the 6 stops. Ground = 0 (the flat plane), the clearance zero $z_{rest}$ = the
+mean height of each LOADED foot over the 20 s stand after its first second (Test 5 takes it from its 3 s settle), so the apex is
+$h_{apex} = \max_t (z_{foot}(t) - z_{rest})$ over one swing; the thresholds are the same (contact 1 N, scuff 20 N, catch
+max(0.5 × peak, 0.15 m/s), ≥ 2 airborne samples). Example: lm7i_combo_soft stands with $z_{rest}$ = 4.2 / 4.5 cm; a swing whose foot origin
+peaks at 5.8 cm reads 1.6 cm of clearance.
+
+**Record** (`ladders.segments[].swing`, the same field names as Test 5 so one reader serves both — `exam_score.seg_swing`): `swings [L, R]`,
+`swing_apex` (max per foot = the segment's `swing_height`; `swing_height_raw` = the old first-sample definition), `swing_apex_mean`,
+`swing_apex_min`, `scuffed`, `scuff_bursts`, `scuff_pre_apex`, `catches`, `trips`, `trips_per_step`, `fpk_air_max`, `flickers`, and
+`trip_list` = the tripped swings only (t0, dur, apex, s_peak, scuffs, fpk_air, catch; Test 5 keeps the full `swing_list` — a ladder has ~700
+swings, the tripped ones are the evidence). The ladders record carries `z_rest` and `thresholds` like Test 5. Records before this change have
+no `swing` key and print "—"; everything else in them is unchanged (backward compatible).
+
+**Can old records be re-scored? No.** The operator was told "every past record can be re-scored"; that is not true for the scuffs and this is
+why: the detectors need the 50 Hz contact state and the per-20 ms peak floor force of each foot, and the exam stores (a) per-segment
+aggregates, (b) the commander's 10 Hz trajectory CSV (`logs/homing_traj_<k>/ladders_<stamp>.csv`, columns cL/cR, zL/zR, fpkL/fpkR but no
+foot velocity) and (c) a 5 Hz decimation of (b) in the record (`ladders.rows`). lm7i_combo_soft's swings last **60–140 ms** (the flat control
+run's `swing_list`: dur 0.06–0.14 s), i.e. 3–7 samples at 50 Hz and **0–1 at 10 Hz**; the 10 Hz `fpk` column holds only the LAST 20 ms window
+of each 100 ms (the sim resets the peak per message), so 80 % of the force bursts are not in the file at all. Measured on the control run's
+own 10 Hz CSV (`stumble_1793621621.csv`, the run whose 50 Hz truth is 5 / 33 scuffed at 0.15 and 4 / 42 at 0.30): airborne runs of ≥ 2
+samples = **0 of 19 left swings and 1 of 14 right** at 0.15 (0 of 21 L, 7 of 21 R at 0.30) — the swing segmentation itself fails, before any
+scuff test. A "lower-bound" re-score from these rows would report ~0 scuffs for a policy that drags its toe, which is the false reassurance
+this change exists to remove, so no `exam_rescore_scuffs.py` was written. The honest route for an old record is a re-examination: the
+lock-step rig repeats a seed bit for bit when no frame is lost (section 7b), so re-running a policy reproduces its ladders and adds the
+`swing` fields; the `land` skill examines unexamined rows anyway. Nothing stored before 2026-11-02 evening carries a scuff count.
+
+**Proposed quality item (NOT applied; calibration v2 stays): toe drag**, a 3-point row under gait & body care (gait 10 = impact 3 →
+2, smoothness 3 → 2, toe drag 3, pivot 1, slip 1, swing 0 (absorbed), steadiness 1) = the mean over the vx +0.15 and +0.30 rungs of the
+scuffed share ramp:
+
+$$s = \min(\max(\frac{0.3 - x}{0.3 - 0}, 0), 1), \qquad x = \frac{\text{scuffed}}{\text{swings}_L + \text{swings}_R}$$
+
+g = 0 (no swing touched the floor), b = 0.3 (nearly one swing in three drags: the robot's 2026-11-02 walk). The flat control run's
+lm7i_combo_soft: 5/33 = 0.152 → s = (0.3 − 0.152) / 0.3 = 0.49 at 0.15, 4/42 = 0.095 → s = 0.68 at 0.30, mean 0.59 → 1.8 of 3 points. The
+ends are a definition (a toe on the floor is the operator's tolerance), not a calibration key; the companion swing columns stay unscored
+flags. A catch (the foot arrested in flight) counts in `trips` but not here: on the flat floor a catch is a policy artefact (none seen so far),
+on the field it is the bump. Open: whether the two rungs weigh equally (0.15 is the homing's cruise, 0.30 the push test's walk).
+
+**Verified 2026-11-02 16:03** (`scuff_dev_2026-11-02_16-03-06`, one unpinned rig, seed 1, n 1: **2 min 2 s** wall for the whole exam, rtf 6.7,
+record `lm7i_combo_soft_2026-11-01/exam/scuff_dev_2026-11-02_16-05-07.json`, 1058 KB = 46 KB more than the morning's record; the ~1 MB is the
+5 Hz rows + pushes, not the swing fields). lm7i_combo_soft on the flat ladder: $z_{rest}$ 4.23 / 4.14 cm; **scuffs .15 = 0/8, scuffs .30 = 1/11**,
+swing .15 1.8/2.4 cm, swing .30 2.1/2.5 cm; the neighbouring rungs: vx 0.10 **4/8**, 0.20 1/11, 0.25 2/11, 0.45 1/11; pooled over vx 0.05–0.50
+**9 of 96 swings (9.4 %)** — the order of the 15 s flat control (15 % at 0.15, 9.5 % at 0.30). A 4 s rung holds only 8–11 swings, so one rung's
+share is a coarse estimate: with a true share p = 0.15 the chance that 8 swings show none is $(1-p)^8$ = 0.27, so a "0/8" is no clearance
+certificate; read the two columns together with the neighbours (fleetdeck can show the per-rung `scuffed`), or pool 0.10–0.30 (the walking band
+of the homing and the push test) if the operator prefers one number. Two details of the record: (1) `swing_height_raw` (the old column) reads
+0.3–0.7 cm on rungs whose foot was airborne at the rung's first sample (the old zero was that sample) while the apex reads 1.7–1.8 cm — the
+morning's "swing 1.6" was this definition, the apex vs $z_{rest}$ is the right one; (2) above ~0.6 m/s the bursts are 300–370 N with an
+apex of 3.3–3.7 cm and come AFTER the apex (`scuff_pre_apex` 0): a touchdown bounce (the foot struck and left the floor inside one 20 ms
+window), not a drag — at 0.15 / 0.30 the apex is 1.5–2.5 cm and the bursts sit at or before it. Test 5 at 1 cm (field `d774b40ebe0b`): 0.15 rung
+v 0.028 m/s (the policy barely moved off the start in this run: 8 swings, 1 scuffed, tilt max 4.7°), 0.30 rung v 0.208, **10 of 44 swings
+tripped**, apex max 12.3 / 6.9 cm, tilt max 17.4° — the milder field still trips this policy one swing in four at 0.30.
+
 ### Key columns (2026-11-02)
 `EXAM.md` prints, beside the score: `swing .15 L/R cm` and `swing .30 L/R cm` — the FLAT ladder's peak foot lift per foot on the vx +0.15
-and +0.30 rungs (`ladders.segments[].swing_height`; the operator's first flag: below ~2 cm a toe meets any threshold) — and the Test 5
-columns `stumble .15` / `stumble .30` = "apex L/R cm · trips · peak tilt°" per rung, and `stumble falls`. Old records print "—".
+and +0.30 rungs (`ladders.segments[].swing_height`; the operator's first flag: below ~2 cm a toe meets any threshold) — **`scuffs .15` and
+`scuffs .30`** (evening) = the FLAT ladder's scuffed swings / all swings (L + R) on the same two rungs, e.g. "5/33" (`exam_score.ladder_scuffs`,
+`ladders.segments[].swing.scuffed` / `.swings`; the number the robot's toe drag would have shown) — and the Test 5 columns `stumble .15` /
+`stumble .30` = "apex L/R cm · trips · peak tilt°" per rung, and `stumble falls`. Old records print "—". `tools/exam.sh` echoes the two
+key rungs' `sw` lines per policy as they come in.
 
 ## 4. Stability, gait and energy metrics (all phases)
 Stability 30 = stands 12 + walking torso 6 + handover 12.
