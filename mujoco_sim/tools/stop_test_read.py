@@ -9,6 +9,8 @@ Usage: python3 stop_test_read.py ~/legs_2026-10-08_stoptest.log [--hold 3] [--to
   --hold     seconds a joint must sit still to count as a plateau (default 3)
   --tol      stillness tolerance in degrees (default 0.3)
   --min-frac only report plateaus beyond this fraction of the URDF limit (default 0.5; the hanging rest pose is ~0)
+  --min-abs  on a side the URDF leaves FREE (hip pitch both ways, hip roll outward) report plateaus beyond this angle (default 15 deg;
+             2026-11-02: those stops were silently dropped, so hip pitch / hip roll outward were never readable)
 """
 import argparse, re, sys, collections
 # URDF limits (deg) of h1_2_comx06_hand790.urdf -- lower/upper per side; None = free (no stop in the model)
@@ -18,7 +20,7 @@ LIM = {("hipR", "L"): (-24.64, None), ("hipR", "R"): (None, 24.64),      # inwar
        ("ankP", "L"): (-51.41, 30.0), ("ankP", "R"): (-51.41, 30.0),
        ("hipP", "L"): (None, None), ("hipP", "R"): (None, None), ("knee", "L"): (-14.90, 117.46), ("knee", "R"): (-14.90, 117.46)}
 MIRROR = {"hipR": -1, "hipY": -1, "ankR": -1, "ankP": +1, "hipP": +1, "knee": +1}   # L and R at the same physical stop: sum (-1) or equal (+1)
-ap = argparse.ArgumentParser(); ap.add_argument("log"); ap.add_argument("--hold", type=float, default=3.0); ap.add_argument("--tol", type=float, default=0.3); ap.add_argument("--min-frac", type=float, default=0.5)
+ap = argparse.ArgumentParser(); ap.add_argument("log"); ap.add_argument("--hold", type=float, default=3.0); ap.add_argument("--tol", type=float, default=0.3); ap.add_argument("--min-frac", type=float, default=0.5); ap.add_argument("--min-abs", type=float, default=15.0)
 a = ap.parse_args()
 tpat = re.compile(r"^(\d\d:\d\d:\d\d)"); lpat = re.compile(r"^\s*([LR]) \| (.*)$"); jpat = re.compile(r"(\w+) cmd\s+\S+\s+q\s+([-+]?\d+\.\d+)\s+err\s+\S+\s+tau\s+([-+]?\d+\.\d+|-)")
 series = collections.defaultdict(list)   # (joint, side) -> [(t, q)]
@@ -52,8 +54,12 @@ for (j, side), rows in sorted(series.items()):
         if q < 0 and lo is not None: lim = lo
         if q > 0 and hi is not None: lim = hi
         frac = abs(q) / abs(lim) if lim else 0.0
-        if lim is None or frac < a.min_frac: continue
-        print(f"{j:5s} {side:4s} {t0:8s} {t1:8s} {n:3d} {q:+8.2f}  {lim:+9.2f} {q - lim:+8.2f}")
+        if lim is None:   # no stop in the model on this side: a plateau far enough from the rest pose is the mechanical stop
+            if abs(q) < a.min_abs: continue
+            print(f"{j:5s} {side:4s} {t0:8s} {t1:8s} {n:3d} {q:+8.2f}  {'(free)':>9s} {'':>8s}")
+        else:
+            if frac < a.min_frac: continue
+            print(f"{j:5s} {side:4s} {t0:8s} {t1:8s} {n:3d} {q:+8.2f}  {lim:+9.2f} {q - lim:+8.2f}")
         key = (j, "neg" if q < 0 else "pos")
         found.setdefault((j, side, key[1]), []).append(q)
 print("\nPAIRS (same physical stop, L vs R):")
@@ -71,5 +77,11 @@ def wmean(k): v = [q for t, q in series[k] if t in last]; return sum(v) / len(v)
 tL, tR = wmean(("kneeTau", "L")), wmean(("kneeTau", "R"))
 loaded = tL > 20 and tR > 20
 print(f"\nFEET FLAT (final 10 s {last[0]}..{last[-1]}): knee |tau| L {tL:.1f} / R {tR:.1f} Nm -> {'LOADED, usable as the absolute ankle reference' if loaded else 'UNLOADED (weight on the harness) -> NOT an absolute reference; redo with knee |tau| > 20 Nm'}")
-for j in ["hipR", "ankR", "ankP", "knee", "hipY"]:
+for j in ["hipR", "ankR", "ankP", "knee", "hipY", "hipP"]:
     L, R = wmean((j, "L")), wmean((j, "R")); print(f"  {j:5s} L {L:+7.2f} R {R:+7.2f}  {'sum' if MIRROR[j] < 0 else 'diff'} {(L + R) if MIRROR[j] < 0 else (L - R):+6.2f}")
+# the PITCH chain (2026-11-02): hip pitch, knee and ankle pitch all turn about the same y axis, so with both soles flat on level ground
+# hipP + knee + ankP = -(pelvis pitch) for EACH leg; read L - R it is the pitch-zero offset difference of the two chains (feet side by
+# side, loaded) -- the fore-aft counterpart of the 10-08 roll-chain read.
+cL = sum(wmean((j, "L")) for j in ("hipP", "knee", "ankP")); cR = sum(wmean((j, "R")) for j in ("hipP", "knee", "ankP"))
+print(f"  pitch chain (hipP + knee + ankP) L {cL:+7.2f} R {cR:+7.2f}  diff {cL - cR:+6.2f}  "
+      f"({'LOADED: the pitch-zero difference L - R' if loaded else 'not loaded: not a reference'})")
