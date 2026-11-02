@@ -440,3 +440,85 @@ Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival
 | 18 | lm7h_a_h6e_energy | **49.7** | 10.0 | 15.8 | 4.0 | 6.2 | 4.4 | 5.6 | 3.7 | 0 | 0.13/0.51/0.11 | 24/24 | 9/10 | 0.2358 | 311 |
 | 19 | lm7h_a_h6_pc | **47.3** | 10.0 | 13.0 | 9.0 | 4.4 | 3.8 | 4.2 | 2.9 | 0 | 0.75/0.65/0.05 | 23/24 | 8/10 | 0.0951 | 409 |
 
+## EXAM #2 hipyaw_stock — 2026-11-02 10:30 — 5 policies, seed 1, homing n 10, balance p14h_stancewide, 5 instances, wall 1 min 51 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/hipyaw_stock_2026-11-02_10-28-17
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7i_combo_soft | **50.7** | 10.0 | 17.9 | 9.0 | 6.6 | 7.2 | 0.0 | 0.0 | 0 | 0.81/0.46/0.09 | 0/24 | 0/0 | 0.2904 | 97 |
+| 2 | lm7i_energy | **50.0** | 10.0 | 17.6 | 9.1 | 5.3 | 8.0 | 0.0 | 0.0 | 0 | 0.76/0.56/0.10 | 0/24 | 0/0 | 0.0211 | 99 |
+| 3 | lm7h_b_h4_still | **49.2** | 10.0 | 17.6 | 9.7 | 4.7 | 7.2 | 0.0 | 0.0 | 0 | 0.80/0.64/0.10 | 0/24 | 0/0 | 0.0586 | 100 |
+| 4 | lm7i_arms | **49.1** | 10.0 | 18.7 | 8.8 | 4.4 | 7.2 | 0.0 | 0.0 | 0 | 0.75/0.59/0.05 | 0/24 | 0/0 | 0.0064 | 100 |
+| 5 | lm7i_softstop | **46.0** | 10.0 | 15.2 | 10.3 | 4.7 | 5.8 | 0.0 | 0.0 | 0 | 0.86/0.54/0.16 | 0/24 | 0/0 | 0.3656 | 99 |
+
+## EXAM #2 hipyaw_wide — 2026-11-02 10:32 — 5 policies, seed 1, homing n 10, balance p14h_stancewide, 5 instances, wall 1 min 59 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/hipyaw_wide_2026-11-02_10-30-08
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7i_combo_soft | **50.4** | 10.0 | 17.2 | 9.3 | 6.9 | 7.0 | 0.0 | 0.0 | 0 | 0.85/0.42/0.09 | 0/24 | 0/0 | 0.3025 | 105 |
+| 2 | lm7h_b_h4_still | **47.5** | 10.0 | 16.5 | 9.8 | 4.4 | 6.8 | 0.0 | 0.0 | 0 | 0.81/0.65/0.10 | 0/24 | 0/0 | 0.0708 | 107 |
+| 3 | lm7i_energy | **47.5** | 10.0 | 15.6 | 9.1 | 5.2 | 7.6 | 0.0 | 0.0 | 0 | 0.79/0.53/0.09 | 0/24 | 0/0 | 0.1163 | 107 |
+| 4 | lm7i_softstop | **46.9** | 10.0 | 15.6 | 10.3 | 5.0 | 6.0 | 0.0 | 0.0 | 0 | 0.85/0.50/0.19 | 0/24 | 0/0 | 0.3523 | 107 |
+| 5 | lm7i_arms | **40.0** | 10.0 | 15.6 | 6.6 | 4.1 | 3.7 | 0.0 | 0.0 | 0 | 0.48/0.60/0.05 | 0/24 | 0/0 | 0.2001 | 107 |
+
+## EXAM #2 ho_p14h_stancewide — 2026-11-02 10:33 — 0 policies, seed 1, homing n 10, balance p14h_stancewide, 1 instances, wall 0 min 26 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p14h_stancewide_2026-11-02_10-32-52
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 ho_p16d_sw_activation — 2026-11-02 10:44 — 0 policies, seed 1, homing n 10, balance p16d_sw_activation, 1 instances, wall 0 min 29 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p16d_sw_activation_2026-11-02_10-44-09
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 ho_p16d_sw_bank — 2026-11-02 10:44 — 0 policies, seed 1, homing n 10, balance p16d_sw_bank, 1 instances, wall 0 min 30 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p16d_sw_bank_2026-11-02_10-44-13
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 ho_p16d_sw_resets — 2026-11-02 10:44 — 0 policies, seed 1, homing n 10, balance p16d_sw_resets, 1 instances, wall 0 min 30 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p16d_sw_resets_2026-11-02_10-44-17
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 ho_p16e_sw_bankmix — 2026-11-02 10:44 — 0 policies, seed 1, homing n 10, balance p16e_sw_bankmix, 1 instances, wall 0 min 29 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p16e_sw_bankmix_2026-11-02_10-44-21
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 ho_p16e_sw_bankmix50 — 2026-11-02 10:44 — 0 policies, seed 1, homing n 10, balance p16e_sw_bankmix50, 1 instances, wall 0 min 29 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/ho_p16e_sw_bankmix50_2026-11-02_10-44-25
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+
+## EXAM #2 stumble_dev — 2026-11-02 14:33 — 1 policies, seed 1, homing n 1, balance p14h_stancewide, 1 instances, wall 2 min 19 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Stumble = Test 5 (rough floor: 0.4-2 cm sphere bumps every 20 cm, seed 1, NOT scored): ground-corrected swing apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/stumble_dev_2026-11-02_14-31-21
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | swing .15 L/R cm | swing .30 L/R cm | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7i_combo_soft | **63.2** | 10.0 | 19.5 | 9.1 | 6.7 | 7.6 | 6.1 | 4.2 | 0 | 0.80/0.48/0.10 | 24/24 | 1/1 | 0.2738 | 1.7/2.3 | 2.1/2.2 | 6.5/7.6 · 5 · 14.31 | 15.5/10.2 · 13 · 21.19 | 0 | 139 |
+
+## EXAM #2 stumble_dev_r2 — 2026-11-02 14:33 — 1 policies, seed 1, homing n 1, balance p14h_stancewide, 1 instances, wall 2 min 19 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Stumble = Test 5 (rough floor: 0.4-2 cm sphere bumps every 20 cm, seed 1, NOT scored): ground-corrected swing apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/stumble_dev_r2_2026-11-02_14-31-26
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | swing .15 L/R cm | swing .30 L/R cm | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7i_combo_soft | **59.6** | 10.0 | 18.2 | 9.6 | 6.2 | 7.4 | 6.2 | 2.0 | 0 | 0.87/0.42/0.12 | 24/24 | 1/1 | 0.2744 | 2.5/1.6 | 1.6/2.4 | 9.7/5.2 · 9 · 13.67 | 10.2/15.4 · 10 · 28.46 | 0 | 139 |
+
