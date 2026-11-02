@@ -208,7 +208,7 @@ energy "for all test phases". New raw values (commander `homing_commander.py` + 
 
 Calibration **v2-2026-11-01** (`results/exam2_calibration.json`): the 25 policies of `land_lm7h_r2_2026-11-01_11-22-18` (lm7h 11 + lm7g 12 +
 lm7f 2; lm7g_energy_cot's record of that run was broken -- its switch was refused -- and excluded). Examples: arm sway 1.16 → 1.96°,
-counter-sway 0.32 → 5.78°, push separation 11.8 → 55.3 mm (was DEAD: 89 % at one end), push energy 577 → 1846 J, all-phase τ²
+counter-sway 0.32 → 5.78°, push feet-separation change 11.8 → 55.3 cm (was DEAD: 89 % at one end), push energy 577 → 1846 J, all-phase τ²
 7247 → 12190 (was DEAD), all-phase power 95.5 → 165 W. `walk_sag` stays DEAD (operator: "1 cm sag is completely fine").
 
 ## 5. Stance drawing
