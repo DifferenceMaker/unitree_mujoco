@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # exam.sh -- THE standardized walk-policy exam, N rigs in parallel (2026-10-28 evening).
 #   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
+#   EXAM_FF=0 bash ... = no arm gravity feedforward (every exam before 2026-11-03; the default since then runs the robot's ff sender in every rig).
 # EXAM #2 (default since 2026-10-30, results/EXAM2_SPEC.md): Test 0 handover -> Test 1 LADDERS (tools/exam2_test.sh ladders: 20 s stand,
 #   then vx / vy / wz in 0.05 rungs up to the top, a stop, back down to the negative top, a stop) -> Test 2 PUSHES (tools/exam2_test.sh
 #   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
@@ -27,6 +28,7 @@ SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
 EXAM=2; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
+FF="${EXAM_FF:-1}"   # 2026-11-03: the robot's arm gravity feedforward runs in EVERY rig (ActionModule/Utils/arm_ff_only.py in the container, as the ActionModule on the robot); EXAM_FF=0 = the pre-11-03 plant (PD-only arms)
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
   --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-stumble) STUMBLE=0; shift;; --stumble) STUMBLE=1; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
@@ -49,7 +51,7 @@ for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name $slug" 
 NP=$(wc -l < "$Q"); [[ $NP -gt 0 ]] || { echo "nothing to examine"; exit 2; }
 [[ $PAR -gt $NP ]] && PAR=$NP
 [[ "$EXAM" == 2 ]] || STUMBLE=0
-echo "##### $(date +%T) EXAM #$EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING stumble $STUMBLE -> $EX"
+echo "##### $(date +%T) EXAM #$EXAM $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING stumble $STUMBLE arm ff $FF -> $EX"
 if [[ "$EXAM" == 2 ]]; then   # the commander knobs of exam #2 (forwarded into the rig by run_mujoco_loco_switch.sh)
   export HOMING_TURN_LAW=p HOMING_DESK="0.8 1.2" HOMING_TIMEOUT_S=120   # the desk scene: top 0.80 deep x 1.20 wide behind the edge (0.35, 0)
   export HOMING_TRIAL_T0="${HOMING_TRIAL_T0:-15}"   # 2026-11-01: the first item at sim 15 s (was 40; the walk engages at ~4.6 s)
@@ -86,6 +88,18 @@ worker() {  # worker <instance k>
       echo "[$k] $(date +%T) $name: !! rig / commander did not come up"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
       echo "$name NO_COMMANDER" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
     fi
+    # ARM GRAVITY FEEDFORWARD (2026-11-03, operator: the ff is on in every policy on the robot, walk and balance): the robot's
+    # ActionModule streams pinocchio g(q_measured) for both arms to /BridgeModule/arm_tau_ff; the rig runs the same sender
+    # (ActionModule/Utils/arm_ff_only.py = robot/gravity_ff.GravityFF, as tools/ff_handover.sh did) inside the container for the whole
+    # policy, so the exam tests the plant the robot will run (the lm7j walk rows train with it). The Bridge conductor keeps the ff
+    # while the walk owns the arm targets (Aspired af7e173 on MM_loco_switch, cherry-picked to MM_loco_switch_homing). EXAM_FF=0 skips it. The sender is wall-clock (30 Hz) like the arm stream.
+    if [[ "$FF" == 1 ]]; then
+      docker exec -d "archb_locosw_$k" bash -c 'source /opt/ros/humble/setup.bash; cd /workspace; PYTHONPATH=/workspace/.global:/workspace/ActionModule/main:${PYTHONPATH:-} /workspace/.venv/ActionModule/bin/python3 ActionModule/Utils/arm_ff_only.py > /tmp/arm_ff_only.log 2>&1'
+      for i in $(seq 1 20); do docker exec "archb_locosw_$k" grep -q "tau_ff first sample" /tmp/arm_ff_only.log 2>/dev/null && break; sleep 1; done
+      if docker exec "archb_locosw_$k" grep -q "tau_ff first sample" /tmp/arm_ff_only.log 2>/dev/null; then
+        echo "[$k] $(date +%T) $name: arm ff ON -- $(docker exec "archb_locosw_$k" grep -o "first sample.*" /tmp/arm_ff_only.log | cut -c1-120)"
+      else echo "[$k] $(date +%T) $name: !! arm ff requested but no first sample after 20 s (see ff_$name.log)"; echo "$name NO_ARM_FF" >> "$EX/failed.txt"; fi
+    else echo "[$k] $(date +%T) $name: arm ff OFF (EXAM_FF=0: PD-only arms, the pre-2026-11-03 plant)"; fi
     if [[ $HANDOVER -eq 1 ]]; then   # Test 0 (2026-10-29): balance -> walk -> balance from three arm poses, FIRST (the hardware failure)
       local o0; o0=$(wc -l < "$SIM/logs/handover_$k.jsonl" 2>/dev/null || echo 0)
       bash "$SIM/tools/handover.sh" --timeout 600 > "$EX/handover_$name.log" 2>&1; tail -n +"$((o0 + 1))" "$SIM/logs/handover_$k.jsonl" > "$EX/handover_$name.jsonl"
@@ -123,6 +137,11 @@ worker() {  # worker <instance k>
     # the exam record that travels with the milestone (fleetdeck draws the sheets from it) -- JSON in git, no PNG
     python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --stop-dist "$STOP_DIST" --exam "$EXAM" --instance "$k" $([[ $NOMS -eq 1 ]] && echo "--ail /nonexistent") 2>&1 | sed "s/^/[$k]    /"
     grep -c "POSE GAP" "$L" 2>/dev/null | sed "s/^/[$k]    pose gaps: /"
+    if [[ "$FF" == 1 ]]; then   # the ff sender's log + the Bridge's ff events (APPLIED / reverted / MUTED / LIVE) travel with the exam
+      docker exec "archb_locosw_$k" cat /tmp/arm_ff_only.log > "$EX/ff_$name.log" 2>/dev/null
+      grep -a "tau_ff\|arms: MUTED\|arms: LIVE" "$L" >> "$EX/ff_$name.log" 2>/dev/null
+      echo "[$k]    arm ff: applied $(grep -c 'tau_ff APPLIED' "$EX/ff_$name.log") reverted $(grep -c 'reverted to 0' "$EX/ff_$name.log") (a revert = the sender lapsed; expected 0)"
+    fi
     bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1
     t1=$(date +%s); echo "$name $((t1 - t0))" >> "$EX/times.txt"
     echo "[$k] $(date +%T) $name: done in $((t1 - t0)) s"

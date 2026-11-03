@@ -464,6 +464,19 @@ Where it lives:
   MovementModule 28 %, sim 34 %, commander 19 %. The policy frame (~3.0 ms at 10 rigs, 1.3 ms at 2) is the next lever; homing trials that
   time out (120 s each) set the slowest policy's time.
 
+## 7d. The arm gravity feedforward runs in every rig (2026-11-03)
+Since 2026-11-03 `tools/exam.sh` starts the robot's arm gravity feedforward sender in every rig (`ActionModule/Utils/arm_ff_only.py`
+= `robot/gravity_ff.GravityFF`, pinocchio $g(q_{measured})$ for both arms on `/BridgeModule/arm_tau_ff` at 30 Hz, the Bridge setter
+clips at 25 Nm per motor), and the Bridge conductor keeps that ff while a walk stream owns the arm targets (Aspired `af7e173` on
+MM_loco_switch, cherry-picked to MM_loco_switch_homing; until then the ff was dropped with the targets and faded to 0 after 0.5 s). The
+exam therefore runs the plant the robot runs: the firmware/sim law is $\tau = \tau_{ff} + k_p e - k_d \dot q$, so with the ff on
+the kp-40 PD no longer has to manufacture gravity torque from position error (the elbow at the default pose carries $\tau_{ff}
+\approx -4.4$ Nm, i.e. 0.11 rad of sag at kp 40 that the walk rows since lm7j never saw in training). Records before this date are
+PD-only-arm records; `EXAM_FF=0` reproduces them. The exam log prints `arm ff ON` per rig with the first sample and, at the end of each
+policy, `arm ff: applied N reverted M` (a revert means the sender lapsed; expected 0); `ff_<policy>.log` keeps the sender's log and the
+Bridge's ff / MUTED / LIVE events. The sender is wall-clock (30 Hz) like the arm-pose stream, so it belongs to the run-to-run spread of
+section 6, not to the bit-for-bit repeat.
+
 ## 8. Training band (recommendation, separate decision)
 Today's walk box: vx (−0.8, 1.2), vy ±0.3, wz ±0.5 or ±0.8. Proposal: vx (−0.5, 1.0), vy ±0.3, wz ±0.8. Homing never asks more than
 0.5 forward or −0.15 backward; fast backward walking is the riskiest motion (no view behind, a backward fall is the worst fall).
