@@ -162,6 +162,13 @@ inline ScriptedReset scripted_reset;
 //   "fpk" = per-foot peak vertical floor-contact force since the previous pose message (N; a 50 Hz sample misses the impact peak)
 //   "nfc" = cumulative frames with a NON-foot robot body touching the floor (> 5 N): knees, hands, pelvis -- the literal crawl
 //   "nfb" = the name of the last such body
+// Exam #2 v3 (2026-11-03, hard-fail criteria c / d / e):
+//   "nfp"  = peak normal force of a NON-foot robot body on the floor (world body) since the previous pose message (N), "nfpb" = that body
+//   "sc"   = [peak force, body A, body B] of an ARM self-contact since the previous message: an arm body (shoulder .. wrist/hand) against a
+//            body outside its own arm (torso, pelvis, legs, the other arm); within one arm (hand vs own forearm) never counts; the
+//            desk / marker balls / floor are not self-contact (the desk has its own counters, the floor is "nfp")
+//   "scd"  = cumulative seconds with such an arm self-contact above SIM_SELF_CONTACT_N (default 20 N): the duration metric
+//   "jm"   = per joint (hinge joints after the free joint, model order) the distance to the nearer limit (rad): the joint-limit dwell
 struct ExamCounters
 {
   double en_mech = 0.0, en_tau2 = 0.0;
@@ -169,6 +176,12 @@ struct ExamCounters
   unsigned long long nfc = 0;
   std::string nfb;
   int floor_geom = -2, fl_id = -2, fr_id = -2;
+  double nfp = 0.0; std::string nfpb;              // v3: peak non-foot floor force since the last message + its body
+  double sc_peak = 0.0; std::string sc_a, sc_b;    // v3: peak arm self-contact since the last message + the pair
+  double scd = 0.0;                                // v3: cumulative seconds of arm self-contact > sc_n
+  double sc_n = 20.0;
+  std::vector<int> arm_side;                       // per body: 0 = not an arm, 1 = left arm, 2 = right arm
+  std::vector<char> robot_body;                    // per body: part of the robot (not world / desk / balls)
 };
 inline ExamCounters exam_ctr;
 
@@ -626,6 +639,22 @@ namespace
       c.floor_geom = mj_name2id(m, mjOBJ_GEOM, "floor");
       c.fl_id = mj_name2id(m, mjOBJ_BODY, "left_ankle_roll_link");
       c.fr_id = mj_name2id(m, mjOBJ_BODY, "right_ankle_roll_link");
+      if (const char* e = std::getenv("SIM_SELF_CONTACT_N"); e && e[0]) c.sc_n = std::atof(e);
+      // v3 body classes: an arm body = name holds shoulder / elbow / wrist / hand / palm / finger names, side by "left" / "right";
+      // a robot body = any non-world body that is not the desk / a marker ball (names "desk", "*_ball*")
+      c.arm_side.assign(m->nbody, 0); c.robot_body.assign(m->nbody, 0);
+      for (int b = 1; b < m->nbody; ++b)
+      {
+        const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+        const std::string s(bn ? bn : "");
+        if (s == "desk" || s.find("ball") != std::string::npos) continue;
+        c.robot_body[b] = 1;
+        const bool armish = s.find("shoulder") != std::string::npos || s.find("elbow") != std::string::npos || s.find("wrist") != std::string::npos ||
+                            s.find("hand") != std::string::npos || s.find("palm") != std::string::npos || s.find("thumb") != std::string::npos ||
+                            s.find("index") != std::string::npos || s.find("middle") != std::string::npos || s.find("ring") != std::string::npos ||
+                            s.find("pinky") != std::string::npos || s.find("little") != std::string::npos;
+        if (armish) c.arm_side[b] = (s.find("right") != std::string::npos || s[0] == 'R') ? 2 : 1;
+      }
     }
     const int nmot = g_bridge ? g_bridge->num_motor() : m->nu;
     const double dt = m->opt.timestep;
@@ -639,7 +668,7 @@ namespace
     // (scene_*_stumble<seed>.xml) -- the counters keyed on the geom named "floor" were blind to a scuff on a bump.
     // The desk is its own body, the marker balls are mocap bodies: neither counts, as before.
     double fz[2] = {0.0, 0.0};
-    bool nonfoot = false;
+    bool nonfoot = false, selfc = false;
     for (int k = 0; k < d->ncon; ++k)
     {
       const mjContact& con = d->contact[k];
@@ -647,20 +676,48 @@ namespace
       int other;
       if (b1 == 0 && b2 != 0) other = con.geom2;
       else if (b2 == 0 && b1 != 0) other = con.geom1;
-      else continue;
+      else
+      {
+        // v3: ARM self-contact = an arm body against a robot body outside its own arm (both robot bodies, neither the world)
+        if (b1 > 0 && b2 > 0 && b1 < (int)c.robot_body.size() && c.robot_body[b1] && c.robot_body[b2] &&
+            (c.arm_side[b1] || c.arm_side[b2]) && c.arm_side[b1] != c.arm_side[b2])
+        {
+          mjtNum f6[6];
+          mj_contactForce(m, d, k, f6);
+          const double f = std::fabs(f6[0]);
+          if (f > c.sc_n) selfc = true;
+          if (f > c.sc_peak)
+          {
+            c.sc_peak = f;
+            const char* n1 = mj_id2name(m, mjOBJ_BODY, b1); const char* n2 = mj_id2name(m, mjOBJ_BODY, b2);
+            c.sc_a = n1 ? n1 : "?"; c.sc_b = n2 ? n2 : "?";
+          }
+        }
+        continue;
+      }
       const int b = m->geom_bodyid[other];
       mjtNum f6[6];
       mj_contactForce(m, d, k, f6);   // contact frame: f6[0] = normal force (world z on the plane, the local surface normal on the field)
       if (b == c.fl_id) fz[0] += f6[0];
       else if (b == c.fr_id) fz[1] += f6[0];
-      else if (f6[0] > 5.0 && b > 0)
+      else if (b > 0 && b < (int)c.robot_body.size() && c.robot_body[b])
       {
-        nonfoot = true;
-        const char* bn = mj_id2name(m, mjOBJ_BODY, b);
-        c.nfb = bn ? bn : "?";
+        if (f6[0] > 5.0)
+        {
+          nonfoot = true;
+          const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+          c.nfb = bn ? bn : "?";
+        }
+        if (f6[0] > c.nfp)   // v3: the peak non-foot floor force since the last message, with its body
+        {
+          c.nfp = f6[0];
+          const char* bn = mj_id2name(m, mjOBJ_BODY, b);
+          c.nfpb = bn ? bn : "?";
+        }
       }
     }
     if (nonfoot) ++c.nfc;
+    if (selfc) c.scd += dt;
     c.fpk[0] = std::max(c.fpk[0], fz[0]);
     c.fpk[1] = std::max(c.fpk[1], fz[1]);
   }
@@ -810,6 +867,21 @@ namespace
                     n += std::snprintf(js + n, jscap - n, ",\"en\":[%.3f,%.1f],\"fpk\":[%.1f,%.1f],\"nfc\":%llu,\"nfb\":\"%s\"",
                                        ec.en_mech, ec.en_tau2, ec.fpk[0], ec.fpk[1], ec.nfc, ec.nfb.c_str());
                     ec.fpk[0] = ec.fpk[1] = 0.0;
+                    // v3 (2026-11-03): peak non-foot floor force + body, peak arm self-contact + pair, self-contact seconds, joint-limit margins
+                    n += std::snprintf(js + n, jscap - n, ",\"nfp\":%.1f,\"nfpb\":\"%s\",\"sc\":[%.1f,\"%s\",\"%s\"],\"scd\":%.3f",
+                                       ec.nfp, ec.nfpb.c_str(), ec.sc_peak, ec.sc_a.c_str(), ec.sc_b.c_str(), ec.scd);
+                    ec.nfp = 0.0; ec.nfpb.clear(); ec.sc_peak = 0.0; ec.sc_a.clear(); ec.sc_b.clear();
+                    if (n > 0 && n < jscap - 64) {
+                      n += std::snprintf(js + n, jscap - n, ",\"jm\":[");
+                      int cnt = 0;
+                      for (int j = 0; j < m->njnt && n < jscap - 32; ++j) {
+                        if (m->jnt_type[j] != mjJNT_HINGE && m->jnt_type[j] != mjJNT_SLIDE) continue;
+                        const double q = d->qpos[m->jnt_qposadr[j]];
+                        const double mg = m->jnt_limited[j] ? std::min(q - m->jnt_range[2 * j], m->jnt_range[2 * j + 1] - q) : 9.0;
+                        n += std::snprintf(js + n, jscap - n, "%s%.3f", cnt++ ? "," : "", mg);
+                      }
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    }
                     const int nmot = g_bridge ? std::min(g_bridge->num_motor(), m->nu) : m->nu;
                     auto add_vec = [&](const char* key, int cnt, auto get) {
                       if (n <= 0 || n >= jscap - 64) return;

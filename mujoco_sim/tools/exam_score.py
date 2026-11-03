@@ -114,7 +114,7 @@ def ladder_parts(lad):
     """the ladder record split: the 20 s stand, the rungs (by axis), the stops (with the rung before), the falls"""
     segs = [s for s in (lad or {}).get("segments", []) if s.get("name") != "reset"]
     stand = next((s for s in segs if s["name"] == "stand"), None)
-    rungs = [s for s in segs if s["name"] not in ("stand", "stop") and s.get("cmd")]
+    rungs = [s for s in segs if s["name"] not in ("stand", "stop", "bal_settle", "settle") and s.get("cmd") and _axis(s["cmd"])]
     stops = []
     for i, s in enumerate(segs):
         if s["name"] == "stop":
@@ -146,12 +146,17 @@ CAL_DEFAULT = {
     # 2026-11-01 (operator: counter-sway, swinging arms, chaotic recoveries; energy = actuation over ALL phases): first guesses -> calibrate
     "arm_sway": (0.3, 3.0), "push_counter": (1.0, 8.0), "push_sway": (0.15, 0.6), "push_sep": (2.0, 12.0), "push_arm": (3.0, 25.0),
     "push_energy": (200.0, 1000.0), "en_all_tau2": (3000.0, 9000.0), "en_all_power": (100.0, 350.0),
+    # 2026-11-03 (Exam #2 v3): the 60 s stand's separation / stagger departure from its first second (operator: "how they start is how
+    # they finish"), the arms' departure from the walk stance, arm self-contact seconds -- first guesses, prov until calibrated
+    "stand_sep_dev_max": (0.005, 0.05), "stand_sep_dev_end": (0.005, 0.04), "stand_stag_dev_max": (0.005, 0.06), "stand_stag_dev_end": (0.005, 0.05),
+    "arm_dev_mean": (2.0, 15.0), "arm_dev_max": (5.0, 30.0), "sc_dur": (0.0, 2.0),
 }
 # PROVISIONAL keys = the spec's first guesses (no physical anchor): the calibration sets them from the population (p10 -> p90);
 # every other key is a definition the calibration keeps (and only flags when dead: > 80 % of the samples at one end)
 PROV = {"stand_rate", "walk_rate", "ho_jolt", "ho_jump", "impact", "smooth", "smooth_v1", "slip", "steady", "cot", "stand_tau2",
         "push_dist", "push_tilt", "push_rec", "push_foot",
-        "arm_sway", "push_counter", "push_sway", "push_sep", "push_arm", "push_energy", "en_all_tau2", "en_all_power"}
+        "arm_sway", "push_counter", "push_sway", "push_sep", "push_arm", "push_energy", "en_all_tau2", "en_all_power",
+        "stand_sep_dev_max", "stand_sep_dev_end", "stand_stag_dev_max", "stand_stag_dev_end", "arm_dev_mean", "arm_dev_max", "sc_dur"}
 # one push = 1.0: upright and no counter-sway first, few coordinated steps, still arms (operator 2026-11-01)
 PUSH_W = {"tilt": 0.15, "counter": 0.15, "sway": 0.10, "steps": 0.15, "sep": 0.10, "rec": 0.10, "dist": 0.10, "foot": 0.05, "arm": 0.10}
 HO_W = {"lifts": 0.25, "drift": 0.2, "sep": 0.15, "yaw": 0.1, "dip": 0.1, "jolt": 0.1, "jump": 0.05, "wait": 0.05}   # one switch = 1.0
@@ -191,6 +196,9 @@ def raw_values(handover, ladders, pushes, homing):
     V["stand_toe"] = mean([abs(sd[k]) for k in ("toe_L", "toe_R") if sd.get(k) is not None])
     V["stand_jitter"] = sd.get("jitter_knee")
     V["stand_tau2"] = (sd.get("energy") or {}).get("tau2_mean")
+    for k in ("sep_dev_max", "sep_dev_end", "stag_dev_max", "stag_dev_end"):   # v3 (2026-11-03): the 60 s stand's departure from its start
+        V["stand_" + k] = sd.get(k)
+    V["stand_s"] = (ladders or {}).get("stand_s") or (round(sd["dur"]) if sd.get("dur") else 20)
     V["stops"] = []
     for s, prev, ax in stops:
         st_ = s.get("stop") or {}
@@ -239,6 +247,29 @@ def raw_values(handover, ladders, pushes, homing):
     # arm sway (2026-11-01): the arm joints' angle std in the 20 s stand, the stops and the walking rungs up to 0.5 m/s
     arm_segs = ([stand] if stand else []) + [s for s, _, _ in stops] + walk
     V["arm_sway"] = mean([s["arm_std_deg"] for s in arm_segs if s and s.get("arm_std_deg") is not None])
+    # v3 (2026-11-03): the arms' departure from the walk stance (max over the 7 joints of |q - default|, deg): mean / peak over the walk
+    # policy's windows (the 60 s stand, the stops, the walking rungs <= 0.5, the pushes); arm self-contact seconds over the same + the
+    # handover's walk segment; joint-limit dwell (share of samples within 2 deg of a limit) per joint, walking vs standing
+    walk_segs = [s for s in arm_segs if s] + [s for s in (pushes or {}).get("segments", []) if s.get("name", "").startswith("push:")]
+    ad = [s["arm_dev_deg"] for s in walk_segs if s.get("arm_dev_deg")]
+    V["arm_dev_mean"] = mean([max(a["mean"]) for a in ad]); V["arm_dev_max"] = max([max(a["max"]) for a in ad] or [None])
+    sc_segs = walk_segs + [s for r in handover or [] for s in r.get("segments", []) if s.get("name") == "walk_after"]
+    scs = [s["self_contact"] for s in sc_segs if s.get("self_contact")]
+    V["sc_dur"] = sum(x["dur_s"] or 0.0 for x in scs) if scs else None
+    V["sc_peak"] = max([x["peak_N"] for x in scs] or [None]); V["sc_pair"] = next((x["pair"] for x in sorted(scs, key=lambda x: -x["peak_N"]) if x["pair"]), None)
+    def jl_agg(segs):
+        acc, tot = None, 0.0
+        for s_ in segs:
+            j = s_.get("joint_limit"); d = s_.get("dur") or 0.0
+            if not j or not d: continue
+            if acc is None: acc = [0.0] * len(j["frac"])
+            for k, v in enumerate(j["frac"]): acc[k] += v * d
+            tot += d
+        if not acc or not tot: return None
+        fr = [v / tot for v in acc]
+        return {"frac": [round(v, 4) for v in fr], "worst": sorted([[JOINT_NAMES[k] if k < len(JOINT_NAMES) else f"j{k}", round(v, 4)] for k, v in enumerate(fr) if v > 0],
+                                                                    key=lambda x: -x[1])[:3]}
+    V["jl_walk"] = jl_agg([r for r in rungs if not r.get("fell")] + [s for s, _, _ in stops]); V["jl_stand"] = jl_agg([stand] if stand else [])
     # energy over ALL phases (operator 2026-11-01: "how much the motors get actuated in sum ... for all test phases"): Tests 0-2
     E = [s.get("energy") for r in handover or [] for s in r.get("segments", [])] + [s.get("energy") for s in (ladders or {}).get("segments", [])] \
         + [s.get("energy") for s in (pushes or {}).get("segments", [])]
@@ -307,7 +338,142 @@ def stumble_summary(stumble):
     return out
 
 
-def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
+# ═══ EXAM #2 v3 (2026-11-03): HARD FAILS (binary, no calibration) + the measured-only rows ═══
+# a. height: z_stand = the walk policy's mean base height over the clean 60 s stand; walking (ladder rungs + stops, the handover's walk
+#    segment, the homing trials) fails when the 1 s running mean of z drops below z_stand - Z_RUN_DROP or any sample below z_stand -
+#    Z_SAMPLE_DROP; a push recovery fails only below z_stand - Z_PUSH_DROP (a deep dip can be a good recovery); z_stand < Z_STAND_MIN fails.
+#    (34 walk policies: stand z 0.988-0.994; walk drop median 6.7 / p90 9.6 / max 18.5 cm; push drop median 15.3 / p90 19.7 / max 30.1 cm.)
+#    The floor is a fail only -- no bonus for straighter legs (operator).
+# b. tilt: training ends an episode at 0.8 rad = 45.8 deg -> tilt >= TILT_FAIL_DEG (env EXAM_TILT_FAIL_DEG) in any window = a fall; the
+#    peak tilt per test is printed so the operator can lower it.
+# c. contacts: a non-foot body on the floor > CONTACT_FAIL_N = a fall (the commander already resets the robot on it and records the body
+#    + force; older records are read through their "crawl" falls). Arm self-contact (arm vs torso / pelvis / legs / the other arm) is
+#    MEASURED: seconds above 20 N (sc_dur, prov ramp) + the peak and the pair.
+# d. joint limits: MEASURED only (our policies hold ankle-roll / hip-yaw limits on purpose): dwell share per joint, walking and standing.
+# e. arms: mean / max departure from the walk stance (prov ramps) + a FAIL when a wrist stays above its shoulder or across the body
+#    midline for more than ARM_FAIL_S in a walk-policy window.
+# A hard fail = that window counts as a fall for scoring (the rung / push / trial / switch scores 0) and ONE entry per (test, criterion)
+# joins meta.score.falls as [test, "criterion: detail"] -- the record keeps the raw numbers.
+TILT_FAIL_DEG = float(os.environ.get("EXAM_TILT_FAIL_DEG", "45.8"))
+Z_RUN_DROP, Z_SAMPLE_DROP, Z_PUSH_DROP, Z_STAND_MIN = 0.10, 0.25, 0.40, 0.90
+CONTACT_FAIL_N, ARM_FAIL_S = 20.0, 0.5
+JOINT_NAMES = ["L_hip_yaw", "L_hip_pitch", "L_hip_roll", "L_knee", "L_ankle_pitch", "L_ankle_roll", "R_hip_yaw", "R_hip_pitch", "R_hip_roll", "R_knee",
+               "R_ankle_pitch", "R_ankle_roll", "torso", "L_sh_pitch", "L_sh_roll", "L_sh_yaw", "L_elbow", "L_wr_roll", "L_wr_pitch", "L_wr_yaw",
+               "R_sh_pitch", "R_sh_roll", "R_sh_yaw", "R_elbow", "R_wr_roll", "R_wr_pitch", "R_wr_yaw"]
+
+
+def hard_fails(handover, ladders, pushes, homing, tilt_fail_deg=None):
+    """Evaluate the v3 hard fails on DEEP COPIES of the records: the offending windows are marked (a rung / handover segment gets
+    fell = "hard:<crit>", a push held = False, a homing trial result = "FAIL_hard") and returned with the fail list and the info
+    (z_stand, peak tilt per test, the largest height drops). The caller scores the marked copies."""
+    import copy
+    tf = TILT_FAIL_DEG if tilt_fail_deg is None else tilt_fail_deg
+    H, L, P, M = copy.deepcopy(handover or []), copy.deepcopy(ladders), copy.deepcopy(pushes), copy.deepcopy(homing or [])
+    stand, rungs, stops = ladder_parts(L)
+    z_stand = (stand or {}).get("z_mean")
+    info = {"z_stand": z_stand, "tilt_fail_deg": tf, "tilt_peak": {}, "z_drop_walk": None, "z_drop_push": None, "z_drop_sample": None, "details": []}
+    F = []   # (test, crit, seg, why)
+
+    def tilt(test, seg_name, tmax):
+        if tmax is None: return False
+        info["tilt_peak"][test] = max(info["tilt_peak"].get(test) or 0.0, tmax)
+        if tmax >= tf:
+            F.append((test, "tilt", seg_name, f"{seg_name} tilt {tmax:.1f} >= {tf:g} deg")); return True
+        return False
+
+    def height(test, seg_name, z_run_min, z_min, push=False):
+        if z_stand is None: return False
+        bad = None
+        if push:
+            if z_min is not None and z_min < z_stand - Z_PUSH_DROP: bad = f"{seg_name} z {z_min:.3f} < {z_stand - Z_PUSH_DROP:.3f} (stand {z_stand:.3f} - {Z_PUSH_DROP})"
+            if z_min is not None: info["z_drop_push"] = max(info["z_drop_push"] or 0.0, z_stand - z_min)
+        else:
+            if z_run_min is not None and z_run_min < z_stand - Z_RUN_DROP: bad = f"{seg_name} 1 s mean z {z_run_min:.3f} < {z_stand - Z_RUN_DROP:.3f} (stand {z_stand:.3f} - {Z_RUN_DROP})"
+            elif z_min is not None and z_min < z_stand - Z_SAMPLE_DROP: bad = f"{seg_name} z {z_min:.3f} < {z_stand - Z_SAMPLE_DROP:.3f} (stand {z_stand:.3f} - {Z_SAMPLE_DROP})"
+            if z_run_min is not None: info["z_drop_walk"] = max(info["z_drop_walk"] or 0.0, z_stand - z_run_min)
+            if z_min is not None: info["z_drop_sample"] = max(info["z_drop_sample"] or 0.0, z_stand - z_min)
+        if bad: F.append((test, "height", seg_name, bad)); return True
+        return False
+
+    def contact(test, seg_name, fc):
+        if fc and (fc.get("peak_N") or 0.0) > CONTACT_FAIL_N:
+            F.append((test, "contact", seg_name, f"{seg_name} {fc.get('body_peak') or fc.get('body')} on the floor {fc['peak_N']:.0f} N at {fc.get('t')} s")); return True
+        return False
+
+    def arms(test, seg_name, seg):
+        up, cr = seg.get("arm_up_s") or [0, 0], seg.get("arm_cross_s") or [0, 0]
+        if max(up) > ARM_FAIL_S:
+            F.append((test, "arms", seg_name, f"{seg_name} wrist above the shoulder {max(up):.2f} s ({'L' if up[0] >= up[1] else 'R'})")); return True
+        if max(cr) > ARM_FAIL_S:
+            F.append((test, "arms", seg_name, f"{seg_name} wrist across the midline {max(cr):.2f} s ({'L' if cr[0] >= cr[1] else 'R'})")); return True
+        return False
+
+    if z_stand is not None and z_stand < Z_STAND_MIN:
+        F.append(("ladders", "height", "stand", f"stand z {z_stand:.3f} < {Z_STAND_MIN}"))
+        if stand: stand["fell"] = stand.get("fell") or "hard:height"
+    if stand:
+        for fn in (lambda: tilt("ladders", "stand", stand.get("tilt_max")), lambda: contact("ladders", "stand", stand.get("floor_contact")), lambda: arms("ladders", "stand", stand)):
+            if fn(): stand["fell"] = stand.get("fell") or "hard"
+    for sg in rungs + [s for s, _, _ in stops]:
+        if sg.get("fell"): continue
+        n = sg["name"]
+        if any([height("ladders", n, sg.get("z_run_min"), sg.get("z_min")), tilt("ladders", n, sg.get("tilt_max")), contact("ladders", n, sg.get("floor_contact")), arms("ladders", n, sg)]):
+            sg["fell"] = "hard"
+    for r in H:
+        for sg in r.get("segments", []):
+            n = f"{r.get('pose')}/{sg['name']}"
+            hit = tilt("handover", n, sg.get("tilt_max"))
+            if sg["name"] == "walk_after" and not sg.get("fell"):
+                hit = any([hit, height("handover", n, sg.get("z_run_min"), sg.get("z_min")), contact("handover", n, sg.get("floor_contact")), arms("handover", n, sg)])
+            if hit and not sg.get("fell"): sg["fell"] = "hard"
+    for sg in (P or {}).get("segments", []):
+        pz = sg.get("push")
+        if not pz or not pz.get("held"): continue
+        n = sg["name"]
+        if any([height("pushes", n, None, sg.get("z_min"), push=True), tilt("pushes", n, sg.get("tilt_max")), contact("pushes", n, sg.get("floor_contact")), arms("pushes", n, sg)]):
+            pz["held"] = False; sg["fell"] = "hard"
+    for r in M:
+        w = r.get("watch") or {}
+        n = f"trial {r.get('trial')}"
+        if r.get("result") != "ARRIVED": continue
+        if any([height("homing", n, w.get("z_run_min"), None), tilt("homing", n, w.get("tilt_peak")), contact("homing", n, w.get("floor_contact")), arms("homing", n, w)]):
+            r["result"] = "FAIL_hard"
+    info["details"] = [{"test": t, "crit": c, "seg": sg, "why": w} for t, c, sg, w in F]
+    # one falls entry per (test, criterion): the count and the first offender
+    groups = {}
+    for t, c, sg, w in F:
+        groups.setdefault((t, c), []).append(w)
+    falls = [[t, f"{c}: {len(ws)} window{'s' if len(ws) > 1 else ''} ({ws[0]})"] for (t, c), ws in groups.items()]
+    return H, L, P, M, falls, info
+
+
+def score_v3(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail_deg=None):
+    """Exam #2 v3 (2026-11-03): score_v2's table with the hard fails applied first (the offending windows score as falls), the 60 s
+    stand's separation / stagger departure, the arms' stance departure, arm self-contact seconds and the measure-only rows (joint-limit
+    dwell, height drops, peak tilt). Same keys as v2 for fleetdeck (+ "v3" with the hard-fail info); version 3."""
+    H, L, P, M, hard, info = hard_fails(handover, ladders, pushes, homing, tilt_fail_deg)
+    sc = score_v2(H, L, P, M, n_homing=n_homing, cal=cal, _v3=info)
+    sc["version"] = 3
+    # survival: every hard-fail group outside the pushes halves it too (the pushes' own score already lost those pushes)
+    nh = sum(1 for t, _ in hard if t != "pushes")
+    for m in sc["metrics"]:
+        if m["key"] == "falls":
+            ran = bool(L and L.get("segments"))
+            n_all = m["value"] + nh
+            m["value"] = n_all; m["s"] = round((0.5 ** n_all) if ran else 0.0, 3); m["pts"] = round(m["w"] * m["s"], 3)
+            m["label"] = "falls (Tests 0, 1, 3) incl. hard fails"
+    sc["falls"] = sc["falls"] + hard
+    sc["parts"] = {q: round(sum(m["pts"] for m in sc["metrics"] if m["quality"] == q), 1) for q in QUALITIES}
+    sc["tests"] = {}
+    for m in sc["metrics"]:
+        sc["tests"][m["test"]] = round(sc["tests"].get(m["test"], 0.0) + m["pts"], 1)
+    sc["score"] = round(sum(sc["parts"].values()), 1)
+    sc["v3"] = {"hard": hard, "info": info, "thresholds": {"z_run_drop": Z_RUN_DROP, "z_sample_drop": Z_SAMPLE_DROP, "z_push_drop": Z_PUSH_DROP,
+                                                           "z_stand_min": Z_STAND_MIN, "tilt_fail_deg": info["tilt_fail_deg"], "contact_N": CONTACT_FAIL_N, "arm_fail_s": ARM_FAIL_S}}
+    return sc
+
+
+def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None):
     """handover: list of Test 0 records; ladders / pushes: the Test 1 / Test 2 records (or None); homing: the Test 3 trial records.
     cal: a (g, b) table (default: load_cal() = CAL_DEFAULT + results/exam2_calibration.json)"""
     C, cver = (cal, "given") if cal is not None else load_cal()
@@ -327,14 +493,23 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
     add("survival", "all", "falls", "falls (Tests 0, 1, 3)", len(falls), "", 10, s=(0.5 ** len(falls)) if ran else 0.0, ck="none")
     # ── stability 30 = 20 s stand 7 + stops 5 + walking torso 6 + handover 12
     # stability 30 (2026-11-01) = stand 6 + stops 4 + walking 5 + handover 12 + arms locked 3
-    add("stability", "ladders", "stand_drift", "20 s stand: drift", V["stand_drift"], "m", 1.25)
-    add("stability", "ladders", "stand_yaw", "20 s stand: heading change", V["stand_yaw"], "deg", 0.75)
-    add("stability", "ladders", "stand_lifts", "20 s stand: foot lifts", V["stand_lifts"], "", 1.25)
-    add("stability", "ladders", "stand_rate", "20 s stand: torso roll/pitch rate rms", V["stand_rate"], "rad/s", 1.0, prov=True)
-    add("stability", "ladders", "stand_sep_trend", "20 s stand: feet separation trend", V["stand_sep_trend"], "m", 0.5)
-    add("stability", "ladders", "stand_stagger", "20 s stand: fore-aft stagger", V["stand_stagger"], "m", 0.5)
-    add("stability", "ladders", "stand_toe", "20 s stand: toe angle (mean |L|, |R|)", V["stand_toe"], "deg", 0.25)
-    add("stability", "ladders", "stand_jitter", "20 s stand: knee jitter", V["stand_jitter"], "deg/sample", 0.5)
+    ST = f"{V['stand_s']:g} s stand"
+    add("stability", "ladders", "stand_drift", f"{ST}: drift", V["stand_drift"], "m", 1.25)
+    add("stability", "ladders", "stand_yaw", f"{ST}: heading change", V["stand_yaw"], "deg", 0.75)
+    add("stability", "ladders", "stand_lifts", f"{ST}: foot lifts", V["stand_lifts"], "", 1.25)
+    add("stability", "ladders", "stand_rate", f"{ST}: torso roll/pitch rate rms", V["stand_rate"], "rad/s", 1.0, prov=True)
+    add("stability", "ladders", "stand_sep_trend", f"{ST}: feet separation trend", V["stand_sep_trend"], "m", 0.5)
+    add("stability", "ladders", "stand_stagger", f"{ST}: fore-aft stagger", V["stand_stagger"], "m", 0.5)
+    add("stability", "ladders", "stand_toe", f"{ST}: toe angle (mean |L|, |R|)", V["stand_toe"], "deg", 0.25)
+    add("stability", "ladders", "stand_jitter", f"{ST}: knee jitter", V["stand_jitter"], "deg/sample", 0.5)
+    if _v3 is not None:   # v3 rows (2026-11-03): the stand's departure from its start, the arms' stance departure (stability 30 keeps its sum:
+                          # handover 12 -> 10, arms locked 3 -> 2)
+        add("stability", "ladders", "stand_sep_dev_max", f"{ST}: max |sep - sep(0)|", V["stand_sep_dev_max"], "m", 1.0, prov=True)
+        add("stability", "ladders", "stand_sep_dev_end", f"{ST}: |sep(end) - sep(0)|", V["stand_sep_dev_end"], "m", 0.5, prov=True)
+        add("stability", "ladders", "stand_stag_dev_max", f"{ST}: max |stagger - stagger(0)|", V["stand_stag_dev_max"], "m", 0.5, prov=True)
+        add("stability", "ladders", "stand_stag_dev_end", f"{ST}: |stagger(end) - stagger(0)|", V["stand_stag_dev_end"], "m", 0.25, prov=True)
+        add("stability", "all", "arm_dev_mean", "arms at the walk stance: mean max-joint |q - default| (stand, stops, walking, pushes)", V["arm_dev_mean"], "deg", 0.5, prov=True)
+        add("stability", "all", "arm_dev_max", "arms at the walk stance: peak |q - default|", V["arm_dev_max"], "deg", 0.25, prov=True)
     ss = [mean([R(x["settle"], "stop_settle"), R(x["steps"], "stop_steps"), R(x["resid"], "stop_resid"),
                 R(x["over_deg"], "stop_over_deg") if x["ax"] == "wz" else R(x["over_m"], "stop_over_m")]) if x["ok"] else 0.0 for x in V["stops"]]
     sv = mean(ss + [0.0] * max(0, EXPECTED_STOPS - len(ss)), 0.0)
@@ -345,9 +520,9 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
     add("stability", "ladders", "walk_sag", "walking: height sag vs the balance policy's stand", V["walk_sag"], "m", 1.0)
     sw = [sum(w * R(x[k], "ho_" + k) for k, w in HO_W.items()) if x["ok"] else 0.0 for x in V["switches"]]
     hs = mean(sw + [0.0] * max(0, EXPECTED_SWITCHES - len(sw)), 0.0)
-    add("stability", "ladders", "arm_sway", "arms locked: arm joint angle std (stand, stops, walking <= 0.5)", V["arm_sway"], "deg", 3.0, prov=True)
+    add("stability", "ladders", "arm_sway", "arms locked: arm joint angle std (stand, stops, walking <= 0.5)", V["arm_sway"], "deg", 3.0 if _v3 is None else 2.0, prov=True)
     add("stability", "handover", "handover", f"handover switches ({len(sw)}/{EXPECTED_SWITCHES}): steps, drift, inward draw, turn, dip, jolt, target jump, wait",
-        hs, "score", 12.0, s=hs, ck="none")
+        hs, "score", 12.0 if _v3 is None else 10.0, s=hs, ck="none")
     # ── tracking 20 = vx 8 + vy 4 + wz 8: per rung ramp(e; rung_e); a rung not run (fall) = 0
     for ax, w in (("vx", 8.0), ("vy", 4.0), ("wz", 8.0)):
         sc = [0.0 if e is None else R(e, "rung_e") for a, e in V["rungs"] if a == ax]
@@ -355,10 +530,26 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None):
         add("tracking", "ladders", f"track_{ax}", f"{ax} ladder: mean rung score ({len(sc)}/{EXPECTED_RUNGS[ax]} rungs), e = |v - c| / max(|c|, 0.1)", s, "score", w, s=s, ck="none")
     # ── gait & body care 10 = impact 3 + action smoothness 3 + sliding 2 + swing 1 + speed steadiness 1
     add("gait", "ladders", "impact", "foot touchdown impact p95 / body weight", V["impact"], "BW", 3.0, prov=True)
+    w_sm = 3.0 if _v3 is None else 2.0   # v3: 1 point of the smoothness budget goes to arm self-contact
     if V["smooth_kind"] == "acc":   # the SECOND difference of the joint targets (chatter); older records carry only the first difference
-        add("gait", "ladders", "smooth", "action roughness: rms of the joint-target 2nd difference (max joint)", V["smooth"], "rad", 3.0, prov=True)
+        add("gait", "ladders", "smooth", "action roughness: rms of the joint-target 2nd difference (max joint)", V["smooth"], "rad", w_sm, prov=True)
     else:
-        add("gait", "ladders", "smooth", "action step rms (joint targets, max joint, per policy step)", V["smooth"], "rad", 3.0, prov=True, ck="smooth_v1")
+        add("gait", "ladders", "smooth", "action step rms (joint targets, max joint, per policy step)", V["smooth"], "rad", w_sm, prov=True, ck="smooth_v1")
+    if _v3 is not None:   # v3 measured rows: arm self-contact seconds (scored, prov), joint-limit dwell / height drops / peak tilt (weight 0 = shown only)
+        pair = f" ({' vs '.join(V['sc_pair'])}, peak {V['sc_peak']:.0f} N)" if V.get("sc_pair") else ""
+        add("gait", "all", "sc_dur", f"arm self-contact > 20 N: seconds (stand, stops, walking, pushes, handover walk){pair}", V["sc_dur"], "s", 1.0, prov=True)
+        for key, lab in (("jl_walk", "walking"), ("jl_stand", "standing")):
+            j = V.get(key); worst = (j or {}).get("worst") or []
+            add("gait", "ladders", key, f"joint-limit dwell {lab} (share within 2 deg of a limit; worst: " + (", ".join(f"{n_} {f_:.2f}" for n_, f_ in worst) or "none") + ") -- measured only",
+                worst[0][1] if worst else 0.0, "share", 0.0, s=1.0, ck="none")
+        inf = _v3
+        zs = f"stand z {inf['z_stand']:.3f} m" if inf.get("z_stand") is not None else "stand z n/a"
+        add("stability", "all", "z_drop", f"height: largest 1 s-mean drop walking / sample drop in a push ({zs}; fail at -{Z_RUN_DROP:g} / -{Z_PUSH_DROP:g}) -- measured only",
+            inf.get("z_drop_walk"), "m", 0.0, s=1.0, ck="none")
+        add("stability", "all", "z_drop_push", "height: largest single-sample drop in a push recovery -- measured only", inf.get("z_drop_push"), "m", 0.0, s=1.0, ck="none")
+        tp = inf.get("tilt_peak") or {}
+        add("stability", "all", "tilt_peak", "peak torso tilt per test (" + ", ".join(f"{k} {v:.1f}" for k, v in tp.items()) + f"); fail at {inf['tilt_fail_deg']:g} deg -- measured only",
+            max(tp.values()) if tp else None, "deg", 0.0, s=1.0, ck="none")
     add("gait", "ladders", "pivot", "pivot index of a loaded foot (linear rungs)", V["pivot"], "rad/s", 1.0)
     add("gait", "ladders", "slip", "slip speed of a loaded foot (linear rungs)", V["slip"], "m/s", 1.0, prov=True)
     add("gait", "ladders", "swing", "swing height inside 3-10 cm (share of rungs >= 0.2 m/s)", V["swing_share"], "share", 1.0, s=V["swing_share"] or 0.0, ck="none")

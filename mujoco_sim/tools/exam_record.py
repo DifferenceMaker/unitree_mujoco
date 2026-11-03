@@ -3,7 +3,12 @@
 
 The per-policy exam record that travels with the milestone (operator 2026-10-29: "save that data and visually reconstruct it in fleetdeck
 in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/exam/<tag>_<stamp>.json =
-  meta        tag, stamp, seed, n, balance, walk, rig (lock-step, sim build), score parts (tools/exam_report.py's formula)
+  meta        tag, stamp, seed, n, balance, walk, rig (lock-step, sim build), score parts (tools/exam_report.py's formula), arm_ff (2026-11-03:
+              1 = the arm gravity feedforward ran in the rig = the plant since 2026-11-03, 0 = PD-only arms; absent in older records)
+  v3 (2026-11-03): meta.score = tools/exam_score.py score_v3 (version 3): the hard fails (height / tilt / floor contact / arm envelope)
+              applied as falls, the 60 s clean-engagement stand's separation / stagger departure, arm stance departure, self-contact, joint-limit
+              dwell; every ladder / push / handover segment and homing trial carries the Watch numbers (z_run_min, tilt_peak, floor_contact,
+              self_contact, joint_limit, arm_dev_deg, arm_up_s, arm_cross_s)
   stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
               scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")
   homing      the 10 trial records (homing_<name>.jsonl) + per trial a 2 Hz copy of its 10 Hz trajectory (t, phase, x, y, yaw, cmd, truth vel)
@@ -21,7 +26,9 @@ ap = argparse.ArgumentParser()
 ap.add_argument("exam_dir"); ap.add_argument("name"); ap.add_argument("slug")
 ap.add_argument("--tag", default="exam"); ap.add_argument("--seed", default="1"); ap.add_argument("--n", default="10"); ap.add_argument("--balance", default="")
 ap.add_argument("--stop-dist", default=None, help="homing: torso front -> desk edge [m] (exam.sh --stop-dist)")
-ap.add_argument("--exam", default="1"); ap.add_argument("--instance", default=""); ap.add_argument("--ail", default=os.path.expanduser("~/Projects/robot_projects/repos/aspired-isaac-lab"))
+ap.add_argument("--exam", default="1"); ap.add_argument("--instance", default="")
+ap.add_argument("--arm-ff", default=None, help="1 = the arm gravity feedforward sender ran in the rig (exam.sh EXAM_FF, default since 2026-11-03); 0 = PD-only arms")
+ap.add_argument("--tilt-fail-deg", default=None, help="Exam #2 v3 hard fail b (default exam_score.TILT_FAIL_DEG = 45.8, env EXAM_TILT_FAIL_DEG)"); ap.add_argument("--ail", default=os.path.expanduser("~/Projects/robot_projects/repos/aspired-isaac-lab"))
 a = ap.parse_args()
 SIM = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EX, name, slug = a.exam_dir, a.name, a.slug
@@ -118,7 +125,10 @@ spec = importlib.util.spec_from_file_location("exam_report_lib", os.path.join(SI
 score = None
 if spec and os.path.exists(spec.origin):
     lib = importlib.util.module_from_spec(spec); spec.loader.exec_module(lib)
-    score = lib.score_v2(handover, ladders, pushes, homing, n_homing=int(a.n)) if a.exam == "2" else lib.score_policy(homing, stairs)
+    if a.exam == "2":   # v3 (2026-11-03): the hard fails + the 60 s stand rows; score_v2 stays callable for the older records
+        score = lib.score_v3(handover, ladders, pushes, homing, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
+    else:
+        score = lib.score_policy(homing, stairs)
 
 stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
 rig = {}
@@ -128,6 +138,7 @@ except OSError:
     pass
 rec = {"meta": {"exam_version": int(a.exam), "tag": a.tag, "stamp": stamp, "seed": a.seed, "n": a.n, "balance": a.balance, "walk": name, "slug": slug, "mode": "lock-step headless",
                 "stop_dist": float(a.stop_dist) if a.stop_dist is not None else None,
+                "arm_ff": int(a.arm_ff) if a.arm_ff not in (None, "") else None,   # 2026-11-03: the plant (1 = arm gravity ff sender in the rig, 0 = PD-only arms, None = a record before the flag)
                 "rig": rig, "score": score, "metrics_doc": "unitree_mujoco/mujoco_sim/results/EXAM_METRICS.md"},
        "homing": homing, "stairs": stairs, "handover": handover}
 if a.exam == "2":

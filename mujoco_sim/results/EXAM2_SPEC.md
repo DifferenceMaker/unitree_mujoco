@@ -488,3 +488,104 @@ Settled 2026-10-30: 1 quality-based score — yes · 2 the weights — yes · 3 
 levels and walking at vx 0.3 — yes · 5 P-law turning with counted rescues — yes · starts around the desk + planning — go-ahead ·
 the stance drawing — go-ahead.
 Open: 6 the training band change (section 8, a training decision) · 7 seeds per exam (1 or 2).
+
+## 10. Exam #2 v3 (2026-11-03): the clean-engagement 60 s stand, hard fails, measured-only rows
+Score version 3 (`tools/exam_score.py score_v3`; `score_v2` stays callable, fleetdeck reads the same `meta.score` keys — new entries
+only: `v3`, the extra metric rows, hard-fail entries in `falls` as `[test, "criterion: ..."]`). `meta.arm_ff` records the plant
+(1 = the arm gravity feedforward sender ran, section 7d; 0 = PD-only arms; absent = a record before 2026-11-03). The validation runs
+of this section ran WITH the ff (the default since 2026-11-03); the probes that found the teleport artifact ran without it
+(the hand-launched homing rig has no sender) — the artifact is independent of the plant.
+
+### 10.1 The 20 s stand was a rig artifact: the teleport under a latched yaw-hold
+Every lm7j ladder record (land_lm7j, 2026-11-03 morning) showed the stand rotating with both feet loaded (yaw −68° clear, +59°
+stopramp with 7 lifts, +151° stance, +149° combo_ff; torso rate rms 0.096–0.145 against 0.027–0.054 in the handover's clean
+`walk_after` stands of the same policies). Cause, read in the rig logs: the ladders item requested the walk policy, waited 1 s, then
+teleported the robot to (−3, 0, 180°). MovementModule's heading hold (`ARCHB_YAW_HOLD`, latched after 0.3 s of wz = 0) kept its
+pre-teleport reference (yaw ≈ 0), so after the 180° teleport the hold commanded wz = clip(1.0 · (−3.06), ±0.4) = **−0.40 rad/s for
+the whole 20 s stand and into the first vx rungs** (the error reached 0 only ~40 s later, at the 0.30–0.35 rung) — the MM log line
+`yaw-hold err=-3.055 rad -> wz=-0.40` sits one line after `trial: teleport`. The rotation's sign per policy is the wrapped error's
+sign (clear −, stopramp +). The same latched hold poisoned the push test's teleport (−3, 0, 180) and every homing trial's start.
+Reproduced at 60 s under the old protocol (no guard, hand rig, ff off): clear −192° / 7 lifts / 0.35 m drift, stopramp +158° /
+19 lifts / 0.47 m.
+Fixes (both): (1) MovementModule `_apply_yaw_hold` releases the latch on a heading jump > `ARCHB_YAW_HOLD_JUMP_RAD` (0.5 rad)
+between two policy steps and re-latches 0.3 s later (no real yaw rate reaches 25 rad/s; an IMU glitch costs a 0.3 s re-latch; 0 = off);
+this un-poisons the pushes, homing and stumble teleports without changing their planned frames. (2) The ladders start from a
+**clean engagement at the spot** (operator's protocol, `HOMING_LADDER_ENGAGE=balance`, default): the balance policy is requested,
+the teleport happens under it, a measured `bal_settle` segment (5 s), the switch to the walk, and the **stand runs 60 s from the
+switch frame** (`HOMING_STAND0_S` 60, operator: "increase the stance window check to a minute"). The ladders follow unchanged.
+The record carries `engage`, `stand_s`, `switch_wait_s`. `HOMING_LADDER_ENGAGE=walk` reproduces the old protocol. Sim time per
+ladder test: 340 → ~387 s.
+
+### 10.2 The clear "stall" at vx ≥ 0.35 was the same artifact
+lm7j_clear's land record: tracks 0.05–0.30, then v_true ≈ 0 with lifts [0, 0] and a 15–24° mean tilt at every rung 0.35–1.00 (the parent
+tracked 0.35–1.00 at gain 0.95–0.99 on the same rig). Probe through the ladders engine from a clean engagement (`script`, ff off):
+0.30 → 0.294, 0.35 → 0.362, 0.40 → 0.409 (13/13 lifts in 10 s), 0.60 → 0.597 (14/13), and from a fresh stand straight to 0.40 →
+0.400, 0.60 → 0.596. No stall: the policy tracks; the exam protocol caused it (the residual −0.1 rad/s hold command and the
+unwound stance at the 0.35 rung). Control stopramp on the same script: 0.356 / 0.556 at 0.40 / 0.60 (gain 0.89–0.93).
+
+### 10.3 wz column spread
+`track_wz` over the 8 lm7j rows (land_lm7j): 0.51–1.07 of 8 points, spread **0.57 pt** — the column carries no information
+(no policy turns below 0.8 rad/s; at 0.8 they turn at gain ~0.5: "turn = drift + restep"). Proposal, NOT implemented: replace the
+32-rung wz ladder's score by (a) a **turn deadband** metric = the smallest |wz| rung with s > 0.5 (ramp g 0.2, b 0.8 rad/s), (b) the
+**0.8 rad/s turn quality** = the mean rung score at ±0.8 (as now), and (c) a **walking turn** = wz ±0.3 while walking at vx 0.3 (an
+arc; the policies do turn while walking — the homing's arc law uses exactly this), scored by the rung error; 8 points as 2 + 3 + 3.
+The in-place rungs 0.05–0.75 stay recorded (the deadband reads them) but no longer each cost a point.
+
+### 10.4 Hard fails (binary, operator-approved; a hard fail = that window counts as a fall: the rung / push / trial / switch scores 0,
+ONE `falls` entry per (test, criterion), the record keeps every raw number)
+a. **Height**: $z_{stand}$ = the walk's mean base height over the clean 60 s stand. Walking (ladder rungs + stops, the handover's
+   `walk_after`, the homing trials): FAIL if the 1 s running mean $\bar z_{1s} < z_{stand} - 0.10$ m at any time, or any sample
+   $z < z_{stand} - 0.25$ m; a push recovery: FAIL only if a sample $z < z_{stand} - 0.40$ m; FAIL if $z_{stand} < 0.90$ m. Data
+   (34 walk policies): stand z 0.988–0.994; walk drop median 6.7 / p90 9.6 / max 18.5 cm; push drop median 15.3 / p90 19.7 / max
+   30.1 cm. Worked: stopramp stands at 0.988 → a rung fails below $\bar z_{1s}$ = 0.888 m. A floor only, no bonus above (operator:
+   straighter legs are not to be rewarded). Per window the commander records `z_min` (50 Hz sample) and `z_run_min` (1 s mean).
+b. **Tilt**: training ends an episode at 0.8 rad = 45.8°: tilt ≥ `TILT_FAIL_DEG` in any window of any test = a fall. ONE constant
+   (`exam_score.TILT_FAIL_DEG`, env `EXAM_TILT_FAIL_DEG`, `exam_record.py --tilt-fail-deg`); the peak tilt per test is a weight-0
+   row (`tilt_peak`) and a report column so the operator can lower it (lm7j land: ladders 17–26°, pushes 27–28°, handover ~2°).
+c. **Contacts**: any non-foot body on the FLOOR (the world body) with > 20 N = a fall. The sim's counter now publishes the peak
+   non-foot floor force since the previous pose message with its body (`nfp`, `nfpb`); the commander converts > `HOMING_CRAWL_N`
+   (20, was the 5 N frame counter) into the fall + reset and records `floor_contact {body, t, peak_N}` per window. Arm **self-contact**
+   is MEASURED (no fail): an arm body (shoulder..wrist/hand) against a body outside its own arm (torso, pelvis, legs, the other arm)
+   — `sc` = [peak N, body A, body B] per message, `scd` = cumulative seconds above `SIM_SELF_CONTACT_N` (20 N); per window
+   `self_contact {peak_N, pair, t, dur_s}`; scored row `sc_dur` (gait, 1 pt, prov g 0 / b 2 s). Intra-arm pairs never count, so the
+   Isaac thumb/palm hull defect has no MuJoCo twin anyway: the exam body's hand is ONE geom inside `*_wrist_yaw_link` (28 bodies,
+   no finger bodies) and MuJoCo never collides geoms of one body — at rest the probes read `sc` = 0 N. First reads: stopramp's
+   `torso_link vs left/right_shoulder_roll_link` 89–153 N for 0.03–0.06 s at the 0.30 rung and the stops (the arm swings into the torso
+   during a stop); clear 0.
+d. **Joint limits**: MEASURED only — `jm` = per-joint distance to the nearer limit (rad) in every message; per window the share of
+   samples within `HOMING_LIMIT_DEG` (2°) per joint, `joint_limit {frac[27], worst[3]}`; the scorer aggregates walking (rungs +
+   stops, duration-weighted) and standing into the weight-0 rows `jl_walk` / `jl_stand` naming the worst joints. A fail here would
+   sink every policy (ankle roll / hip yaw are held at their limits by design).
+e. **Arms**: per window the max-over-joints |q − q_default| per arm (default = shoulder pitch 0.4, elbow 0.3, the rest 0 — the
+   handover record's `arms`), mean and peak (`arm_dev_deg`); scored rows `arm_dev_mean` (g 2 / b 15°, 0.5 pt) and `arm_dev_max`
+   (g 5 / b 30°, 0.25 pt), prov. FAIL if a wrist stays ABOVE its shoulder joint (world z of `*_wrist_yaw_link` vs
+   `*_shoulder_pitch_link`, from the sim's `lw`/`rw` + `xb`) or ACROSS the body midline (the wrist's y in the base frame on the other
+   side) for > 0.5 s in a walk-policy window (`arm_up_s`, `arm_cross_s` per arm). `arm_sway` stays.
+
+### 10.5 The 60 s stand's new rows (stability, prov)
+`sep_dev_max` = max |sep(t) − sep₀|, `sep_dev_end` = |sep(end) − sep₀| (sep₀ / sep(end) = the first / last second's mean), the same for
+the fore-aft stagger (`stag_dev_max`, `stag_dev_end`); `stand_sep_trend` stays. Ramps g 0.5 cm / b 5 cm (sep max), 0.5 / 4 (sep end),
+0.5 / 6 and 0.5 / 5 (stagger). Weights 1.0 / 0.5 / 0.5 / 0.25. Stability keeps 30: handover 12 → 10, arms locked 3 → 2; gait keeps
+10: smoothness 3 → 2, self-contact 1.
+
+### 10.6 Validation (examdev, 3 rigs, seed 1, ff ON, 2026-11-03 afternoon)
+`bash tools/exam.sh --parallel 3 --no-pin --seed 1 --n 10 --tag examdev lm7j_stopramp lm7j_clear lm7j_roll`: 5 min 40 s wall (rtf 5.6–6.8),
+ladders 386 s of sim each, switch waits 0.34–1.02 s, no falls, **no hard fail tripped**. The 60 s clean-engagement stand against the
+operator's reads:
+
+| policy | yaw° | drift cm | lifts | rate rms | sep₀ → mean cm, dev max·end cm | stagger dev max·end cm | z stand | read |
+|---|---|---|---|---|---|---|---|---|
+| stopramp | +3.8 | 1.1 | 0+1 | 0.019 | 34.4 → 30.2, 6.1·5.1 | 4.2·1.5 | 0.994 | "good default stance, still" — yes (the feet draw 5 cm inward) |
+| roll | −22.0 | 4.6 | 0+8 | 0.031 | 33.4 → 40.7, 17.2·13.1 | 31.0·20.9 | 0.988 | "starts a split, feet slide apart" — yes (8 right re-steps) |
+| clear | +20.2 | 7.7 | 0+2 | 0.056 | 34.8 → 32.4, 8.4·4.8 | 28.8·27.7 | 0.987 | pivots 20° and staggers 29 cm (one foot walks forward) |
+
+Before (land_lm7j, 20 s teleported stand): stopramp yaw +59° / 7 lifts / rate 0.096, clear −69° / 5 lifts / rate 0.112. The bal_settle
+segment under the balance policy reads sep dev ≤ 0.5 cm, stagger dev ≤ 1.3 cm, yaw ≤ 2° in 5 s (the reference the stand starts from).
+vx tracking: stopramp 0.86 (land 0.78), clear 0.81 (land 0.35: the stall is gone — 0.35 → 0.370, 0.40 → 0.418, 0.60 → 0.599, 1.00 →
+0.968), roll 0.83. Measured-only rows: height drop walking 3.7–4.5 cm (1 s mean), in a push 13.3–19.0 cm (sample), both inside the
+bounds by a margin; peak tilt ladders 15.6–16.3°, pushes 28.6–29.5°, homing 8–17°, handover 2–4° (a 45.8° line trips nothing; the
+operator could put it at 35° and still trip nothing on these three); arm self-contact `torso_link vs *_shoulder_roll_link` 1.6 s
+(stopramp) / 2.2 s (clear) / 6.6 s (roll), peaks 324–505 N, at the 0.15–0.30 rungs, the stops and the pushes — the upper-arm
+capsule meets the torso box when the arm swings; never in a stand; arm stance departure mean 6.8–8.2°, peak 22.6–26.6° (pushes);
+joint-limit dwell < 0.5 % on every joint (hip yaw / ankle roll the only non-zero ones). wz: 0.30 / 0.50 rungs still ~0 for all three,
+0.80 at 0.37–0.68 rad/s.

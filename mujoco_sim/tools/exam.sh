@@ -135,7 +135,7 @@ worker() {  # worker <instance k>
     fi
     M=$(ls -t "$SIM"/logs/mujoco_locosw_*_"$k".log 2>/dev/null | head -1); [[ -n "$M" ]] && grep -E 'HEADLESS\] sim_t' "$M" | tail -1 | sed "s/^/[$k]    /"
     # the exam record that travels with the milestone (fleetdeck draws the sheets from it) -- JSON in git, no PNG
-    python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --stop-dist "$STOP_DIST" --exam "$EXAM" --instance "$k" $([[ $NOMS -eq 1 ]] && echo "--ail /nonexistent") 2>&1 | sed "s/^/[$k]    /"
+    python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --stop-dist "$STOP_DIST" --exam "$EXAM" --instance "$k" --arm-ff "$FF" $([[ $NOMS -eq 1 ]] && echo "--ail /nonexistent") 2>&1 | sed "s/^/[$k]    /"
     grep -c "POSE GAP" "$L" 2>/dev/null | sed "s/^/[$k]    pose gaps: /"
     if [[ "$FF" == 1 ]]; then   # the ff sender's log + the Bridge's ff events (APPLIED / reverted / MUTED / LIVE) travel with the exam
       docker exec "archb_locosw_$k" cat /tmp/arm_ff_only.log > "$EX/ff_$name.log" 2>/dev/null
