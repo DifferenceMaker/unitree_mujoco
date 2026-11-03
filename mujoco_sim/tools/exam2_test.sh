@@ -51,8 +51,8 @@ for s in S:
                  f"  on-field {q['on_field_frac']} ground rms {q['ground_rms']}")
         if not s.get("stumble"):   # a ladder segment (2026-11-02): the short form
             extra = f"  sw {q['swings']} scuffed {q['scuffed']} catches {q['catches']} apex max {cm(q['swing_apex'])} mean {cm(q['swing_apex_mean'])} cm" + (extra if s.get("stop") else "")
-    if s.get("sep_dev_max") is not None and s["name"] in ("stand", "bal_settle", "settle"):   # v3 (2026-11-03): the stand's departure from its start + the watch
-        extra += (f"  sep {s.get('sep_mean')} dev max {100 * s['sep_dev_max']:.1f} end {100 * s['sep_dev_end']:.1f} cm  stag dev max {100 * s['stag_dev_max']:.1f} end {100 * s['stag_dev_end']:.1f} cm"
+    if s.get("sep_dev_max") is not None and s["name"] in ("stand", "bal_settle", "settle", "walk_stand"):   # v3 (2026-11-03): the stand's departure from its start + the watch
+        extra += (f"  sep {s.get('sep0')} -> {s.get('sep_end')} ({s.get('sep_dir')}) dev max {100 * s['sep_dev_max']:.1f} end {100 * s['sep_dev_end']:.1f} cm  stag dev max {100 * s['stag_dev_max']:.1f} end {100 * s['stag_dev_end']:.1f} cm"
                   f"  yaw {s.get('yaw_change_deg')} deg  z {s.get('z_mean')} (1 s min {s.get('z_run_min')})  tilt peak {s.get('tilt_peak')}")
     if s.get("floor_contact"): extra += f"  FLOOR {s['floor_contact']}"
     if (s.get("self_contact") or {}).get("peak_N", 0) > 20: extra += f"  self-contact {s['self_contact']}"

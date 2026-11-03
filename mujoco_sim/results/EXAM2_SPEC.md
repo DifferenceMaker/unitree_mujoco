@@ -589,3 +589,27 @@ operator could put it at 35° and still trip nothing on these three); arm self-c
 capsule meets the torso box when the arm swings; never in a stand; arm stance departure mean 6.8–8.2°, peak 22.6–26.6° (pushes);
 joint-limit dwell < 0.5 % on every joint (hip yaw / ankle roll the only non-zero ones). wz: 0.30 / 0.50 rungs still ~0 for all three,
 0.80 at 0.37–0.68 rad/s.
+
+### 10.7 A second stand, AFTER walking (2026-11-03 evening)
+The v3 records showed two different standing behaviours and only one was scored: the clean-engagement stand (section 10.1, after the
+balance → walk switch) draws stopramp's feet IN 5 cm over 60 s, while in the 4 s ladder stops the feet slide OUT fast — stopramp sep
+0.275 → 0.345 m within the stop after vx+0.30 (sep_dev_max 0.13), combo 0.275 → 0.38, combo's stop after wz+0.80 ends with a stagger
+of −0.45 m. The operator's own sim2sim stand comes AFTER walking, so the ladders now end with `walk_pre` (vx `HOMING_WALK1_VX` 0.30 for
+`HOMING_WALK1_S` 10 s) and **`walk_stand`** (cmd 0 for `HOMING_STAND1_S` = 120 s), measured exactly like `stand` (base drift, heading
+change, lifts, rate, sep₀ / sep_end / sep_dev_max / sep_dev_end, stag₀ / stag_dev_max / stag_dev_end, z, the Watch). Score rows
+`wstand_*` mirror the `stand_*` rows with the same g / b (the twins share the stand's calibration keys); each stand row carries HALF
+its former weight and the other half goes to its twin, so stability stays 30 (stand 4.125 + stand-after-walking 4.125). Labels: the
+base rows read "BASE drift", the feet rows "feet separation deviation" / "feet stagger deviation". Both stands record `sep_dir`
+(out / in / flat = sign of sep_end − sep₀ beyond 0.5 cm; no score) and `sep_end` / `stag_end`. Hard fails: `walk_pre` and `walk_stand`
+get the walking height rule, tilt, contact and arm checks like a rung. Sim time per ladders test: 386 + 10 + 120 = **516 s**
+(~1.7 min wall at rtf 5, ~2.7 min at the 8-rig rtf 3.2). Validation (examdev2, stopramp + combo, ff on): see the table below.
+
+| policy (examdev2) | stand | yaw° | base drift cm | lifts | rate | sep₀ → end cm (dir), dev max·end | stagger₀ → end cm, dev max·end | z |
+|---|---|---|---|---|---|---|---|---|
+| stopramp | 60 s clean engagement | +4.0 | 1.9 | 0+2 | 0.019 | 33.8 → 29.3 (in), 5.4·4.5 | 3.3 → 5.2, 4.2·1.9 | 0.994 |
+| stopramp | 120 s after walking 0.30 | +19.4 | 19.7 | 3+2 | 0.056 | 23.4 → 31.7 (out), 13.4·8.4 | −8.8 → +19.2, 28.4·27.9 | 0.991 |
+| combo | 60 s clean engagement | +1.6 | 1.8 | 0+0 | 0.015 | 34.2 → 46.5 (out), 12.4·12.3 | 2.7 → 6.9, 4.3·4.3 | 0.993 |
+| combo | 120 s after walking 0.30 | +15.6 | 31.2 | 0+2 | 0.063 | 26.3 → 40.2 (out), 14.1·13.9 | −9.2 → −5.6, 15.4·3.6 | 0.990 |
+
+The two stands differ as the finding said: stopramp draws IN after the switch and slides OUT (+ a 28 cm stagger, 19° turn, 20 cm base
+drift) after walking; combo slides out in both. Wall 3 min 53 s for 2 rigs (ladders 516 s sim); no hard fail tripped.

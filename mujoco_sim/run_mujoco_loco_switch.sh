@@ -283,7 +283,7 @@ echo "    stack log: $STACK_LOG"
 # exam #2 knobs (2026-10-30): forwarded only when set, so a hardware-like run keeps the commander defaults
 HOMING_EX2=(); for _v in HOMING_TURN_LAW HOMING_K_TURN HOMING_RESCUE_S HOMING_RESCUE_DEG HOMING_DESK HOMING_DESK_MARGIN HOMING_TIMEOUT_S HOMING_PUSH_LOG HOMING_TRIAL_T0 \
                          HOMING_STUMBLE_SEED HOMING_STUMBLE_PY HOMING_STUMBLE_LOG STUMBLE_AMP \
-                         $(compgen -e | grep -E '^HOMING_(STAND0_S|LADDER_ENGAGE|LADDER_BAL_S|CRAWL_N|SELF_CONTACT_N|LIMIT_DEG|RUNG_S|LADDER_STOP_S)$'); do   # + Test 5 stumble (2026-11-02); + Exam #2 v3 knobs (2026-11-03)
+                         $(compgen -e | grep -E '^HOMING_(STAND0_S|STAND1_S|WALK1_VX|WALK1_S|LADDER_ENGAGE|LADDER_BAL_S|CRAWL_N|SELF_CONTACT_N|LIMIT_DEG|RUNG_S|LADDER_STOP_S)$'); do   # + Test 5 stumble (2026-11-02); + Exam #2 v3 knobs (2026-11-03)
   [[ -n "${!_v:-}" ]] && HOMING_EX2+=(-e "$_v=${!_v}"); done
 docker run --rm --name "$CONTAINER" --network host --ipc=host ${LOCOSW_CPUS:+--cpuset-cpus "$LOCOSW_CPUS"} \
   "${HOMING_EX2[@]}" \

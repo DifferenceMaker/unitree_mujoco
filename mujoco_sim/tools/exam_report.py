@@ -48,7 +48,8 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
         sc = exam_score.score_v3(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)   # v3 (2026-11-03)
         m = {x["key"]: x for x in sc["metrics"]}
         R.append((nm, sc, m, exam_score.ladder_swing(L[-1] if L else None), exam_score.stumble_summary(U[-1] if U else None),
-                  exam_score.ladder_scuffs(L[-1] if L else None)))
+                  exam_score.ladder_scuffs(L[-1] if L else None),
+                  {s_["name"]: s_.get("sep_dir") for s_ in ((L[-1] if L else {}) or {}).get("segments", []) if s_.get("name") in ("stand", "walk_stand")}))   # the stands' sep direction (per policy; a loop variable leaked the last policy's on 2026-11-03)
     R.sort(key=lambda t: -t[1]["score"])
     Q = list(exam_score.QUALITIES)
     cm = lambda a: "—" if not a else "/".join("—" if v is None else f"{100 * v:.1f}" for v in a)   # [L, R] m -> "L/R" cm
@@ -58,11 +59,11 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
         if not r: return "—"
         return f"{cm(r['apex'])} · {r['trips']}{'' if not r['fell'] else ' FELL'} · {r['tilt_max'] if r['tilt_max'] is not None else '—'}"
     hdr = ("| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | falls (hard) | track vx/vy/wz | pushes held | homing arrived | stand drift m "
-           "| stand yaw° / sep dev max·end cm / stag dev max·end cm | z stand m / drop walk·push cm | tilt peak° | self-contact s | arms dev mean·max° "
+           "| stand yaw° / sep dev max·end cm (dir) / stag dev max·end cm | stand after walking: yaw° / sep dev max·end cm (dir) / stag dev max·end cm | z stand m / drop walk·push cm | tilt peak° | self-contact s | arms dev mean·max° "
            "| swing .15 L/R cm | swing .30 L/R cm | scuffs .15 | scuffs .30 | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |")
-    lines = [hdr, "|" + "---|" * (len(Q) + 21)]
+    lines = [hdr, "|" + "---|" * (len(Q) + 22)]
     v = lambda m, k, p=1, f=100.0: "—" if k not in m or m[k]["value"] is None else f"{m[k]['value'] * f:.{p}f}"
-    for i, (nm, sc, m, lsw, su, lsc) in enumerate(R, 1):
+    for i, (nm, sc, m, lsw, su, lsc, sdir) in enumerate(R, 1):
         held = m["pushes"]["label"].split("held ")[1].split(":")[0] if "pushes" in m else "-"
         arr = m["homing"]["label"].split("arrived ")[1].split(":")[0] if "homing" in m else "-"
         trk = "/".join(f"{m[k]['s']:.2f}" for k in ("track_vx", "track_vy", "track_wz"))
@@ -71,7 +72,8 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
         zs = ("—" if inf.get("z_stand") is None else f"{inf['z_stand']:.3f}") + " / " + ("—" if inf.get("z_drop_walk") is None else f"{100 * inf['z_drop_walk']:.1f}") + "·" + ("—" if inf.get("z_drop_push") is None else f"{100 * inf['z_drop_push']:.1f}")
         lines.append(f"| {i} | {nm} | **{sc['score']}** | " + " | ".join(str(sc["parts"][q]) for q in Q) +
                      f" | {len(sc['falls'])} ({nh}) | {trk} | {held} | {arr} | {m['stand_drift']['value']} "
-                     f"| {v(m, 'stand_yaw', 1, 1.0)} / {v(m, 'stand_sep_dev_max')}·{v(m, 'stand_sep_dev_end')} / {v(m, 'stand_stag_dev_max')}·{v(m, 'stand_stag_dev_end')} | {zs} "
+                     f"| {v(m, 'stand_yaw', 1, 1.0)} / {v(m, 'stand_sep_dev_max')}·{v(m, 'stand_sep_dev_end')} ({sdir.get('stand') or '—'}) / {v(m, 'stand_stag_dev_max')}·{v(m, 'stand_stag_dev_end')} "
+                     f"| {v(m, 'wstand_yaw', 1, 1.0)} / {v(m, 'wstand_sep_dev_max')}·{v(m, 'wstand_sep_dev_end')} ({sdir.get('walk_stand') or '—'}) / {v(m, 'wstand_stag_dev_max')}·{v(m, 'wstand_stag_dev_end')} | {zs} "
                      f"| {max(tp.values()) if tp else '—'} | {v(m, 'sc_dur', 2, 1.0)} | {v(m, 'arm_dev_mean', 1, 1.0)}·{v(m, 'arm_dev_max', 1, 1.0)} | {cm(lsw.get('vx+0.15'))} | {cm(lsw.get('vx+0.30'))} "
                      f"| {exam_score.scuff_cell(lsc.get('vx+0.15'))} | {exam_score.scuff_cell(lsc.get('vx+0.30'))} "
                      f"| {stu(su, 'vx+0.15')} | {stu(su, 'vx+0.30')} | {su['falls'] if su else '—'} | {times.get(nm) or '-'} |")

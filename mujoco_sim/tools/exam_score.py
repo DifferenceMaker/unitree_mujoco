@@ -114,7 +114,7 @@ def ladder_parts(lad):
     """the ladder record split: the 20 s stand, the rungs (by axis), the stops (with the rung before), the falls"""
     segs = [s for s in (lad or {}).get("segments", []) if s.get("name") != "reset"]
     stand = next((s for s in segs if s["name"] == "stand"), None)
-    rungs = [s for s in segs if s["name"] not in ("stand", "stop", "bal_settle", "settle") and s.get("cmd") and _axis(s["cmd"])]
+    rungs = [s for s in segs if s["name"] not in ("stand", "stop", "bal_settle", "settle", "walk_pre", "walk_stand") and s.get("cmd") and _axis(s["cmd"])]
     stops = []
     for i, s in enumerate(segs):
         if s["name"] == "stop":
@@ -199,6 +199,16 @@ def raw_values(handover, ladders, pushes, homing):
     for k in ("sep_dev_max", "sep_dev_end", "stag_dev_max", "stag_dev_end"):   # v3 (2026-11-03): the 60 s stand's departure from its start
         V["stand_" + k] = sd.get(k)
     V["stand_s"] = (ladders or {}).get("stand_s") or (round(sd["dur"]) if sd.get("dur") else 20)
+    # the stand AFTER walking (2026-11-03 evening): "walk_stand" at the end of the ladders, the same numbers as the first stand
+    ws = next((s for s in (ladders or {}).get("segments", []) if s.get("name") == "walk_stand"), None) or {}
+    V["wstand_s"] = (ladders or {}).get("stand1_s") or (round(ws["dur"]) if ws.get("dur") else 120); V["wstand_ran"] = bool(ws) and not ws.get("fell")
+    V["wstand_drift"] = ws.get("drift_xy"); V["wstand_yaw"] = abs(ws["yaw_change_deg"]) if ws.get("yaw_change_deg") is not None else None
+    V["wstand_lifts"] = sum(ws["lifts"]) if ws.get("lifts") else None; V["wstand_rate"] = ws.get("rate_rms")
+    V["wstand_sep_trend"] = abs(ws["sep_trend"]) if ws.get("sep_trend") is not None else None
+    V["wstand_stagger"] = abs(ws["stagger_mean"]) if ws.get("stagger_mean") is not None else None
+    V["wstand_toe"] = mean([abs(ws[k]) for k in ("toe_L", "toe_R") if ws.get(k) is not None]); V["wstand_jitter"] = ws.get("jitter_knee")
+    for k in ("sep_dev_max", "sep_dev_end", "stag_dev_max", "stag_dev_end"): V["wstand_" + k] = ws.get(k)
+    V["stand_sep_dir"], V["wstand_sep_dir"] = sd.get("sep_dir"), ws.get("sep_dir")
     V["stops"] = []
     for s, prev, ax in stops:
         st_ = s.get("stop") or {}
@@ -414,7 +424,8 @@ def hard_fails(handover, ladders, pushes, homing, tilt_fail_deg=None):
     if stand:
         for fn in (lambda: tilt("ladders", "stand", stand.get("tilt_max")), lambda: contact("ladders", "stand", stand.get("floor_contact")), lambda: arms("ladders", "stand", stand)):
             if fn(): stand["fell"] = stand.get("fell") or "hard"
-    for sg in rungs + [s for s, _, _ in stops]:
+    extra = [s for s in (L or {}).get("segments", []) if s.get("name") in ("walk_pre", "walk_stand")]   # the stand after walking + its walk
+    for sg in rungs + [s for s, _, _ in stops] + extra:
         if sg.get("fell"): continue
         n = sg["name"]
         if any([height("ladders", n, sg.get("z_run_min"), sg.get("z_min")), tilt("ladders", n, sg.get("tilt_max")), contact("ladders", n, sg.get("floor_contact")), arms("ladders", n, sg)]):
@@ -493,21 +504,26 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None)
     add("survival", "all", "falls", "falls (Tests 0, 1, 3)", len(falls), "", 10, s=(0.5 ** len(falls)) if ran else 0.0, ck="none")
     # ── stability 30 = 20 s stand 7 + stops 5 + walking torso 6 + handover 12
     # stability 30 (2026-11-01) = stand 6 + stops 4 + walking 5 + handover 12 + arms locked 3
-    ST = f"{V['stand_s']:g} s stand"
-    add("stability", "ladders", "stand_drift", f"{ST}: drift", V["stand_drift"], "m", 1.25)
-    add("stability", "ladders", "stand_yaw", f"{ST}: heading change", V["stand_yaw"], "deg", 0.75)
-    add("stability", "ladders", "stand_lifts", f"{ST}: foot lifts", V["stand_lifts"], "", 1.25)
-    add("stability", "ladders", "stand_rate", f"{ST}: torso roll/pitch rate rms", V["stand_rate"], "rad/s", 1.0, prov=True)
-    add("stability", "ladders", "stand_sep_trend", f"{ST}: feet separation trend", V["stand_sep_trend"], "m", 0.5)
-    add("stability", "ladders", "stand_stagger", f"{ST}: fore-aft stagger", V["stand_stagger"], "m", 0.5)
-    add("stability", "ladders", "stand_toe", f"{ST}: toe angle (mean |L|, |R|)", V["stand_toe"], "deg", 0.25)
-    add("stability", "ladders", "stand_jitter", f"{ST}: knee jitter", V["stand_jitter"], "deg/sample", 0.5)
-    if _v3 is not None:   # v3 rows (2026-11-03): the stand's departure from its start, the arms' stance departure (stability 30 keeps its sum:
-                          # handover 12 -> 10, arms locked 3 -> 2)
-        add("stability", "ladders", "stand_sep_dev_max", f"{ST}: max |sep - sep(0)|", V["stand_sep_dev_max"], "m", 1.0, prov=True)
-        add("stability", "ladders", "stand_sep_dev_end", f"{ST}: |sep(end) - sep(0)|", V["stand_sep_dev_end"], "m", 0.5, prov=True)
-        add("stability", "ladders", "stand_stag_dev_max", f"{ST}: max |stagger - stagger(0)|", V["stand_stag_dev_max"], "m", 0.5, prov=True)
-        add("stability", "ladders", "stand_stag_dev_end", f"{ST}: |stagger(end) - stagger(0)|", V["stand_stag_dev_end"], "m", 0.25, prov=True)
+    # v3 (2026-11-03 evening): TWO stands share the stand budget -- "stand" (the 60 s clean-engagement stand, stand_* rows) and "walk_stand"
+    # (the 120 s stand AFTER walking at 0.30 for 10 s, wstand_* rows, the stand the operator sees in his sim2sim); each row at half the
+    # v2 weight, the twins use the same g / b. The BASE drift rows are labelled so, the feet rows say "feet separation".
+    h = 0.5 if _v3 is not None else 1.0
+    for pre, lab in ((("stand", f"{V['stand_s']:g} s stand"), ("wstand", f"{V['wstand_s']:g} s stand after walking")) if _v3 is not None else (("stand", f"{V['stand_s']:g} s stand"),)):
+        ck = lambda k: "stand_" + k   # the twins share the stand's calibration keys
+        add("stability", "ladders", f"{pre}_drift", f"{lab}: BASE drift", V[f"{pre}_drift"], "m", 1.25 * h, ck=ck("drift"))
+        add("stability", "ladders", f"{pre}_yaw", f"{lab}: heading change", V[f"{pre}_yaw"], "deg", 0.75 * h, ck=ck("yaw"))
+        add("stability", "ladders", f"{pre}_lifts", f"{lab}: foot lifts", V[f"{pre}_lifts"], "", 1.25 * h, ck=ck("lifts"))
+        add("stability", "ladders", f"{pre}_rate", f"{lab}: torso roll/pitch rate rms", V[f"{pre}_rate"], "rad/s", 1.0 * h, prov=True, ck=ck("rate"))
+        add("stability", "ladders", f"{pre}_sep_trend", f"{lab}: feet separation trend (last 1 s - first 1 s; direction in the record's sep_dir)", V[f"{pre}_sep_trend"], "m", 0.5 * h, ck=ck("sep_trend"))
+        add("stability", "ladders", f"{pre}_stagger", f"{lab}: feet fore-aft stagger", V[f"{pre}_stagger"], "m", 0.5 * h, ck=ck("stagger"))
+        add("stability", "ladders", f"{pre}_toe", f"{lab}: toe angle (mean |L|, |R|)", V[f"{pre}_toe"], "deg", 0.25 * h, ck=ck("toe"))
+        add("stability", "ladders", f"{pre}_jitter", f"{lab}: knee jitter", V[f"{pre}_jitter"], "deg/sample", 0.5 * h, ck=ck("jitter"))
+        if _v3 is not None:   # v3 rows: the feet's departure from the stand's first second (stability 30 keeps its sum: handover 12 -> 10, arms locked 3 -> 2)
+            add("stability", "ladders", f"{pre}_sep_dev_max", f"{lab}: feet separation deviation, max |sep - sep(0)|", V[f"{pre}_sep_dev_max"], "m", 1.0 * h, prov=True, ck=ck("sep_dev_max"))
+            add("stability", "ladders", f"{pre}_sep_dev_end", f"{lab}: feet separation deviation, |sep(end) - sep(0)|", V[f"{pre}_sep_dev_end"], "m", 0.5 * h, prov=True, ck=ck("sep_dev_end"))
+            add("stability", "ladders", f"{pre}_stag_dev_max", f"{lab}: feet stagger deviation, max |stagger - stagger(0)|", V[f"{pre}_stag_dev_max"], "m", 0.5 * h, prov=True, ck=ck("stag_dev_max"))
+            add("stability", "ladders", f"{pre}_stag_dev_end", f"{lab}: feet stagger deviation, |stagger(end) - stagger(0)|", V[f"{pre}_stag_dev_end"], "m", 0.25 * h, prov=True, ck=ck("stag_dev_end"))
+    if _v3 is not None:
         add("stability", "all", "arm_dev_mean", "arms at the walk stance: mean max-joint |q - default| (stand, stops, walking, pushes)", V["arm_dev_mean"], "deg", 0.5, prov=True)
         add("stability", "all", "arm_dev_max", "arms at the walk stance: peak |q - default|", V["arm_dev_max"], "deg", 0.25, prov=True)
     ss = [mean([R(x["settle"], "stop_settle"), R(x["steps"], "stop_steps"), R(x["resid"], "stop_resid"),
