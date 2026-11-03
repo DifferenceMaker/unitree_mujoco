@@ -530,3 +530,18 @@ Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
 | 1 | lm7i_combo_soft | **61.9** | 10.0 | 18.8 | 9.3 | 5.8 | 7.3 | 5.4 | 5.3 | 0 | 0.84/0.46/0.09 | 24/24 | 1/1 | 0.2952 | 1.8/2.4 | 2.1/2.5 | 0/8 | 1/11 | 2.1/2.3 · 1 · 4.66 | 12.3/6.9 · 10 · 17.44 | 0 | 122 |
 
+## EXAM #2 land_lm7j — 2026-11-03 10:14 — 8 policies, seed 1, homing n 10, balance p14h_stancewide, 8 instances, wall 7 min 13 s
+
+Score by quality (tools/exam_score.py score_v2, results/EXAM2_SPEC.md): survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Scuffs = the flat ladder's scuffed swings / swings (L+R) at 0.15 / 0.30 (a floor-force burst > 20 N between two airborne 20 ms samples = the toe dragged; '—' = a record before 2026-11-02 evening). Stumble = Test 5 (rough floor: 0.4-1 cm sphere bumps every 20 cm, seed 1, NOT scored): ground-corrected swing apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: /home/aspired-comp-2/Projects/robot_projects/repos/unitree_mujoco/mujoco_sim/logs/exam/land_lm7j_2026-11-03_10-07-19
+
+| # | policy | score | survival /10 | stability /30 | tracking /20 | gait /10 | energy /10 | pushes /10 | homing /10 | falls | track vx/vy/wz | pushes held | homing arrived | stand drift m | swing .15 L/R cm | swing .30 L/R cm | scuffs .15 | scuffs .30 | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | lm7j_roll | **66.4** | 10.0 | 23.2 | 9.2 | 5.9 | 8.7 | 6.0 | 3.4 | 0 | 0.78/0.59/0.07 | 22/24 | 8/10 | 0.0281 | 2.8/2.1 | 2.6/2.6 | 2/9 | 2/10 | — | — | — | 389 |
+| 2 | lm7j_combo | **62.1** | 10.0 | 19.5 | 8.9 | 5.7 | 8.7 | 6.8 | 2.5 | 0 | 0.79/0.42/0.12 | 24/24 | 7/10 | 0.0451 | 2.2/2.1 | 2.4/2.5 | 1/7 | 0/11 | — | — | — | 367 |
+| 3 | lm7j_stopramp | **61.7** | 10.0 | 18.7 | 9.2 | 6.1 | 7.8 | 6.3 | 3.6 | 0 | 0.78/0.51/0.12 | 24/24 | 10/10 | 0.2347 | 1.6/2.4 | 2.2/3.0 | 2/7 | 1/10 | — | — | — | 320 |
+| 4 | lm7j_stance | **60.9** | 10.0 | 21.0 | 6.0 | 7.1 | 7.6 | 6.4 | 2.8 | 0 | 0.62/0.00/0.13 | 24/24 | 7/10 | 0.3283 | 1.7/1.7 | 2.9/2.6 | 0/9 | 1/10 | — | — | — | 372 |
+| 5 | lm7j_combo_ff | **60.7** | 10.0 | 21.2 | 5.2 | 7.5 | 7.6 | 6.2 | 3.0 | 0 | 0.58/0.00/0.06 | 24/24 | 8/10 | 0.367 | 2.2/1.9 | 1.7/2.6 | 2/7 | 0/11 | — | — | — | 378 |
+| 6 | lm7j_ffarms | **56.8** | 10.0 | 19.0 | 4.2 | 7.1 | 8.4 | 5.8 | 2.3 | 0 | 0.27/0.39/0.07 | 24/24 | 6/10 | 0.0794 | 1.9/1.8 | 2.6/3.1 | 2/9 | 0/9 | — | — | — | 373 |
+| 7 | lm7j_combo_ff_clear | **53.9** | 10.0 | 16.3 | 5.5 | 7.4 | 7.3 | 5.6 | 1.8 | 0 | 0.36/0.38/0.13 | 24/24 | 6/10 | 0.0938 | 1.9/3.0 | 3.1/3.8 | 1/6 | 0/10 | — | — | — | 418 |
+| 8 | lm7j_clear | **53.8** | 10.0 | 16.8 | 5.2 | 7.4 | 7.0 | 6.1 | 1.3 | 0 | 0.35/0.39/0.11 | 24/24 | 4/10 | 0.2824 | 3.1/2.3 | 3.0/3.3 | 0/9 | 0/11 | — | — | — | 430 |
+
