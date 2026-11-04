@@ -17,6 +17,10 @@ floor trails, raw RGB piped to ffmpeg (H.264, yuv420p).
   MUJOCO_GL=egl ~/miniconda3/envs/tv/bin/python tools/homing_video_render.py --rec logs/homing_video/<stamp> --out video.mp4
   ... --dry                     selection report only
   ... --stills 0,0.3,0.6,1      PNG stills at these fractions of the video (next to --out), no video
+  ... --selection logs/homing_video/<stamp>/selection_<video>.json   the slots of an earlier render (no re-selection)
+  ... --hands --fill --cut-after-switch-s 1.5      the work video's part 1 (2026-11-04): visual Inspire hands, each spot's disc fills at
+                                                   the robot's balance switch, the video ends 1.5 video s after the LAST switch (the camera
+                                                   path stays the full video's); tools/homing_work_render.py renders part 2
 """
 import argparse
 import glob
@@ -32,6 +36,7 @@ import numpy as np
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROBOT_XML = os.path.abspath(os.path.join(HERE, "..", "..", "unitree_robots", "h1_2", "h1_2_comx06_armature_hand790.xml"))
+HANDS_XML = os.path.abspath(os.path.join(HERE, "..", "..", "unitree_robots", "h1_2", "scene_comx06_hands.xml"))   # the Inspire hand meshes
 EDGE0 = np.array([0.35, 0.0])   # the recording scene's desk edge centre; approach heading 0 = +x
 TELE_RE = re.compile(r"teleport to \(([-\d.]+), ([-\d.]+), ([-\d.]+)\) at t=([\d.]+), goto at t=([\d.]+)")
 # trail / marker colours, adjacent slots alternate warm / cool so neighbours never look alike
@@ -202,11 +207,43 @@ SCENE = """
 """
 
 
-def build_model(n, R, w, h, fovy, extent, texrep):
+def robot_xml_with_hands():
+    """the hand790 body (the physics plant: a rigid 0.79 kg hand lump, no hand mesh) + the Inspire hand MESHES of scene_comx06_hands.xml
+    under each wrist_yaw_link, visual only (no joints / inertia / contacts; fingers at their zero pose). The replay sets the recorded
+    34 qpos; the hand adds no qpos. Built as XML (MjSpec.attach_body of the hand subtree fails on the mesh-array ids, mujoco 3.9)."""
+    import xml.etree.ElementTree as ET
+    hroot = ET.parse(HANDS_XML).getroot()
+    hands = {b.get("name"): b for b in hroot.iter("body") if b.get("name") in ("lh:left_wrist_yaw_link", "rh:right_wrist_yaw_link")}
+    used = set()
+    for b in hands.values():
+        for e in list(b.iter()):
+            for ch in list(e):
+                if ch.tag in ("joint", "inertial", "site"):
+                    e.remove(ch)
+        for g in b.iter("geom"):
+            used.add(g.get("mesh"))
+            g.attrib.pop("class", None)
+            g.set("contype", "0"); g.set("conaffinity", "0"); g.set("group", "1"); g.set("density", "0")
+    rroot = ET.parse(ROBOT_XML).getroot()
+    rroot.find("compiler").set("meshdir", os.path.join(os.path.dirname(ROBOT_XML), "meshes") + "/")
+    asset = rroot.find("asset")
+    for m in hroot.iter("mesh"):
+        if m.get("name") in used:
+            asset.append(m)
+    for b in rroot.iter("body"):
+        if b.get("name") == "left_wrist_yaw_link":
+            b.append(hands["lh:left_wrist_yaw_link"])
+        elif b.get("name") == "right_wrist_yaw_link":
+            b.append(hands["rh:right_wrist_yaw_link"])
+    return ET.tostring(rroot, encoding="unicode")
+
+
+def build_model(n, R, w, h, fovy, extent, texrep, hands=False):
     import mujoco
     spec = mujoco.MjSpec.from_string(SCENE.format(R=R, w=w, h=h, fovy=fovy, extent=extent, texrep=texrep))
+    robot_xml = robot_xml_with_hands() if hands else None
     for i in range(n):
-        child = mujoco.MjSpec.from_file(ROBOT_XML)
+        child = mujoco.MjSpec.from_string(robot_xml) if hands else mujoco.MjSpec.from_file(ROBOT_XML)
         frame = spec.worldbody.add_frame()
         spec.attach(child, frame=frame, prefix=f"r{i}_")
     m = spec.compile()
@@ -334,19 +371,32 @@ def main():
     ap.add_argument("--quality-w", type=float, default=0.01, help="selection: weight of the settled heading / position error")
     ap.add_argument("--dry", action="store_true", help="selection report only")
     ap.add_argument("--stills", default="", help="comma list of video fractions -> PNG stills, no video")
+    ap.add_argument("--selection", default="", help="a selection_*.json of an earlier render: its slots, no re-selection")
+    ap.add_argument("--hands", action="store_true", help="visual Inspire hand meshes on the wrists (the plant's hand is a mesh-less lump)")
+    ap.add_argument("--fill", action="store_true", help="each spot's disc fills (+ a ring pulse) at the robot's balance switch")
+    ap.add_argument("--fill-s", type=float, default=0.4, help="video s the fill takes")
+    ap.add_argument("--cut-after-switch-s", type=float, default=0.0,
+                    help="> 0: the video ENDS this many video s after the LAST balance switch (the camera path stays the full video's)")
     a = ap.parse_args()
 
     clips, dropped = load_clips(a.rec, a.tail_s, a.max_switch_s)
     print(f"[clips] {len(clips)} ARRIVED clips usable, {len(dropped)} dropped")
     for tag, why in dropped:
         print(f"   dropped {tag}: {why}")
-    chosen, dmin, per_pair, table_drop, clear = select(clips, a.n, a.table_r, a.table_clear, a.iters, a.select_seed, a.sep_cap, a.quality_w)
+    if a.selection:
+        prev = json.load(open(a.selection))
+        by_tag = {c["tag"]: c for c in clips}
+        sel = [by_tag[sl["clip"]] for sl in prev["slots"]]
+        dmin, per_pair, table_drop = float(prev.get("closest_m", float("nan"))), {}, []
+        print(f"[select] the {len(sel)} slots of {a.selection}")
+    else:
+        chosen, dmin, per_pair, table_drop, clear = select(clips, a.n, a.table_r, a.table_clear, a.iters, a.select_seed, a.sep_cap, a.quality_w)
+        sel = [clips[i] for i in chosen]
     for tag, why in table_drop:
         print(f"   table-clearance discard {tag}: {why}")
-    sel = [clips[i] for i in chosen]
     print(f"[select] {a.n} of {len(clips)} clips; closest pelvis-pelvis approach over the timeline {dmin:.2f} m")
     for s, c in enumerate(sel):
-        nb = min(per_pair.get((min(s, t), max(s, t)), 9) for t in ((s - 1) % a.n, (s + 1) % a.n))
+        nb = min(per_pair.get((min(s, t), max(s, t)), float("nan")) for t in ((s - 1) % a.n, (s + 1) % a.n)) if per_pair else float("nan")
         d0 = float(np.linalg.norm(c["qpos"][0, :2] - EDGE0))
         print(f"   slot {s} {COLORS[s % len(COLORS)]}: {c['tag']:9s} start {d0:.2f} m from the edge, goto {c['t_goto']:.1f} s, switch {c['t_switch']:.1f} s, "
               f"result {c['t_result']:.1f} s, settled err {c['final_planar']} m / {c['final_head']} deg, closest neighbour {nb:.2f} m, gaps {c['gaps']}")
@@ -364,7 +414,7 @@ def main():
     os.environ.setdefault("MUJOCO_GL", "egl")
     import mujoco
     W, H = (int(v) for v in a.size.split("x"))
-    m, adr = build_model(a.n, a.table_r, W, H, a.fovy, extent=8.0, texrep=a.texrepeat)
+    m, adr = build_model(a.n, a.table_r, W, H, a.fovy, extent=8.0, texrep=a.texrepeat, hands=a.hands)
     d = mujoco.MjData(m)
     slots = [slot_rt(2 * math.pi * s / a.n, a.table_r) for s in range(a.n)]
     # trails: the smoothed pelvis track per robot in its slot (0.7 s window ~ one gait cycle -> no step wobble)
@@ -429,12 +479,25 @@ def main():
     def add_geoms(scn, tau):
         if not a.no_marks:
             for s in range(a.n):
-                if scn.ngeom >= scn.maxgeom:
+                if scn.ngeom >= scn.maxgeom - 3:
                     break
                 g = scn.geoms[scn.ngeom]
                 mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_CYLINDER, np.array([0.17, 0.0015, 0.0]),   # model-style size: radius, half-height
                                     np.array([marks[s][0], marks[s][1], 0.003]), eye3, rgba_mark[s])
                 scn.ngeom += 1
+                u = (tau - sel[s]["t_switch"]) / max(a.fill_s * speed, 1e-6)
+                if a.fill and u >= 0:   # the balance switch: the disc fills from the centre, a ring pulse runs out and fades
+                    g = scn.geoms[scn.ngeom]
+                    mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_CYLINDER, np.array([0.17 * ease(u), 0.0016, 0.0]),
+                                        np.array([marks[s][0], marks[s][1], 0.0045]), eye3, rgba_trail[s])
+                    scn.ngeom += 1
+                    v = u / 2.0
+                    if v < 1.0:
+                        g = scn.geoms[scn.ngeom]
+                        rc = rgba_trail[s].copy(); rc[3] = 0.6 * (1.0 - v)
+                        mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_CYLINDER, np.array([0.17 + 0.33 * ease(v), 0.0012, 0.0]),
+                                            np.array([marks[s][0], marks[s][1], 0.0038]), eye3, rc)
+                        scn.ngeom += 1
         if a.no_trails:
             return
         for s, c in enumerate(sel):
@@ -485,16 +548,21 @@ def main():
         renderer.close()
         return 0
 
+    n_out = nfr
+    if a.cut_after_switch_s > 0:
+        n_out = min(nfr, int(round((a.intro_s + max(c["t_switch"] for c in sel) / speed + a.cut_after_switch_s) * a.fps)))
+        sel_info.update({"cut_frame": n_out, "cut_video_s": n_out / a.fps, "cut_sim_s": tau_of(n_out - 1)})
+        print(f"[cut] the video ends at frame {n_out} ({n_out / a.fps:.2f} s, sim {tau_of(n_out - 1):.2f} s) of the full {nfr}")
     os.makedirs(os.path.dirname(os.path.abspath(a.out)), exist_ok=True)
     tmp = a.out + ".part.mp4"
     ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}", "-r", str(a.fps), "-i", "-",
                            "-c:v", "libx264", "-preset", "slow", "-crf", str(a.crf), "-profile:v", "high", "-pix_fmt", "yuv420p",
                            "-movflags", "+faststart", tmp], stdin=subprocess.PIPE)
     t0 = time.time()
-    for k in range(nfr):
+    for k in range(n_out):
         ff.stdin.write(render(k).tobytes())
         if k % (a.fps * 5) == 0:
-            print(f"[render] {k}/{nfr} frames ({time.time() - t0:.0f} s)", flush=True)
+            print(f"[render] {k}/{n_out} frames ({time.time() - t0:.0f} s)", flush=True)
     ff.stdin.close(); rc = ff.wait()
     renderer.close()
     if rc != 0:
@@ -502,7 +570,7 @@ def main():
     os.replace(tmp, a.out)
     with open(os.path.join(a.rec[0], "selection_" + os.path.splitext(os.path.basename(a.out))[0] + ".json"), "w") as f:
         json.dump(sel_info, f, indent=1, default=str)
-    print(f"[done] {a.out}: {nfr} frames, {T_video:.1f} s, rendered in {time.time() - t0:.0f} s")
+    print(f"[done] {a.out}: {n_out} frames, {n_out / a.fps:.1f} s, rendered in {time.time() - t0:.0f} s")
     return 0
 
 
