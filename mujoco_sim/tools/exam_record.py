@@ -5,6 +5,9 @@ The per-policy exam record that travels with the milestone (operator 2026-10-29:
 in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/exam/<tag>_<stamp>.json =
   meta        tag, stamp, seed, n, balance, walk, rig (lock-step, sim build), score parts (tools/exam_report.py's formula), arm_ff (2026-11-03:
               1 = the arm gravity feedforward ran in the rig = the plant since 2026-11-03, 0 = PD-only arms; absent in older records)
+  v4 (2026-11-09): meta.score = tools/exam_score.py score_v4 (version 4): v3 + the rung error floor 0.05, the 48-push test (8 directions),
+              the v4 calibration, meta.score.constraints (feasibility: no_falls, walks_*, track_floor_*, tilt_floor; c <= 0 = feasible)
+              + meta.score.feasible; meta.balance = the balance partner actually used (exam.sh: CURRENT_BALANCE of the rig worktree by default)
   v3 (2026-11-03): meta.score = tools/exam_score.py score_v3 (version 3): the hard fails (height / tilt / floor contact / arm envelope)
               applied as falls, the 60 s clean-engagement stand's separation / stagger departure, arm stance departure, self-contact, joint-limit
               dwell; every ladder / push / handover segment and homing trial carries the Watch numbers (z_run_min, tilt_peak, floor_contact,
@@ -125,8 +128,9 @@ spec = importlib.util.spec_from_file_location("exam_report_lib", os.path.join(SI
 score = None
 if spec and os.path.exists(spec.origin):
     lib = importlib.util.module_from_spec(spec); spec.loader.exec_module(lib)
-    if a.exam == "2":   # v3 (2026-11-03): the hard fails + the 60 s stand rows; score_v2 stays callable for the older records
-        score = lib.score_v3(handover, ladders, pushes, homing, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
+    if a.exam == "2":   # v4 (2026-11-09): v3 (hard fails, 60 s stand rows) + rung error floor 0.05 + 48 pushes + the constraints block;
+        # score_v3 / score_v2 stay callable for the older records (their version is in meta.score.version)
+        score = lib.score_v4(handover, ladders, pushes, homing, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
     else:
         score = lib.score_policy(homing, stairs)
 

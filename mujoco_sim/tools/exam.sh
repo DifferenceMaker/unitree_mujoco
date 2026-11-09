@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
 # exam.sh -- THE standardized walk-policy exam, N rigs in parallel (2026-10-28 evening).
-#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance p14h_stancewide] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
+#   bash mujoco_sim/tools/exam.sh [--exam 2] [--parallel 8] [--seed 1] [--n 10] [--balance SLUG] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
+#   --balance: default (Exam #2 v4, 2026-11-09) = the rig worktree's MovementModule/policy/CURRENT_BALANCE, read at launch (p16c_sw_enc01 on
+#   2026-11-09; was the fixed p14h_stancewide); the slug used goes into every record's meta.balance. HOMING_BALANCE in the env overrides too.
 #   EXAM_FF=0 bash ... = no arm gravity feedforward (every exam before 2026-11-03; the default since then runs the robot's ff sender in every rig).
 # EXAM #2 (default since 2026-10-30, results/EXAM2_SPEC.md): Test 0 handover -> Test 1 LADDERS (tools/exam2_test.sh ladders: 20 s stand,
 #   then vx / vy / wz in 0.05 rungs up to the top, a stop, back down to the negative top, a stop) -> Test 2 PUSHES (tools/exam2_test.sh
-#   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
+#   pushes: 0.5 / 1.0 / 1.5 m/s kicks from 4 sides + (v4, 2026-11-09) the 4 diagonals = 48, standing and walking at 0.3) -> Test 3 HOMING (starts all around the desk, the
 #   commander plans around it, turns by the heading error with counted rescue pulses, 120 s timeout) -> Test 5 STUMBLE (2026-11-02,
 #   tools/exam2_test.sh stumble: vx 0.15 / 0.30 for 15 s each on a rough floor, 0.4-1 cm sphere bumps (2 cm until 2026-11-02 evening) deterministic
 #   per --seed, far from the other tests; swing apex per foot, scuffs / catches = trips, tilt, falls; RECORDED, NOT SCORED yet -- EXAM2_SPEC Test 5).
 #   Since 2026-11-02 evening the same swing engine runs on every LADDER segment: the key columns are the FLAT vx 0.15 / 0.30 rungs' scuffed swings
 #   ("scuffs .15" = scuffed/swings) beside their swing heights -- the robot's toe drag happened on a flat floor. Scored by QUALITY
-#   (tools/exam_score.py score_v2: survival 10, stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10). --exam 1 = the
+#   (tools/exam_score.py score_v4 since 2026-11-09 -- v3 + rung error floor 0.05 + 48 pushes + the constraints block; weights survival 10,
+#   stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10). --exam 1 = the
 #   2026-10-29 exam below (staircase, the bang-bang commander), kept to reproduce old records.
 # Per policy (milestone slug in aspired-isaac-lab/milestone_checkpoints, or a name already vendored under MovementModule/policy):
 #   vendor -> a LOCK-STEP headless rig on its own instance (LOCOSW_INSTANCE=k: own DDS domains, container, files) ->
@@ -27,13 +30,20 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-EXAM=2; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-p14h_stancewide}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
+EXAM=2; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
 FF="${EXAM_FF:-1}"   # 2026-11-03: the robot's arm gravity feedforward runs in EVERY rig (ActionModule/Utils/arm_ff_only.py in the container, as the ActionModule on the robot); EXAM_FF=0 = the pre-11-03 plant (PD-only arms)
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
   --exam) EXAM="$2"; shift 2;; --no-pushes) PUSHES=0; shift;; --no-stumble) STUMBLE=0; shift;; --stumble) STUMBLE=1; shift;; --no-milestone) NOMS=1; shift;; --parallel) PAR="$2"; shift 2;; --seed) SEED="$2"; shift 2;; --stop-dist) STOP_DIST="$2"; shift 2;; --n) N="$2"; shift 2;; --balance) BALANCE="$2"; shift 2;; --tag) TAG="$2"; shift 2;;
   --no-stairs) STAIRS=0; shift;; --no-handover) HANDOVER=0; shift;; --no-homing) HOMING=0; shift;; --no-pin) PIN=0; shift;; --first-instance) FIRST="$2"; shift 2;; -*) echo "unknown arg: $1"; exit 1;; *) POLICIES+=("$1"); shift;; esac; done
 [[ ${#POLICIES[@]} -gt 0 ]] || { sed -n '2,12p' "$0"; exit 1; }
+# v4 (2026-11-09): the balance partner = the line's CURRENT balance policy of the rig worktree, read now (one value for the whole run)
+if [[ -z "$BALANCE" ]]; then
+  BALANCE="$(tr -d '[:space:]' < "$MMP/CURRENT_BALANCE" 2>/dev/null)"
+  [[ -n "$BALANCE" ]] || { echo "FATAL: no --balance and no $MMP/CURRENT_BALANCE"; exit 1; }
+  echo ">>> balance partner = CURRENT_BALANCE of $ASPIRED_W: $BALANCE"
+fi
+[[ -f "$MMP/$BALANCE/policy.onnx" ]] || { echo "FATAL: balance policy $BALANCE not vendored in $MMP"; exit 1; }
 STAMP="$(date +%Y-%m-%d_%H-%M-%S)"; EX="$SIM/logs/exam/${TAG}_$STAMP"; mkdir -p "$EX"
 vendor() {  # vendor <slug> -> prints the vendored policy name
   local slug="$1" name src
@@ -88,6 +98,8 @@ worker() {  # worker <instance k>
       echo "[$k] $(date +%T) $name: !! rig / commander did not come up"; grep -E 'Traceback|refused|sim died|ENGAGED' "$L" | tail -3 | sed "s/^/[$k]    /"
       echo "$name NO_COMMANDER" >> "$EX/failed.txt"; bash "$SIM/run_mujoco_homing.sh" stop >/dev/null 2>&1; continue
     fi
+    local balx; balx="$(grep -a -m1 -o 'SHADOW POLICY[^:]*: [^:]*' "$L" | sed 's/.*: //')"   # v4: the balance MovementModule actually loaded
+    [[ "$balx" == "$BALANCE" ]] && echo "[$k]    balance in the rig: $balx" || { echo "[$k]    !! balance in the rig '$balx' != $BALANCE"; echo "$name BALANCE_MISMATCH $balx" >> "$EX/failed.txt"; }
     # ARM GRAVITY FEEDFORWARD (2026-11-03, operator: the ff is on in every policy on the robot, walk and balance): the robot's
     # ActionModule streams pinocchio g(q_measured) for both arms to /BridgeModule/arm_tau_ff; the rig runs the same sender
     # (ActionModule/Utils/arm_ff_only.py = robot/gravity_ff.GravityFF, as tools/ff_handover.sh did) inside the container for the whole
@@ -113,8 +125,8 @@ worker() {  # worker <instance k>
     fi
     if [[ $PUSHES -eq 1 && "$EXAM" == 2 ]]; then   # exam #2 Test 2: the pushes
       local p0; p0=$(wc -l < "$SIM/logs/pushes_$k.jsonl" 2>/dev/null || echo 0)
-      bash "$SIM/tools/exam2_test.sh" pushes --timeout 600 > "$EX/pushes_$name.log" 2>&1; tail -n +"$((p0 + 1))" "$SIM/logs/pushes_$k.jsonl" > "$EX/pushes_$name.jsonl"
-      echo "[$k] $(date +%T) $name: pushes $(head -1 "$EX/pushes_$name.log" | cut -c1-90) | held $(grep -c 'held True' "$EX/pushes_$name.log")/24"
+      bash "$SIM/tools/exam2_test.sh" pushes --timeout 900 > "$EX/pushes_$name.log" 2>&1; tail -n +"$((p0 + 1))" "$SIM/logs/pushes_$k.jsonl" > "$EX/pushes_$name.jsonl"   # v4: 48 pushes = 363 s of sim (v3: 24, 183 s)
+      echo "[$k] $(date +%T) $name: pushes $(head -1 "$EX/pushes_$name.log" | cut -c1-90) | held $(grep -c 'held True' "$EX/pushes_$name.log")/$(grep -c ' held ' "$EX/pushes_$name.log")"
     fi
     if [[ $STAIRS -eq 1 && "$EXAM" == 1 ]]; then
       local s0; s0=$(wc -l < "$SIM/logs/staircase_$k.jsonl" 2>/dev/null || echo 0)

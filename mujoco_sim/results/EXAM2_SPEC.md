@@ -9,6 +9,9 @@ Exam #1 = `tools/exam.sh` as of 2026-10-29 (Test 0 handover, Test 1 staircase, T
 `EXAM_METRICS.md`). Exam #2 keeps the rig (lock-step headless MuJoCo, the real Bridge + MovementModule stack, the comx06 armature
 hand790 body, p14h_stancewide as the balance policy) and changes what is tested and how it is scored.
 
+**Current score version: v4 (2026-11-09, section 11)** — balance partner = CURRENT_BALANCE, 48 pushes (8 directions), rung error floor
+0.05, the constraints block, calibration v4-2026-11-09; v3 = section 10, v2 = sections 1–7.
+
 Operator brief (meeting 2026-10-30): everything the exam records must count (Test 0 and the stance included); the full command band,
 in 0.05 steps, for vx, vy and wz; stands tested on their own; a push test; energy in every phase; stability first in the weights;
 "crawl" = literally on the belly or knees (a 6 cm knee sink is a small deduction, not a fail).
@@ -613,3 +616,119 @@ get the walking height rule, tilt, contact and arm checks like a rung. Sim time 
 
 The two stands differ as the finding said: stopramp draws IN after the switch and slides OUT (+ a 28 cm stagger, 19° turn, 20 cm base
 drift) after walking; combo slides out in both. Wall 3 min 53 s for 2 rigs (ladders 516 s sim); no hard fail tripped.
+
+## 11. Exam #2 v4 (2026-11-09): CURRENT_BALANCE partner, diagonal pushes, small-command precision, the constraints block
+Operator-approved scope 2026-11-09 (the Optuna study's objective + constraints, memory `optuna-study-design`); frozen for the whole study.
+**Weights UNCHANGED** (survival 10, stability 30, tracking 20 = vx 8 + vy 4 + wz 8, gait 10, energy 10, pushes 10, homing 10; a tracking-25
+reweight was discussed and reverted by the operator). Score version 4 = `tools/exam_score.py score_v4` (= `score_v3` with the changes
+below); `score_v2` / `score_v3` and the v2 calibration stay as they were, so every v2 / v3 record keeps rendering and re-scoring exactly as
+before (checked: `score_v2` / `score_v3` output byte-identical on all 150 stored Exam #2 records; fleetdeck's sections identical on 38 v2 / v3
+records). `exam_record.py` / `exam_report.py` write and print v4; `exam_calibrate.py --apply` now re-scores each record with its own version.
+
+### 11.1 Balance partner = CURRENT_BALANCE, read at launch
+`tools/exam.sh` without `--balance` reads `$ASPIRED_W/MovementModule/policy/CURRENT_BALANCE` (the rig worktree, `Aspired_Robot_Project-homing`
+on MM_rig; **p16c_sw_enc01** on 2026-11-09, was the fixed `p14h_stancewide`), once per run; `--balance` (or `HOMING_BALANCE`) overrides. The
+slug goes into every record's `meta.balance` (it always did) and each rig checks that MovementModule loaded it (the stack log's `SHADOW
+POLICY` line; a mismatch -> `failed.txt BALANCE_MISMATCH`). `run_mujoco_homing.sh` defaults to the same file. Consequence: the handover's
+`to_balance` switch, the homing settle, the ladders' clean engagement and `walk_sag`'s reference stand all run p16c_sw_enc01 now -- a v4
+record is not like-for-like with a v3 record (p14h_stancewide) on those columns.
+
+### 11.2 Pushes from 8 directions (48)
+`homing_commander.PUSH_DIRS` = the 4 sides + **front_left +45°, front_right −45°, back_left +135°, back_right −135°** in the same body-frame
+convention (angle a from the heading, + = to the robot's left; the kick $\Delta v = L (\cos(\psi + a), \sin(\psi + a))$). Levels unchanged
+(0.5 / 1.0 / 1.5 m/s), standing and walking at vx 0.3 → 3 × 8 × 2 = **48 pushes** (v3: 24), per level the 4 sides first (the v3 order), then
+the diagonals; 2 × (12 × 7 s + 12 × 8 s) + 3 s = **363 s** of sim (v3: 183 s; `exam.sh` push timeout 600 → 900 s wall). The push score is
+the mean over `EXPECTED_PUSHES_V4` = 48 (a fall = 0). The lean along the push already took any angle,
+$L = (\theta - \theta_0)\cos a - (\phi - \phi_0)\sin a$; at a = +45° a 2° pitch and −2° roll excursion read L = 0.707 · 2 + 0.707 · 2 = 2.83°.
+fleetdeck's push grid draws 8 columns per mode (front, front-L, left, back-L, back, back-R, right, front-R) for a v4 record, 4 for an old one.
+
+### 11.3 Small-command precision: the rung error floor 0.05
+$$e = \frac{\lVert v - c \rVert}{\max(\lVert c \rVert, c_0)}, \qquad c_0 = 0.05 \text{ m/s (v4; 0.1 in v2 / v3)}$$
+on the same vector (vx, vy, 0.5 m × wz) — the LEVER stays, so the wz floor is 0.1 rad/s (was 0.2). Worked: at c = 0.05 an achieved 0.03 gives
+e = 0.02 / 0.1 = **0.2** (v3, rung score (0.5 − 0.2) / 0.4 = 0.75) vs e = 0.02 / 0.05 = **0.4** (v4, score 0.25). Rungs from |c| ≥ 0.1 (wz ≥ 0.2)
+are unchanged; the rungs below it — vx / vy ±0.05, wz ±0.05..±0.15 — now count their error against the command itself. `rung_e` stays a
+definition (g 0.1 → b 0.5).
+
+### 11.4 The constraints block (feasibility, separate from the points)
+`meta.score.constraints` = a list of `{name, value, threshold, sense, c, pass, provisional, detail}` and `meta.score.feasible` = all pass; c ≤ 0
+= feasible (Optuna's `constraints_func`): c = threshold − value for a "≥" constraint, value − threshold for "≤"; a value that could not be
+measured (Test 1 did not run) = c 1. The constraints read the hard-fail-marked records (a hard-failed rung counts as not walked).
+- **no_falls** (definition): the survival row's count = falls in Tests 0 / 1 / 3 + the v3 hard-fail groups outside the pushes ≤ 0. A push that
+  knocks the robot over belongs to the push score (section 2) and is only shown in the detail.
+- **walks_vx / walks_vy / walks_wz** (definition, the operator's hard rule "a locomotion policy must not decide that standing beats walking"):
+  per axis the share of the ladder rungs with |c| ≥ 0.10 m/s (vx, vy) or ≥ 0.2 rad/s (wz) whose gain $g = v_{axis} / c$ ≥ 0.5 (sim truth along
+  the command; the wrong sign is negative; a fell or missing rung fails) must be ≥ 0.90. Rung counts: vx 28 (0.10..1.00, −0.10..−0.50), vy 10,
+  wz 26 → at most 2, 1 and 2 short rungs. Example: 16 of 26 wz rungs at gain ≥ 0.5 → 0.615, c = 0.90 − 0.615 = +0.285, infeasible.
+- **track_floor_vx / _vy** (provisional, the 11-03 design's floors vx 0.9, vy 0.8): the mean capped gain $\min(\max(g, 0), 1)$ over the same
+  rungs (an overshoot does not buy back an undershoot); **track_floor_wz08** (provisional, 0.5): the same over the two ±0.8 rad/s rungs.
+- **tilt_floor** (provisional): `walk_tilt` (the stability row's value: the mean torso tilt over the walking rungs |v| ≤ 0.5 m/s) ≤ **8.0°**.
+  Set above the six anchors with margin (their v3 records 2.1–6.3°, the highest lm7l_enc; 59 lm7j..lm7l records 1.6–9.6°, median 3.6°;
+  two runs of one policy differ by ~0.05°). Torso tilt is not lean alone: it includes the gait's pitch.
+The provisional thresholds live in `exam_score.TRACK_FLOOR` / `TILT_FLOOR_DEG` (env `EXAM_TRACK_FLOOR="vx=0.9,vy=0.8,wz08=0.5"`,
+`EXAM_TILT_FLOOR_DEG`; `score_v4(track_floor=..., tilt_floor_deg=...)`); their final values come from the pilot's noise measurement
+($\theta = \mu^* - z\sigma$). fleetdeck's score section shows one pass / fail badge per constraint (hover = value, threshold, c, detail).
+
+### 11.5 Calibration v4-2026-11-09 (`results/exam2_calibration_v4.json`; the v2 file stays and keeps scoring the v2 / v3 records)
+Method = section 6 (a provisional key → the population's p10 → p90, never narrower than half the median; a definition is kept and only
+flagged DEAD at > 80 % at one end), applied to **the keys whose distribution v4 changes**, every other key inherited from v2-2026-11-01
+(`tools/exam_calibrate.py --v4 --keys ... --write`; the file records `base`, `e_floor`, `recalibrated`, `changed`). Which keys: (a) by
+construction — the push keys (8 directions), `push_energy`, the all-phase energy (the pushes are now 363 of ~960 s of Tests 0–2, 38 %, instead of 183 of
+~780 s, 23 %), the arms' stance departure and the self-contact seconds (their windows include the pushes); (b) through the balance partner —
+measured on the six anchors, same policies, v3 record → v4 record: a provisional key is affected when its median moved ≥ 10 % (the keys v4
+cannot touch moved −3..+4 %: walk_tilt −1 %, smooth +1 %, slip 0 %, cot −1 %, stand_tau2 −3 %, arm_sway −2 %): `ho_jolt` +10 %,
+`stand_rate` −14 %, the stand separation / stagger deviations +17..+43 %. `ho_jump` (+3 %) stays. The two stands (60 s + after walking) share
+their keys, so the tool now pools both into the `stand_*` samples. Population: the six v4 anchor records (`v4_anchor_2026-11-09`, below; 283
+held pushes, 36 switches, 12 stands, 6 per-policy values) — no older record carries a diagonal push or the p16c partner. **Thin for the
+per-policy keys (n 6): re-run the same command over all v4 records once the next wave lands.**
+
+| key | v2 / default g → b | v4 g → b | note |
+|---|---|---|---|
+| push_dist | 0.211 → 1.111 m | 0.211 → 1.035 m | 283 held pushes |
+| push_tilt | 2.78 → 23.7° | 2.93 → 17.6° | |
+| push_rec | 0.98 → 3.10 s | 0.96 → 3.15 s | |
+| push_foot | 2.23 → 4.60 BW | 1.97 → 4.35 BW | |
+| push_counter | 0.32 → 5.78° | 0.50 → 4.47° | |
+| push_sway | 0.235 → 0.629 rad/s | 0.198 → 0.513 rad/s | |
+| push_sep | 11.8 → 55.3 cm | 9.2 → 52.0 cm | |
+| push_arm | 12.7 → 26.0° | 6.7 → 15.9° | was 70 % at full marks |
+| push_energy | 577 → 1846 J | 521 → 1638 J | |
+| push_steps | 2 → 6 | 2 → 6 | definition kept (37 % full / 16 % zero) |
+| en_all_tau2 | 7247 → 12186 | 7024 → 11912 | n 6, widened to 0.5 × median |
+| en_all_power | 95.5 → 165 W | 99.7 → 167 W | n 6, widened |
+| arm_dev_mean | 2 → 15° (default) | 2.55 → 4.27° | n 6 (3.2–3.6°), widened; first calibration |
+| arm_dev_max | 5 → 30° (default) | 18.4 → 30.0° | n 6, widened; first calibration |
+| sc_dur | 0 → 2 s (default) | 1.28 → 5.90 s | n 6; was 67 % at zero; first calibration |
+| ho_jolt | 0.135 → 0.478 rad/s | 0.118 → 0.301 rad/s | 36 switches (balance partner) |
+| stand_rate | 0.041 → 0.102 rad/s | 0.047 → 0.079 rad/s | 12 stands; v2 came from the poisoned 20 s stand (10.1) |
+| stand_sep_dev_max | 0.5 → 5 cm (default) | 5.2 → 20.0 cm | was DEAD (92 % at zero); first calibration |
+| stand_sep_dev_end | 0.5 → 4 cm (default) | 1.3 → 19.7 cm | was 75 % at zero |
+| stand_stag_dev_max | 0.5 → 6 cm (default) | 4.7 → 16.4 cm | was DEAD (83 % at zero) |
+| stand_stag_dev_end | 0.5 → 5 cm (default) | 0.5 → 8.3 cm | |
+| rung_e | 0.1 → 0.5 | 0.1 → 0.5 | definition kept: anchors 15 % full / 36 % zero; 67 lm7j..lm7l records re-read at the 0.05 floor 15 % / 50 % (at 0.1: 15 % / 45 %) |
+
+Effect on the six v4 records (re-scored with `--apply`): −0.7..+0.5 points (legs 62.6 → 62.4, clear10 61.2 → 60.8, squeeze 60.5 → 59.8, arch
+54.4 → 54.6, armsway 56.5 → 57.0, enc 47.1 → 47.1). The stand deviation ramps now end at 16–20 cm because the population drifts that far
+(the walk policies' feet slide out after walking and after the p16c engagement); if the operator wants "how they start is how they finish"
+as a tolerance rather than a population rank, these four keys should become definitions (operator's call).
+
+### 11.6 Re-examination of the v4 anchors (`v4_anchor_2026-11-09_15-10-57`, 6 rigs unpinned, seed 1, n 10, Test 5 on, ff on)
+`bash tools/exam.sh --parallel 6 --no-pin --seed 1 --n 10 --stumble --tag v4_anchor <6 slugs>`: **9 min 8 s wall** (per policy 365–542 s;
+the two arch rows' homing timeouts set the end), rtf 4.0–5.7, 0 pose gaps, 0 ff reverts, every rig confirmed p16c_sw_enc01; ladders 516.9 s,
+pushes 362–363 s of sim; the ladder engagement's balance → walk switch wait is **1.86 s** under p16c (p14h: 0.34–1.02 s).
+
+| policy | v3 (p14h, land) | v4 | v4 parts surv/stab/trk/gait/energy/push/homing | feasible: failed constraints |
+|---|---|---|---|---|
+| lm7k_legs | 65.8 | **62.4** | 10.0 / 18.8 / 13.5 / 2.5 / 6.2 / 5.8 / 5.6 | walks_wz 0.58 |
+| lm7j_stack_clear10 | 64.7 | **60.8** | 10.0 / 20.0 / 11.0 / 4.1 / 5.9 / 5.3 / 4.5 | walks_wz 0.62, track_floor_vy 0.78 *p* (walks_vy exactly 0.90 = c 0, passes) |
+| lm7k_micro_legs_squeeze | 63.1 | **59.8** | 10.0 / 17.3 / 10.6 / 3.3 / 6.7 / 6.0 / 5.9 | walks_wz 0.69, track_floor_vx 0.83 *p* |
+| lm7l_arch_armsway | 61.3 | **57.0** | 10.0 / 21.6 / 7.5 / 3.6 / 8.2 / 6.0 / 0.1 | walks_vy 0.40, walks_wz 0.50, track_floor_vx 0.89 *p*, track_floor_vy 0.44 *p* |
+| lm7l_arch | 56.9 | **54.6** | 10.0 / 19.5 / 7.4 / 4.1 / 7.6 / 6.0 / 0.0 | walks_vy 0.40, walks_wz 0.42, track_floor_vx 0.87 *p*, track_floor_vy 0.40 *p* |
+| lm7l_enc | 49.2 | **47.1** | 10.0 / 16.8 / 4.5 / 3.2 / 3.2 / 5.5 / 3.9 | walks_vx 0.29, walks_wz 0.69, track_floor_vx 0.42 *p* |
+
+Same order as v3. **No anchor is feasible, and every anchor fails `walks_wz`**: no policy turns in place at 0.20–0.40 rad/s (gains −0.04..0.13 on
+those rungs; ±0.8 is tracked at 0.81–0.99) — the "standing beats walking" pattern the rule exists for, on the turn axis. The arch rows also
+stand under vy 0.10–0.20, enc under vx 0.10–0.45. no_falls passes everywhere (push falls: squeeze 1, clear10 2, enc 2 — scored in pushes).
+tilt_floor passes everywhere (2.1–6.3°, margin ≥ 1.7° at enc). Where the 2–4 points between v3 and v4 come from, on the same v4 records:
+the v3 rules give 63.0 / 61.5 / 60.8 / 56.8 / 54.7 / 47.7, so the floor 0.05 costs 0.3–0.6 points (tracking), the v4 table −0.7..+0.5, and the
+rest is the new exam content (diagonal pushes: push points 5.3–6.0 vs v3's 6.2–7.0; the p16c partner: homing points fell on all six, legs 7.0 → 5.6 — over
+the anchors' arrived trials the settled-error median +11 %, heading +19 % — and the handover switch-wait median 0.36 → 1.13 s) plus the run-to-run spread (sd ≈ 2.3 points per run, section 6).

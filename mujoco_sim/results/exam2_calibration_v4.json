@@ -1,0 +1,477 @@
+{
+ "version": "v4-2026-11-09",
+ "date": "2026-11-09 15:21",
+ "source": "6 Exam #2 records",
+ "records": [
+  "aspired-isaac-lab/milestone_checkpoints/lm7j_stack_clear10_2026-11-03/exam/v4_anchor_2026-11-09_15-17-21.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7k_legs_2026-11-04/exam/v4_anchor_2026-11-09_15-17-02.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7k_micro_legs_squeeze_2026-11-05/exam/v4_anchor_2026-11-09_15-17-28.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7l_arch_2026-11-05/exam/v4_anchor_2026-11-09_15-20-01.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7l_arch_armsway_2026-11-05/exam/v4_anchor_2026-11-09_15-20-04.json",
+  "aspired-isaac-lab/milestone_checkpoints/lm7l_enc_2026-11-06/exam/v4_anchor_2026-11-09_15-19-14.json"
+ ],
+ "rule": "provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= 0.5 x median; the rest kept",
+ "cal": {
+  "stand_drift": [
+   0.01,
+   0.1
+  ],
+  "stand_yaw": [
+   1.0,
+   10.0
+  ],
+  "stand_lifts": [
+   0.0,
+   3.0
+  ],
+  "stand_rate": [
+   0.047415,
+   0.078515
+  ],
+  "stand_sep_trend": [
+   0.0,
+   0.03
+  ],
+  "stand_stagger": [
+   0.01,
+   0.08
+  ],
+  "stand_toe": [
+   2.0,
+   10.0
+  ],
+  "stand_jitter": [
+   0.2,
+   1.0
+  ],
+  "stop_settle": [
+   1.0,
+   4.0
+  ],
+  "stop_steps": [
+   1.0,
+   5.0
+  ],
+  "stop_resid": [
+   0.005,
+   0.05
+  ],
+  "stop_over_m": [
+   0.1,
+   0.6
+  ],
+  "stop_over_deg": [
+   5.0,
+   30.0
+  ],
+  "walk_tilt": [
+   1.5,
+   6.0
+  ],
+  "walk_rate": [
+   0.147711,
+   0.244944
+  ],
+  "walk_sag": [
+   0.03,
+   0.15
+  ],
+  "ho_lifts": [
+   0.0,
+   2.0
+  ],
+  "ho_drift": [
+   0.01,
+   0.05
+  ],
+  "ho_sep": [
+   0.01,
+   0.05
+  ],
+  "ho_yaw": [
+   1.0,
+   5.0
+  ],
+  "ho_dip": [
+   0.005,
+   0.03
+  ],
+  "ho_jolt": [
+   0.1181,
+   0.30095
+  ],
+  "ho_jump": [
+   13.3443,
+   40.457
+  ],
+  "ho_wait": [
+   0.5,
+   3.0
+  ],
+  "rung_e": [
+   0.1,
+   0.5
+  ],
+  "impact": [
+   1.161938,
+   1.931604
+  ],
+  "smooth": [
+   0.059163,
+   0.103634
+  ],
+  "smooth_v1": [
+   0.06,
+   0.15
+  ],
+  "pivot": [
+   0.05,
+   0.5
+  ],
+  "slip": [
+   0.058244,
+   0.109931
+  ],
+  "steady": [
+   0.023513,
+   0.038831
+  ],
+  "cot": [
+   0.688696,
+   1.318691
+  ],
+  "stand_tau2": [
+   3734.46,
+   8409.82
+  ],
+  "push_dist": [
+   0.21058,
+   1.03532
+  ],
+  "push_tilt": [
+   2.93,
+   17.602
+  ],
+  "push_rec": [
+   0.96,
+   3.152
+  ],
+  "push_steps": [
+   2.0,
+   6.0
+  ],
+  "push_foot": [
+   1.968,
+   4.3458
+  ],
+  "hm_planar": [
+   0.02,
+   0.1
+  ],
+  "hm_head": [
+   1.0,
+   5.0
+  ],
+  "hm_sw": [
+   0.02,
+   0.1
+  ],
+  "hm_prog": [
+   0.25,
+   0.05
+  ],
+  "hm_turn": [
+   0.9,
+   0.3
+  ],
+  "arm_sway": [
+   1.159847,
+   1.961963
+  ],
+  "push_counter": [
+   0.5,
+   4.468
+  ],
+  "push_sway": [
+   0.19752,
+   0.51296
+  ],
+  "push_sep": [
+   9.238,
+   51.98
+  ],
+  "push_arm": [
+   6.654,
+   15.938
+  ],
+  "push_energy": [
+   520.928,
+   1638.01
+  ],
+  "en_all_tau2": [
+   7023.887713,
+   11911.894437
+  ],
+  "en_all_power": [
+   99.710283,
+   167.102706
+  ],
+  "stand_sep_dev_max": [
+   0.05248,
+   0.19954
+  ],
+  "stand_sep_dev_end": [
+   0.01294,
+   0.19748
+  ],
+  "stand_stag_dev_max": [
+   0.0469,
+   0.16381
+  ],
+  "stand_stag_dev_end": [
+   0.00482,
+   0.08309
+  ],
+  "arm_dev_mean": [
+   2.553204,
+   4.27444
+  ],
+  "arm_dev_max": [
+   18.39,
+   29.98
+  ],
+  "sc_dur": [
+   1.282,
+   5.903
+  ]
+ },
+ "base": "v2-2026-11-01",
+ "e_floor": 0.05,
+ "keys": "push_*,en_all_*,arm_dev_*,sc_dur,ho_jolt,stand_rate,stand_sep_dev_*,stand_stag_dev_*,rung_e",
+ "recalibrated": [
+  "arm_dev_max",
+  "arm_dev_mean",
+  "en_all_power",
+  "en_all_tau2",
+  "ho_jolt",
+  "push_arm",
+  "push_counter",
+  "push_dist",
+  "push_energy",
+  "push_foot",
+  "push_rec",
+  "push_sep",
+  "push_steps",
+  "push_sway",
+  "push_tilt",
+  "rung_e",
+  "sc_dur",
+  "stand_rate",
+  "stand_sep_dev_end",
+  "stand_sep_dev_max",
+  "stand_stag_dev_end",
+  "stand_stag_dev_max"
+ ],
+ "changed": {
+  "stand_rate": [
+   [
+    0.04104,
+    0.10238
+   ],
+   [
+    0.047415,
+    0.078515
+   ]
+  ],
+  "ho_jolt": [
+   [
+    0.13489,
+    0.47757
+   ],
+   [
+    0.1181,
+    0.30095
+   ]
+  ],
+  "push_dist": [
+   [
+    0.21146,
+    1.11138
+   ],
+   [
+    0.21058,
+    1.03532
+   ]
+  ],
+  "push_tilt": [
+   [
+    2.78,
+    23.724
+   ],
+   [
+    2.93,
+    17.602
+   ]
+  ],
+  "push_rec": [
+   [
+    0.98,
+    3.096
+   ],
+   [
+    0.96,
+    3.152
+   ]
+  ],
+  "push_foot": [
+   [
+    2.2348,
+    4.6014
+   ],
+   [
+    1.968,
+    4.3458
+   ]
+  ],
+  "push_counter": [
+   [
+    0.316,
+    5.784
+   ],
+   [
+    0.5,
+    4.468
+   ]
+  ],
+  "push_sway": [
+   [
+    0.23536,
+    0.62872
+   ],
+   [
+    0.19752,
+    0.51296
+   ]
+  ],
+  "push_sep": [
+   [
+    11.82,
+    55.268
+   ],
+   [
+    9.238,
+    51.98
+   ]
+  ],
+  "push_arm": [
+   [
+    12.658,
+    26.024
+   ],
+   [
+    6.654,
+    15.938
+   ]
+  ],
+  "push_energy": [
+   [
+    576.884,
+    1845.7
+   ],
+   [
+    520.928,
+    1638.01
+   ]
+  ],
+  "en_all_tau2": [
+   [
+    7246.832185,
+    12185.818326
+   ],
+   [
+    7023.887713,
+    11911.894437
+   ]
+  ],
+  "en_all_power": [
+   [
+    95.515656,
+    165.006011
+   ],
+   [
+    99.710283,
+    167.102706
+   ]
+  ],
+  "stand_sep_dev_max": [
+   [
+    0.005,
+    0.05
+   ],
+   [
+    0.05248,
+    0.19954
+   ]
+  ],
+  "stand_sep_dev_end": [
+   [
+    0.005,
+    0.04
+   ],
+   [
+    0.01294,
+    0.19748
+   ]
+  ],
+  "stand_stag_dev_max": [
+   [
+    0.005,
+    0.06
+   ],
+   [
+    0.0469,
+    0.16381
+   ]
+  ],
+  "stand_stag_dev_end": [
+   [
+    0.005,
+    0.05
+   ],
+   [
+    0.00482,
+    0.08309
+   ]
+  ],
+  "arm_dev_mean": [
+   [
+    2.0,
+    15.0
+   ],
+   [
+    2.553204,
+    4.27444
+   ]
+  ],
+  "arm_dev_max": [
+   [
+    5.0,
+    30.0
+   ],
+   [
+    18.39,
+    29.98
+   ]
+  ],
+  "sc_dur": [
+   [
+    0.0,
+    2.0
+   ],
+   [
+    1.282,
+    5.903
+   ]
+  ]
+ }
+}

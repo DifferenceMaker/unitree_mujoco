@@ -15,7 +15,14 @@ meaning: falls, steps, drift, the rung error ramp, the homing placement, ...) an
 its samples sit at one end (the operator decides). Per-item keys (stops, switches, pushes, homing trials) use the pooled items;
 per-policy keys one value per policy.
 --write: results/exam2_calibration.json (exam_score.load_cal reads it) -- the version travels in every score (meta.score.calib).
---apply: re-score the given records in place with the table in results/exam2_calibration.json (written by --write) (the raw data in the records is untouched; scores are recomputable)."""
+--apply: re-score the given records in place with the table in results/exam2_calibration.json (written by --write) (the raw data in the records is untouched; scores are recomputable).
+  Since v4 (2026-11-09) --apply re-scores each record with ITS OWN score version (meta.score.version: v2 -> score_v2, v3 -> score_v3, v4 ->
+  score_v4 with the v4 table); before, every record was re-scored with score_v2.
+--v4 (2026-11-09, Exam #2 v4): the rung errors use the v4 floor (exam_score.E_FLOOR_V4 = 0.05), the CURRENT table = the v2 calibration
+  file (results/exam2_calibration.json; a key it lacks = CAL_DEFAULT) and --write goes to results/exam2_calibration_v4.json (the v2 file
+  that scores the v2 / v3 records stays intact). --keys k1,k2 (fnmatch patterns): only these keys are re-derived from the given records
+  (the keys whose distribution v4 changes: the pushes with the diagonals, the push share of the all-phase energy, ...); every other key is
+  inherited from the v2 table. The population for a v4 key must be v4 records (a 4-direction push test has no diagonals)."""
 import argparse, glob, importlib.util, json, os, statistics as st, time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -25,7 +32,8 @@ es = importlib.util.module_from_spec(spec); spec.loader.exec_module(es)
 MIN_SPAN = 0.5   # a ramp spans at least half the population median: differences under +-25 % of the typical value cannot swing it end to end
 SCALAR = ["stand_drift", "stand_yaw", "stand_lifts", "stand_rate", "stand_sep_trend", "stand_stagger", "stand_toe", "stand_jitter", "stand_tau2",
           "walk_tilt", "walk_rate", "walk_sag", "impact", "smooth", "pivot", "slip", "steady", "cot",
-          "arm_sway", "en_all_tau2", "en_all_power"]   # + 2026-11-01
+          "arm_sway", "en_all_tau2", "en_all_power",   # + 2026-11-01
+          "stand_sep_dev_max", "stand_sep_dev_end", "stand_stag_dev_max", "stand_stag_dev_end", "arm_dev_mean", "arm_dev_max", "sc_dur"]   # + v3 (sampled since v4)
 
 
 def pct(v, q):
@@ -33,15 +41,17 @@ def pct(v, q):
     return v[i] if i + 1 >= len(v) else v[i] * (1 - f) + v[i + 1] * f
 
 
-def samples(recs):
+def samples(recs, e_floor=None):
     S = {}
     add = lambda k, x: S.setdefault(k, []).append(float(x)) if x is not None else None
     for r in recs:
-        V = es.raw_values(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"))
+        V = es.raw_values(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), e_floor=es.E_FLOOR if e_floor is None else e_floor)
         for k in SCALAR:
             if k == "smooth" and V.get("smooth_kind") != "acc":
                 add("smooth_v1", V.get("smooth")); continue
             add(k, V.get(k))
+            if k.startswith("stand_"):   # v3 twins (2026-11-03): the stand after walking (wstand_*) scores on the stand's keys -> pooled (since v4)
+                add(k, V.get("w" + k))
         for x in V["stops"]:
             if not x["ok"]: continue
             add("stop_settle", x["settle"]); add("stop_steps", x["steps"]); add("stop_resid", x["resid"])
@@ -64,18 +74,30 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("records", nargs="+"); ap.add_argument("--version", default=time.strftime("v1-%Y-%m-%d"))
     ap.add_argument("--write", action="store_true"); ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--v4", action="store_true", help="Exam #2 v4: e floor 0.05, base = the v2 table, --write -> results/exam2_calibration_v4.json")
+    ap.add_argument("--keys", default="", help="--v4: comma-separated fnmatch patterns of the keys to re-derive (default: all keys)")
     a = ap.parse_args()
+    import fnmatch
+    pats = [k.strip() for k in a.keys.split(",") if k.strip()]
+    pick = (lambda k: any(fnmatch.fnmatch(k, p_) for p_ in pats)) if pats else (lambda k: True)
+    e_floor = es.E_FLOOR_V4 if a.v4 else es.E_FLOOR
+    out_file = es.CAL_FILE_V4 if a.v4 else es.CAL_FILE
+    base_ver = "CAL_DEFAULT"
     files = [f for p in a.records for f in sorted(glob.glob(p))]
     recs = []
     for f in files:
         r = json.load(open(f))
         if int((r.get("meta") or {}).get("exam_version") or 1) >= 2 and r.get("ladders"):
             r["_file"] = f; recs.append(r)
-    S = samples(recs)
+    S = samples(recs, e_floor)
     cur = dict(es.CAL_DEFAULT)
+    if a.v4:   # the v4 table starts from the v2 calibration (the keys v4 does not touch keep their v2 ends)
+        cur, base_ver = es.load_cal(es.CAL_FILE)
     new = dict(cur)
     rows = []
     for k, (g, b) in cur.items():
+        if not pick(k):
+            rows.append((k, g, b, None, None, None, len(S.get(k) or []), None, None, g, b, f"inherited ({base_ver})")); continue
         v = S.get(k) or []
         if len(v) < 3:
             rows.append((k, g, b, None, None, None, len(v), None, None, g, b, "too few samples")); continue
@@ -95,7 +117,7 @@ def main():
         new[k] = (round(ng, 6), round(nb, 6))
         rows.append((k, g, b, p10, p50, p90, len(v), full, zero, new[k][0], new[k][1], why))
     f = lambda x: "–" if x is None else f"{x:.4g}"
-    print(f"## Exam #2 calibration {a.version}: {len(recs)} policies ({len(files)} files)\n")
+    print(f"## Exam #2 calibration {a.version}: {len(recs)} policies ({len(files)} files){' -- v4: e floor %g, base %s, keys %s' % (e_floor, base_ver, a.keys or 'all') if a.v4 else ''}\n")
     print("| key | current g → b | n | p10 / p50 / p90 | at full / at zero (current) | proposed g → b | note |")
     print("|---|---|---|---|---|---|---|")
     for k, g, b, p10, p50, p90, n, full, zero, ng, nb, why in rows:
@@ -105,18 +127,23 @@ def main():
                "records": [os.path.relpath(r["_file"], os.path.expanduser("~/Projects/robot_projects/repos")) for r in recs],
                "rule": f"provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= {MIN_SPAN} x median; the rest kept",
                "cal": {k: list(v) for k, v in new.items()}}
-        json.dump(out, open(es.CAL_FILE, "w"), indent=1)
-        print(f"\n-> {es.CAL_FILE}")
+        if a.v4:
+            out.update({"base": base_ver, "e_floor": e_floor, "keys": a.keys or "all",
+                        "recalibrated": sorted(k for k, *_r in rows if pick(k)),
+                        "changed": {k: [list(cur[k]), list(new[k])] for k in new if pick(k) and tuple(new[k]) != tuple(cur[k])}})
+        json.dump(out, open(out_file, "w"), indent=1)
+        print(f"\n-> {out_file}")
     if a.apply:
-        cal, ver = es.load_cal()
-        print("\n| policy | record | before | after |\n|---|---|---|---|")
+        print("\n| policy | record | version | before | after |\n|---|---|---|---|---|")
         for r in recs:
             before = (r["meta"].get("score") or {}).get("score")
-            sc = es.score_v2(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), n_homing=int(r["meta"].get("n") or 10))
+            ver = int((r["meta"].get("score") or {}).get("version") or 2)   # each record keeps its own score version (v4: the v4 table)
+            fn = {2: es.score_v2, 3: es.score_v3}.get(ver, es.score_v4)
+            sc = fn(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), n_homing=int(r["meta"].get("n") or 10))
             r["meta"]["score"] = sc
             path = r.pop("_file")
             json.dump(r, open(path, "w"), separators=(",", ":"))
-            print(f"| {r['meta'].get('walk')} | {os.path.basename(path)} | {before} | {sc['score']} |")
+            print(f"| {r['meta'].get('walk')} | {os.path.basename(path)} | v{sc['version']} | {before} | {sc['score']} |")
 
 
 if __name__ == "__main__":

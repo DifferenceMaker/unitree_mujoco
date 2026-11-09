@@ -98,11 +98,16 @@ def ramp(x, g, b):
     return clamp01((b - x) / (b - g))
 
 
-def rung_error(cmd, v):
-    """tracking error of one rung: ||v - c|| / max(||c||, 0.1) on (vx, vy, LEVER wz) -- overshoot and off-axis motion count"""
+E_FLOOR = 0.1      # m/s: the rung error's denominator floor c0, v2 / v3
+E_FLOOR_V4 = 0.05  # v4 (2026-11-09, small-command precision): c = 0.05 achieved 0.03 -> e = 0.02 / 0.1 = 0.2 (v3) vs 0.02 / 0.05 = 0.4 (v4)
+
+
+def rung_error(cmd, v, floor=E_FLOOR):
+    """tracking error of one rung: ||v - c|| / max(||c||, floor) on (vx, vy, LEVER wz) -- overshoot and off-axis motion count.
+    floor = 0.1 m/s in v2 / v3 (= 0.2 rad/s on a wz rung), 0.05 m/s in v4 (= 0.1 rad/s; the LEVER stays)"""
     c = (cmd[0], cmd[1], LEVER * cmd[2]); w = (v[0], v[1], LEVER * v[2])
     nc = (c[0] ** 2 + c[1] ** 2 + c[2] ** 2) ** 0.5
-    return ((w[0] - c[0]) ** 2 + (w[1] - c[1]) ** 2 + (w[2] - c[2]) ** 2) ** 0.5 / max(nc, 0.1)
+    return ((w[0] - c[0]) ** 2 + (w[1] - c[1]) ** 2 + (w[2] - c[2]) ** 2) ** 0.5 / max(nc, floor)
 
 
 def _axis(cmd):
@@ -125,8 +130,11 @@ def ladder_parts(lad):
 
 EXPECTED_RUNGS = {"vx": 30, "vy": 12, "wz": 32}
 EXPECTED_STOPS = 6
-EXPECTED_PUSHES = 24
+EXPECTED_PUSHES = 24      # v2 / v3: 3 levels x 4 sides x stand / walk
+EXPECTED_PUSHES_V4 = 48   # v4 (2026-11-09): 3 levels x 8 directions (the sides + the diagonals) x stand / walk
+PUSH_DIRS_V4 = ("front", "back", "left", "right", "front_left", "front_right", "back_left", "back_right")   # = homing_commander.PUSH_DIRS
 EXPECTED_SWITCHES = 6
+LADDER_TOPS = {"vx": (1.00, 0.50), "vy": (0.30, 0.30), "wz": (0.80, 0.80)}   # = homing_commander.LADDER_AXES (top forward, top backward)
 
 
 # Every good / bad end in ONE table (calibration 2026-10-31): key -> (g, b). results/exam2_calibration.json (tools/exam_calibrate.py)
@@ -161,6 +169,14 @@ PROV = {"stand_rate", "walk_rate", "ho_jolt", "ho_jump", "impact", "smooth", "sm
 PUSH_W = {"tilt": 0.15, "counter": 0.15, "sway": 0.10, "steps": 0.15, "sep": 0.10, "rec": 0.10, "dist": 0.10, "foot": 0.05, "arm": 0.10}
 HO_W = {"lifts": 0.25, "drift": 0.2, "sep": 0.15, "yaw": 0.1, "dip": 0.1, "jolt": 0.1, "jump": 0.05, "wait": 0.05}   # one switch = 1.0
 CAL_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "results", "exam2_calibration.json")
+# v4 (2026-11-09): its OWN file, so the v2 calibration that scores the v2 / v3 records stays intact; a complete table (the keys v4 did not
+# re-calibrate are copied from the v2 file); absent -> the v2 file (load_cal_v4)
+CAL_FILE_V4 = os.path.join(os.path.dirname(CAL_FILE), "exam2_calibration_v4.json")
+
+
+def load_cal_v4():
+    """(table, version) for score_v4: results/exam2_calibration_v4.json, else the v2 calibration"""
+    return load_cal(CAL_FILE_V4) if os.path.exists(CAL_FILE_V4) else load_cal(CAL_FILE)
 
 
 def load_cal(path=CAL_FILE):
@@ -176,9 +192,10 @@ def load_cal(path=CAL_FILE):
     return cal, ver
 
 
-def raw_values(handover, ladders, pushes, homing):
+def raw_values(handover, ladders, pushes, homing, e_floor=E_FLOOR):
     """every quantity the Exam #2 score ramps, before any ramp: per-policy scalars + per-item lists (stops, switches, rungs, pushes,
-    homing trials). score_v2 ramps these; tools/exam_calibrate.py reads their distribution over many policies."""
+    homing trials). score_v2 ramps these; tools/exam_calibrate.py reads their distribution over many policies.
+    e_floor = the rung error's denominator floor (E_FLOOR v2 / v3, E_FLOOR_V4 v4)."""
     V = {"falls": []}
     for r in handover or []:
         if r.get("fell") or r.get("result") == "FELL": V["falls"].append(("handover", r.get("pose")))
@@ -232,7 +249,7 @@ def raw_values(handover, ladders, pushes, homing):
                                   "yaw": abs(a["yaw_change_deg"]) if a.get("yaw_change_deg") is not None else None,
                                   "dip": (b0["z_mean"] - a["z_min"]) if b0.get("z_mean") and a.get("z_min") else None,
                                   "jolt": a.get("rate_peak2"), "jump": a.get("qt_jump_deg"), "wait": (r.get("switch_wait_s") or {}).get(wkey)})
-    V["rungs"] = [(_axis(r["cmd"]), None if r.get("fell") or not r.get("v_true") else rung_error(r["cmd"], r["v_true"])) for r in rungs]
+    V["rungs"] = [(_axis(r["cmd"]), None if r.get("fell") or not r.get("v_true") else rung_error(r["cmd"], r["v_true"], e_floor)) for r in rungs]
     ok_r = [r for r in rungs if not r.get("fell")]
     lin = [r for r in ok_r if _axis(r["cmd"]) in ("vx", "vy")]
     V["impact"] = mean([r["impact_p95_N"] / W_BODY for r in ok_r if r.get("impact_p95_N")])
@@ -458,12 +475,15 @@ def hard_fails(handover, ladders, pushes, homing, tilt_fail_deg=None):
     return H, L, P, M, falls, info
 
 
-def score_v3(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail_deg=None):
+def score_v3(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail_deg=None, _v4=False, _out=None):
     """Exam #2 v3 (2026-11-03): score_v2's table with the hard fails applied first (the offending windows score as falls), the 60 s
     stand's separation / stagger departure, the arms' stance departure, arm self-contact seconds and the measure-only rows (joint-limit
-    dwell, height drops, peak tilt). Same keys as v2 for fleetdeck (+ "v3" with the hard-fail info); version 3."""
+    dwell, height drops, peak tilt). Same keys as v2 for fleetdeck (+ "v3" with the hard-fail info); version 3.
+    _v4: the v4 table (score_v4: e floor 0.05, 48 pushes) -- call score_v4, not this flag."""
     H, L, P, M, hard, info = hard_fails(handover, ladders, pushes, homing, tilt_fail_deg)
-    sc = score_v2(H, L, P, M, n_homing=n_homing, cal=cal, _v3=info)
+    if _out is not None:   # score_v4 reads the hard-fail-marked copies (the constraints count a hard-failed rung as not walked)
+        _out.update({"L": L, "P": P})
+    sc = score_v2(H, L, P, M, n_homing=n_homing, cal=cal, _v3=info, _v4=_v4)
     sc["version"] = 3
     # survival: every hard-fail group outside the pushes halves it too (the pushes' own score already lost those pushes)
     nh = sum(1 for t, _ in hard if t != "pushes")
@@ -484,12 +504,13 @@ def score_v3(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail
     return sc
 
 
-def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None):
+def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None, _v4=False):
     """handover: list of Test 0 records; ladders / pushes: the Test 1 / Test 2 records (or None); homing: the Test 3 trial records.
     cal: a (g, b) table (default: load_cal() = CAL_DEFAULT + results/exam2_calibration.json)"""
     C, cver = (cal, "given") if cal is not None else load_cal()
     R = lambda x, k: ramp(x, *C[k])
-    V = raw_values(handover, ladders, pushes, homing)
+    e_floor = E_FLOOR_V4 if _v4 else E_FLOOR; n_push = EXPECTED_PUSHES_V4 if _v4 else EXPECTED_PUSHES   # v4 (2026-11-09)
+    V = raw_values(handover, ladders, pushes, homing, e_floor=e_floor)
     M = []
 
     def add(q, test, key, label, x, unit, w, prov=False, s=None, ck=None):
@@ -543,7 +564,7 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None)
     for ax, w in (("vx", 8.0), ("vy", 4.0), ("wz", 8.0)):
         sc = [0.0 if e is None else R(e, "rung_e") for a, e in V["rungs"] if a == ax]
         s = sum(sc) / max(EXPECTED_RUNGS[ax], len(sc))
-        add("tracking", "ladders", f"track_{ax}", f"{ax} ladder: mean rung score ({len(sc)}/{EXPECTED_RUNGS[ax]} rungs), e = |v - c| / max(|c|, 0.1)", s, "score", w, s=s, ck="none")
+        add("tracking", "ladders", f"track_{ax}", f"{ax} ladder: mean rung score ({len(sc)}/{EXPECTED_RUNGS[ax]} rungs), e = |v - c| / max(|c|, {e_floor:g})", s, "score", w, s=s, ck="none")
     # ── gait & body care 10 = impact 3 + action smoothness 3 + sliding 2 + swing 1 + speed steadiness 1
     add("gait", "ladders", "impact", "foot touchdown impact p95 / body weight", V["impact"], "BW", 3.0, prov=True)
     w_sm = 3.0 if _v3 is None else 2.0   # v3: 1 point of the smoothness budget goes to arm self-contact
@@ -581,8 +602,8 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None)
     # ── pushes 10: per push (24) held -> mean of 5 ramps, a fall -> 0
     ps = [sum(w * R(p[k], "push_" + k) for k, w in PUSH_W.items()) if p["held"] else 0.0 for p in V["pushes"]]
     held = sum(1 for p in V["pushes"] if p["held"])
-    pv = sum(ps) / max(EXPECTED_PUSHES, len(ps))
-    add("pushes", "pushes", "pushes", f"pushes held {held}/{EXPECTED_PUSHES}: tilt, counter-sway, sway, steps, feet, recovery, distance, foot peak, arms",
+    pv = sum(ps) / max(n_push, len(ps))
+    add("pushes", "pushes", "pushes", f"pushes held {held}/{n_push}: tilt, counter-sway, sway, steps, feet, recovery, distance, foot peak, arms",
         pv, "score", 10.0, prov=True, s=pv, ck="none")
     # ── homing 10 per trial: settled 4 + heading 1 + at the switch 1 + progress 2 + turn 2 (minus 0.1 per rescue); not arrived = 0
     hv = [0.4 * R(x["planar"], "hm_planar") + 0.1 * R(x["head"], "hm_head") + 0.1 * R(x["sw"], "hm_sw") + 0.2 * R(x["prog"], "hm_prog")
@@ -597,3 +618,105 @@ def score_v2(handover, ladders, pushes, homing, n_homing=10, cal=None, _v3=None)
         tests[m["test"]] = round(tests.get(m["test"], 0.0) + m["pts"], 1)
     return {"version": 2, "calib": cver, "score": round(sum(parts.values()), 1), "parts": parts, "tests": tests, "falls": [list(f) for f in falls],
             "metrics": M, "weights": QUALITIES, "cal": {k: list(v) for k, v in C.items()}}   # the table used (fleetdeck colours the items with it)
+
+
+# ═══ EXAM #2 v4 (2026-11-09, results/EXAM2_SPEC.md section 11): 8 push directions (the sides + the diagonals, 48 pushes), the rung error
+# floor 0.05 (small-command precision), the balance partner = CURRENT_BALANCE of the rig worktree (exam.sh), and the CONSTRAINTS block =
+# feasibility, SEPARATE from the points (the Optuna study's constraints_func: c <= 0 = feasible). Weights unchanged (operator 2026-11-09).
+WALK_MIN_CMD = {"vx": 0.10, "vy": 0.10, "wz": 0.20}   # "walks": the rungs from this |command| on (m/s, m/s, rad/s) ...
+WALK_GAIN = 0.5    # ... pass when the achieved speed along the command / the command >= this (right sign; a fell / missing rung fails) ...
+WALK_SHARE = 0.90  # ... and >= this share of them per axis must pass (operator's hard rule: standing must not beat walking). Definitions.
+
+
+def _env_floor(s, d):
+    """'vx=0.9,vy=0.8,wz08=0.5' -> {vx: 0.9, ...} over the defaults d"""
+    out = dict(d)
+    for kv in (s or "").split(","):
+        if "=" in kv:
+            k, v = kv.split("=", 1); out[k.strip()] = float(v)
+    return out
+
+
+# PROVISIONAL (the final values come from the pilot's noise measurement, theta = mu* - z sigma): the tracking floors of the 11-03 design
+# (vx / vy = the mean capped gain min(max(gain, 0), 1) over the "walks" rungs of the axis, wz08 = the same over the two +-0.8 rad/s rungs)
+# and the walking torso-tilt limit (walk_tilt = the mean torso tilt over the walking rungs |v| <= 0.5 m/s, the stability row's value), set
+# 2026-11-09 above the six v4 anchors with margin (anchors 2.1..6.3 deg in v3; 59 lm7j..lm7l records 1.6..9.6 deg, median 3.6).
+TRACK_FLOOR = _env_floor(os.environ.get("EXAM_TRACK_FLOOR"), {"vx": 0.9, "vy": 0.8, "wz08": 0.5})
+TILT_FLOOR_DEG = float(os.environ.get("EXAM_TILT_FLOOR_DEG", "8.0"))
+
+
+def ladder_commands(ax, thr=0.0):
+    """the ladder's rung commands on axis ax (both directions, from LADDER_TOPS) with |c| >= thr"""
+    up, dn = LADDER_TOPS[ax]
+    cs = [round(0.05 * k, 2) for k in range(1, int(round(up / 0.05)) + 1)] + [round(-0.05 * k, 2) for k in range(1, int(round(dn / 0.05)) + 1)]
+    return [c for c in cs if abs(c) >= thr - 1e-9]
+
+
+def rung_gains(ladders):
+    """{axis: {command: gain}}: gain = the sim-truth speed along the rung's own axis / the command (negative = the wrong way); None = the
+    rung fell (incl. a v3 hard fail on the marked copy) or has no v_true"""
+    _, rungs, _ = ladder_parts(ladders)
+    G = {"vx": {}, "vy": {}, "wz": {}}
+    for r in rungs:
+        ax = _axis(r["cmd"]); k = ("vx", "vy", "wz").index(ax); c = r["cmd"][k]
+        G[ax][round(c, 2)] = None if r.get("fell") or not r.get("v_true") else r["v_true"][k] / c
+    return G
+
+
+def constraints_v4(sc, ladders, pushes=None, track_floor=None, tilt_floor_deg=None):
+    """the v4 feasibility block: [{name, value, threshold, sense, c, pass, provisional, detail}], c <= 0 = feasible (Optuna's
+    constraints_func convention: c = threshold - value for a '>=' constraint, value - threshold for '<='; a value that could not be
+    measured = c 1, infeasible). sc = the score (its 'falls' and 'walk_tilt' rows); ladders / pushes = the HARD-FAIL-MARKED copies."""
+    tf = dict(TRACK_FLOOR, **(track_floor or {})); tl = TILT_FLOOR_DEG if tilt_floor_deg is None else float(tilt_floor_deg)
+    m = {x["key"]: x for x in sc["metrics"]}
+    C = []
+
+    def add(name, value, thr, sense, prov, detail):
+        c = 1.0 if value is None else round((thr - value) if sense == ">=" else (value - thr), 6)
+        C.append({"name": name, "value": None if value is None else round(float(value), 4), "threshold": thr, "sense": sense,
+                  "c": round(float(c), 4), "pass": c <= 0, "provisional": prov, "detail": detail})
+
+    # no_falls: the survival row's count = falls in Tests 0 / 1 / 3 + the v3 hard-fail groups outside the pushes (a push that knocks the
+    # robot over belongs to the push score, spec section 2 -- shown in the detail, not counted)
+    ran = bool(ladders and ladders.get("segments"))
+    pf = sum(1 for s in (pushes or {}).get("segments", []) if s.get("push") and not s["push"].get("held"))
+    nf = m["falls"]["value"] if ran and "falls" in m else None
+    add("no_falls", nf, 0, "<=", False, ("Test 1 did not run" if not ran else f"{nf} falls incl. hard fails (Tests 0, 1, 3)") +
+        f"; push falls {pf} (scored in pushes, not counted)")
+    G = rung_gains(ladders)
+    for ax in ("vx", "vy", "wz"):   # walks: >= 90 % of the rungs from 0.10 m/s (0.2 rad/s) reach gain 0.5
+        cs = ladder_commands(ax, WALK_MIN_CMD[ax])
+        ok = [c for c in cs if (G[ax].get(c) or 0.0) >= WALK_GAIN]
+        short = [f"{c:+.2f}" + ("" if G[ax].get(c) is None else f" ({G[ax][c]:.2f})") for c in cs if c not in ok]
+        add(f"walks_{ax}", len(ok) / len(cs), WALK_SHARE, ">=", False,
+            f"{len(ok)}/{len(cs)} rungs with |c| >= {WALK_MIN_CMD[ax]:g} reach gain >= {WALK_GAIN:g}" + (f"; short: {', '.join(short)}" if short else ""))
+    cap = lambda g: 0.0 if g is None else min(max(g, 0.0), 1.0)
+    for ax in ("vx", "vy"):   # track_floor: the mean capped gain over the same rungs (overshoot does not buy back an undershoot)
+        cs = ladder_commands(ax, WALK_MIN_CMD[ax])
+        add(f"track_floor_{ax}", mean([cap(G[ax].get(c)) for c in cs]), tf[ax], ">=", True,
+            f"mean min(gain, 1) over the {len(cs)} rungs with |c| >= {WALK_MIN_CMD[ax]:g} (provisional floor, 11-03 design)")
+    w8 = [G["wz"].get(0.8), G["wz"].get(-0.8)]
+    add("track_floor_wz08", mean([cap(g) for g in w8]), tf["wz08"], ">=", True,
+        "mean min(gain, 1) at wz +-0.8 rad/s: " + " / ".join("—" if g is None else f"{g:.2f}" for g in w8) + " (provisional floor, 11-03 design)")
+    wt = (m.get("walk_tilt") or {}).get("value")
+    add("tilt_floor", wt, tl, "<=", True, f"mean torso tilt over the walking rungs |v| <= 0.5 m/s (deg); provisional limit {tl:g} deg (2026-11-09: anchors pass with margin)")
+    return C
+
+
+def score_v4(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail_deg=None, track_floor=None, tilt_floor_deg=None):
+    """Exam #2 v4 (2026-11-09): score_v3 (hard fails, the same weights and rows) with the rung error floor E_FLOOR_V4 (0.05), the push score
+    over EXPECTED_PUSHES_V4 (48: 8 directions) and the v4 calibration (results/exam2_calibration_v4.json); + 'constraints' (constraints_v4)
+    and 'feasible' (all pass). Version 4; v2 / v3 records keep score_v2 / score_v3 and the v2 calibration."""
+    C, cver = (cal, "given") if cal is not None else load_cal_v4()
+    out = {}
+    sc = score_v3(handover, ladders, pushes, homing, n_homing=n_homing, cal=C, tilt_fail_deg=tilt_fail_deg, _v4=True, _out=out)
+    sc["version"] = 4; sc["calib"] = cver
+    sc["constraints"] = constraints_v4(sc, out["L"], out["P"], track_floor, tilt_floor_deg)
+    sc["feasible"] = all(c["pass"] for c in sc["constraints"])
+    dirs = sorted({s["push"]["dir"] for s in (out["P"] or {}).get("segments", []) if s.get("push")})
+    sc["v4"] = {"e_floor": E_FLOOR_V4, "expected_pushes": EXPECTED_PUSHES_V4, "push_dirs": dirs,
+                "walks": {"min_cmd": WALK_MIN_CMD, "gain": WALK_GAIN, "share": WALK_SHARE},
+                "track_floor": dict(TRACK_FLOOR, **(track_floor or {})), "tilt_floor_deg": TILT_FLOOR_DEG if tilt_floor_deg is None else float(tilt_floor_deg)}
+    if dirs and len(dirs) < len(PUSH_DIRS_V4):   # a 4-direction (v3) push test scored as v4 loses half the push points: say so
+        sc["v4"]["warning"] = f"push test has {len(dirs)} directions, v4 expects {len(PUSH_DIRS_V4)} (a v3 exam: score it with score_v3)"
+    return sc

@@ -45,7 +45,7 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
     for nm in names:
         H = load(f"{EX}/homing_{nm}.jsonl"); L = load(f"{EX}/ladders_{nm}.jsonl"); P = load(f"{EX}/pushes_{nm}.jsonl"); HO = load(f"{EX}/handover_{nm}.jsonl")
         U = load(f"{EX}/stumble_{nm}.jsonl")   # Test 5 (2026-11-02): key columns only, not scored
-        sc = exam_score.score_v3(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)   # v3 (2026-11-03)
+        sc = exam_score.score_v4(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)   # v4 (2026-11-09)
         m = {x["key"]: x for x in sc["metrics"]}
         R.append((nm, sc, m, exam_score.ladder_swing(L[-1] if L else None), exam_score.stumble_summary(U[-1] if U else None),
                   exam_score.ladder_scuffs(L[-1] if L else None),
@@ -58,10 +58,19 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
         r = (su or {}).get("rungs", {}).get(rung) if su else None
         if not r: return "—"
         return f"{cm(r['apex'])} · {r['trips']}{'' if not r['fell'] else ' FELL'} · {r['tilt_max'] if r['tilt_max'] is not None else '—'}"
-    hdr = ("| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | falls (hard) | track vx/vy/wz | pushes held | homing arrived | stand drift m "
+    hdr = ("| # | policy | score | " + " | ".join(f"{q} /{exam_score.QUALITIES[q]}" for q in Q) + " | feasible (failed constraints) | falls (hard) | track vx/vy/wz | pushes held | homing arrived | stand drift m "
            "| stand yaw° / sep dev max·end cm (dir) / stag dev max·end cm | stand after walking: yaw° / sep dev max·end cm (dir) / stag dev max·end cm | z stand m / drop walk·push cm | tilt peak° | self-contact s | arms dev mean·max° "
            "| swing .15 L/R cm | swing .30 L/R cm | scuffs .15 | scuffs .30 | stumble .15: swing L/R cm · trips · tilt° | stumble .30 | stumble falls | t s |")
-    lines = [hdr, "|" + "---|" * (len(Q) + 22)]
+    lines = [hdr, "|" + "---|" * (len(Q) + 23)]
+    def feas(sc):   # v4 constraints: "yes" or "NO: walks_wz 0.62 < 0.9, ..." (p = provisional threshold)
+        if not sc.get("constraints"): return "—"
+        bad = []
+        for c in sc["constraints"]:
+            if c["pass"]: continue
+            val = "—" if c["value"] is None else f"{c['value']:.3g}"
+            rel = "<" if c["sense"] == ">=" else ">"
+            bad.append(f"{c['name']} {val} {rel} {c['threshold']:g}" + (" p" if c["provisional"] else ""))
+        return "yes" if not bad else "NO: " + ", ".join(bad)
     v = lambda m, k, p=1, f=100.0: "—" if k not in m or m[k]["value"] is None else f"{m[k]['value'] * f:.{p}f}"
     for i, (nm, sc, m, lsw, su, lsc, sdir) in enumerate(R, 1):
         held = m["pushes"]["label"].split("held ")[1].split(":")[0] if "pushes" in m else "-"
@@ -71,7 +80,7 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
         tp = inf.get("tilt_peak") or {}
         zs = ("—" if inf.get("z_stand") is None else f"{inf['z_stand']:.3f}") + " / " + ("—" if inf.get("z_drop_walk") is None else f"{100 * inf['z_drop_walk']:.1f}") + "·" + ("—" if inf.get("z_drop_push") is None else f"{100 * inf['z_drop_push']:.1f}")
         lines.append(f"| {i} | {nm} | **{sc['score']}** | " + " | ".join(str(sc["parts"][q]) for q in Q) +
-                     f" | {len(sc['falls'])} ({nh}) | {trk} | {held} | {arr} | {m['stand_drift']['value']} "
+                     f" | {feas(sc)} | {len(sc['falls'])} ({nh}) | {trk} | {held} | {arr} | {m['stand_drift']['value']} "
                      f"| {v(m, 'stand_yaw', 1, 1.0)} / {v(m, 'stand_sep_dev_max')}·{v(m, 'stand_sep_dev_end')} ({sdir.get('stand') or '—'}) / {v(m, 'stand_stag_dev_max')}·{v(m, 'stand_stag_dev_end')} "
                      f"| {v(m, 'wstand_yaw', 1, 1.0)} / {v(m, 'wstand_sep_dev_max')}·{v(m, 'wstand_sep_dev_end')} ({sdir.get('walk_stand') or '—'}) / {v(m, 'wstand_stag_dev_max')}·{v(m, 'wstand_stag_dev_end')} | {zs} "
                      f"| {max(tp.values()) if tp else '—'} | {v(m, 'sc_dur', 2, 1.0)} | {v(m, 'arm_dev_mean', 1, 1.0)}·{v(m, 'arm_dev_max', 1, 1.0)} | {cm(lsw.get('vx+0.15'))} | {cm(lsw.get('vx+0.30'))} "
@@ -80,8 +89,10 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     ff = os.environ.get("EXAM_FF", "1")
     head = (f"## EXAM #2 {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
-            f"wall {a.wall // 60} min {a.wall % 60} s, arm ff {ff}\n\nScore by quality (tools/exam_score.py score_v3 since 2026-11-03: hard fails = height / tilt {exam_score.TILT_FAIL_DEG:g} deg / "
-            f"floor contact 20 N / arm envelope count as falls, 'falls (hard)' = all falls (of them hard); the 60 s clean-engagement stand; results/EXAM2_SPEC.md v3): survival 10, "
+            f"wall {a.wall // 60} min {a.wall % 60} s, arm ff {ff}\n\nScore by quality (tools/exam_score.py score_v4 since 2026-11-09 = v3 + rung error e = |v - c| / max(|c|, 0.05) + 48 pushes "
+            f"(8 directions) + calibration {exam_score.load_cal_v4()[1]}; 'feasible' = every v4 constraint passes (no_falls, walks_vx/vy/wz >= 90 % of the rungs from 0.10 m/s / 0.2 rad/s at gain >= 0.5, "
+            f"track_floor_* and tilt_floor = provisional 'p'); v3: hard fails = height / tilt {exam_score.TILT_FAIL_DEG:g} deg / "
+            f"floor contact 20 N / arm envelope count as falls, 'falls (hard)' = all falls (of them hard); the 60 s clean-engagement stand; results/EXAM2_SPEC.md v3 + v4): survival 10, "
             f"stability 30, tracking 20, gait 10, energy 10, pushes 10, homing 10; every metric a ramp between its good and bad value. "
             f"Track = mean rung score per ladder. Swing = the flat ladder's peak foot lift per foot at the 0.15 / 0.30 rungs. Scuffs = the flat ladder's "
             f"scuffed swings / swings (L+R) at 0.15 / 0.30 (a floor-force burst > 20 N between two airborne 20 ms samples = the toe dragged; '—' = a record "

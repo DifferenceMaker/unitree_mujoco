@@ -5,7 +5,8 @@
 #   then:  bash mujoco_sim/tools/homing_trials.sh --n 10          # the 10-trial experiment (teleport -> goto -> arrival -> switch -> settle)
 #   or by hand:  echo "goto 0.35 0 0" >> mujoco_sim/logs/.homing_cmd     (table edge centre x y + approach heading deg, world frame)
 #                echo "teleport -4 0.5 20" > mujoco_sim/logs/.sim_stdin  (sim: place the base at x y yaw_deg, velocities zeroed)
-# Policies: HOMING_WALK (default lm7f_kit_footbonus6_still, vendored in the homing worktree), HOMING_BALANCE (default p14h_stancewide);
+# Policies: HOMING_WALK (default lm7f_kit_footbonus6_still, vendored in the homing worktree), HOMING_BALANCE (default since 2026-11-09 =
+# the worktree's MovementModule/policy/CURRENT_BALANCE, p14h_stancewide before; tools/exam.sh passes its own);
 # code = the MM_loco_switch_homing worktree (ASPIRED). Scene: the desk scene -- desk body at (0.75, 0, 0), top 0.80 x 1.20 m,
 # so the NEAR EDGE CENTRE is (0.35, 0) and the approach heading is 0 deg (+x). Knobs: HOMING_VMAX (0.5), HOMING_STOP_DIST (0.35 torso
 # front -> edge), HOMING_TORSO_FRONT (0.15), HOMING_POSE_NOISE_XY (0.01 m), HOMING_POSE_NOISE_YAW (0.1 deg), HOMING_POSE_BIAS_XY (0).
@@ -25,4 +26,5 @@ export HOMING_TRAJ_DIR="/unitree_mujoco/mujoco_sim/logs/homing_traj$SFX" HOMING_
 export HOMING_HANDOVER_LOG="/unitree_mujoco/mujoco_sim/logs/handover$SFX.jsonl"   # exam Test 0 (2026-10-29)
 export HOMING_PUSH_LOG="/unitree_mujoco/mujoco_sim/logs/pushes$SFX.jsonl"   # exam #2 push test (2026-10-30)
 export HOMING_STUMBLE_LOG="/unitree_mujoco/mujoco_sim/logs/stumble$SFX.jsonl"   # exam #2 Test 5 stumble (2026-11-02; the field only with LOCOSW_STUMBLE_SEED)
+HOMING_BALANCE="${HOMING_BALANCE:-$(tr -d '[:space:]' < "$ASPIRED/MovementModule/policy/CURRENT_BALANCE" 2>/dev/null)}"   # Exam #2 v4 (2026-11-09): the line's current balance
 exec bash "$SIM/run_mujoco_loco_switch.sh" --desk --walk "${HOMING_WALK:-lm7f_kit_footbonus6_still}" --balance "${HOMING_BALANCE:-p14h_stancewide}" "$@"
