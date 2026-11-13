@@ -898,3 +898,14 @@ the 2026-10-29 exam. **The default is the one value `EXAM=` in `tools/exam.sh`: 
 `exam.sh` without `--exam` and its 8 running trials must be scored with v4; the owner's decision is 3 — flip it once the study's stored
 flags carry `--exam 2`.
 
+
+### 13.9 Afternoon rulings, 2026-11-13 (operator): every rung counts; a stillness constraint
+- **walks_vx / walks_vy / walks_wz of Exam #3 count EVERY ladder rung** (vx 30, vy 12, wz 32 = `E3_WALK_MIN_CMD` 0.05) at the same gain 0.5
+  and share 0.9, so at most 3 / 1 / 3 rungs may fall short. The v4 rule (from 0.10 m/s, 0.2 rad/s) stays inside `score_v4` / `feasible_v4`
+  of the record and in every `--exam 2` record (156 stored v4 records rescore byte-identically). The morning's separate `walks_low`
+  constraint is removed; `e3.walks_low` keeps the low-rung counts as information.
+- **stand_quiet (PROVISIONAL)**: foot lifts in the 60 s stand + the 120 s stand after walking <= 6 (`EXAM_STAND_QUIET_LIFTS`; the two
+  stand_lifts ramps' bad ends). Values on 2026-11-13: lm7n (band-trained) 1-3, s1_pilot t36 4, squeeze 10-14, t37 12, t21 17, arch_armsway
+  13 in one record and 1 in another (one sample per exam: the stand is as run-dependent as the P5 stand); 16 of 36 s1_pilot finals pass.
+- Under the all-rungs rule on 2026-11-13: vx 0.87-0.93 (t21 / t36 / t37 27/30 = 0.90, pass), vy 0.17-0.83, wz 0.28-0.59: no policy is
+  feasible on vy or wz yet.

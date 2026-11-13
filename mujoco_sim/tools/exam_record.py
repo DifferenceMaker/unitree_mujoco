@@ -15,7 +15,7 @@ in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/ex
   EXAM #3 (--exam 3, 2026-11-13; EXAM2_SPEC sections 12 + 13): everything of an Exam #2 v4 record + "enc" = Test 6, the encoder-offset record
               (the fixed patterns as numbers, per pattern the stand / walk segments with their raw bias numbers "enc" and the injection
               check, the 8 offset pushes under the stress pattern, + 2 Hz rows); meta.exam_version 3, meta.score = exam_score.score_e3
-              (version 5, exam 3): Test 6 scored inside the qualities, + the constraints walks_low / enc_no_falls / enc_stand_drift /
+              (version 5, exam 3): Test 6 scored inside the qualities, + walks_vx / vy / wz over EVERY rung + the constraints enc_no_falls / enc_stand_drift /
               enc_stand_lifts, + score_v4 / parts_v4 / feasible_v4 = the same run under the v4 rules. --exam 2 writes what it always wrote.
   stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
               scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")

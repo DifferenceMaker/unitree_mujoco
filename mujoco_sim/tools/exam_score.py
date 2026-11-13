@@ -663,7 +663,7 @@ def rung_gains(ladders):
     return G
 
 
-def constraints_v4(sc, ladders, pushes=None, track_floor=None, tilt_floor_deg=None):
+def constraints_v4(sc, ladders, pushes=None, track_floor=None, tilt_floor_deg=None, walk_min=None):
     """the v4 feasibility block: [{name, value, threshold, sense, c, pass, provisional, detail}], c <= 0 = feasible (Optuna's
     constraints_func convention: c = threshold - value for a '>=' constraint, value - threshold for '<='; a value that could not be
     measured = c 1, infeasible). sc = the score (its 'falls' and 'walk_tilt' rows); ladders / pushes = the HARD-FAIL-MARKED copies."""
@@ -684,12 +684,13 @@ def constraints_v4(sc, ladders, pushes=None, track_floor=None, tilt_floor_deg=No
     add("no_falls", nf, 0, "<=", False, ("Test 1 did not run" if not ran else f"{nf} falls incl. hard fails (Tests 0, 1, 3)") +
         f"; push falls {pf} (scored in pushes, not counted)")
     G = rung_gains(ladders)
-    for ax in ("vx", "vy", "wz"):   # walks: >= 90 % of the rungs from 0.10 m/s (0.2 rad/s) reach gain 0.5
-        cs = ladder_commands(ax, WALK_MIN_CMD[ax])
+    wm = WALK_MIN_CMD if walk_min is None else walk_min   # v4: the rungs from 0.10 m/s (0.2 rad/s); Exam #3 passes E3_WALK_MIN_CMD = EVERY rung
+    for ax in ("vx", "vy", "wz"):   # walks: >= 90 % of the counted rungs reach gain 0.5
+        cs = ladder_commands(ax, wm[ax])
         ok = [c for c in cs if (G[ax].get(c) or 0.0) >= WALK_GAIN]
         short = [f"{c:+.2f}" + ("" if G[ax].get(c) is None else f" ({G[ax][c]:.2f})") for c in cs if c not in ok]
         add(f"walks_{ax}", len(ok) / len(cs), WALK_SHARE, ">=", False,
-            f"{len(ok)}/{len(cs)} rungs with |c| >= {WALK_MIN_CMD[ax]:g} reach gain >= {WALK_GAIN:g}" + (f"; short: {', '.join(short)}" if short else ""))
+            f"{len(ok)}/{len(cs)} rungs with |c| >= {wm[ax]:g} reach gain >= {WALK_GAIN:g}" + (f"; short: {', '.join(short)}" if short else ""))
     cap = lambda g: 0.0 if g is None else min(max(g, 0.0), 1.0)
     for ax in ("vx", "vy"):   # track_floor: the mean capped gain over the same rungs (overshoot does not buy back an undershoot)
         cs = ladder_commands(ax, WALK_MIN_CMD[ax])
@@ -752,10 +753,8 @@ def score_v4(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail
 # The five new ramps (CAL_E3_DEFAULT, provisional) are calibrated like every provisional key: p10 -> p90 of the validation population,
 # never narrower than half the median (tools/exam_calibrate.py --e3 -> results/exam3_calibration.json = the v4 table + these keys).
 #
-# CONSTRAINTS (the v4 eight, unchanged, +):
-#   walks_low        (PROVISIONAL) the share of the LOW ladder rungs -- vx +-0.05 / +-0.10, vy +-0.05 / +-0.10, wz +-0.10 .. +-0.30 (18) -- that
-#                    reach gain >= 0.5. walks_vx / vy / wz start at 0.10 (wz 0.20) and pass at a 0.9 share, so a policy can stand still at
-#                    the smallest commands and still pass; this one counts exactly those rungs. Per axis in the detail and in e3.walks_low.
+# CONSTRAINTS (the v4 eight, with walks_vx / vy / wz counting EVERY ladder rung -- E3_WALK_MIN_CMD, operator 2026-11-13 -- instead of the
+# rungs from 0.10 m/s / 0.2 rad/s; the morning's separate walks_low constraint is gone, e3.walks_low keeps the low-rung counts as information) +:
 #   enc_no_falls     (definition) falls + hard fails in the stand / walk of ANY pattern, P5 included, <= 0 (an offset push that knocks the
 #                    robot over is a push: it costs survival and push points and is shown here, not counted -- the v4 rule for Test 2)
 #   enc_stand_drift  (PROVISIONAL) base drift over the 15 s stand under P5 <= ENC_STAND_DRIFT_CM
@@ -764,7 +763,13 @@ def score_v4(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail
 # must equal the pattern within ENC_INJ_TOL, else the policy never saw the offsets) = c 1, infeasible; the Test 6 rows then score 0.
 ENC_STAND_DRIFT_CM = float(os.environ.get("EXAM_ENC_STAND_DRIFT_CM", "5.0"))   # PROVISIONAL (section 13.4)
 ENC_STAND_LIFTS = float(os.environ.get("EXAM_ENC_STAND_LIFTS", "1"))          # PROVISIONAL (section 13.4)
-WALKS_LOW_SHARE = float(os.environ.get("EXAM_WALKS_LOW_SHARE", "0.5"))        # PROVISIONAL (section 13.4)
+WALKS_LOW_SHARE = float(os.environ.get("EXAM_WALKS_LOW_SHARE", "0.5"))        # INFORMATION only since the all-rungs rule (e3.walks_low; no constraint)
+STAND_QUIET_LIFTS = float(os.environ.get("EXAM_STAND_QUIET_LIFTS", "6"))     # PROVISIONAL (operator 2026-11-13: a stillness constraint, so a study cannot
+#   buy low-speed walking with a restless stand): foot lifts in the 60 s stand + the 120 s stand after walking <= this (= the two stand_lifts
+#   ramps' bad ends, 3 + 3). 2026-11-13 records: lm7n (band) 1 and 2, s1_pilot t36 4, squeeze 10, t37 12, arch_armsway 13, t21 17; 16 of 36 s1 finals pass.
+E3_WALK_MIN_CMD = {"vx": 0.05, "vy": 0.05, "wz": 0.05}   # operator 2026-11-13: "all rungs should be counted" -> walks_vx / vy / wz of Exam #3 count
+#   EVERY ladder rung (vx 30, vy 12, wz 32) at the same gain 0.5 and share 0.9: at most 3 / 1 / 3 rungs may fall short. The v4 rule (from
+#   0.10 m/s, 0.2 rad/s) let a policy stand at every low rung and pass; it stays in score_v4 / feasible_v4 of the record.
 WALKS_LOW_CMD = {"vx": (0.05, 0.10), "vy": (0.05, 0.10), "wz": (0.10, 0.15, 0.20, 0.25, 0.30)}   # |command| of the low rungs, both signs
 ENC_INJ_TOL = 0.0015   # rad: |mean(observed - true) - offset| per joint over a 15 s stand (the two 50 Hz streams are one frame apart at most)
 ENC_BASE = "P0"
@@ -960,10 +965,9 @@ def walks_low(ladders):
     return out
 
 
-def constraints_e3(es, ladders, drift_cm=None, lifts=None, low_share=None):
-    """the Exam #3 constraints added to constraints_v4's eight (the same record format)"""
+def constraints_e3(es, ladders, drift_cm=None, lifts=None, metrics=None):
+    """the Exam #3 constraints added to constraints_v4's eight (the same record format); ladders unused since walks_low left the list"""
     dc = ENC_STAND_DRIFT_CM if drift_cm is None else float(drift_cm); lf = ENC_STAND_LIFTS if lifts is None else float(lifts)
-    ls = WALKS_LOW_SHARE if low_share is None else float(low_share)
     C = []
 
     def add(name, value, thr, sense, prov, detail):
@@ -971,12 +975,11 @@ def constraints_e3(es, ladders, drift_cm=None, lifts=None, low_share=None):
         C.append({"name": name, "value": None if value is None else round(float(value), 4), "threshold": thr, "sense": sense,
                   "c": round(float(c), 4), "pass": c <= 0, "provisional": prov, "detail": detail})
 
-    ran_l = bool(ladders and ladders.get("segments"))
-    wl = walks_low(ladders) if ran_l else None
-    add("walks_low", wl["share"] if wl else None, ls, ">=", True,
-        "Test 1 did not run" if not wl else ("share of the low rungs at gain >= %g: " % WALK_GAIN + ", ".join(
-            f"{ax} {wl[ax][0]}/{wl[ax][1]}" + (f" (short: {', '.join(wl[ax][2])})" if wl[ax][2] else "") for ax in ("vx", "vy", "wz")) +
-            f"; PROVISIONAL share {ls:g} (2026-11-13)"))
+    mv = {m["key"]: m.get("value") for m in (metrics or [])}
+    sl, wl_ = mv.get("stand_lifts"), mv.get("wstand_lifts")
+    add("stand_quiet", None if sl is None or wl_ is None else sl + wl_, STAND_QUIET_LIFTS, "<=", True,
+        "the stands were not measured" if sl is None or wl_ is None else
+        f"foot lifts: 60 s stand {sl:g} + 120 s stand after walking {wl_:g}; PROVISIONAL limit {STAND_QUIET_LIFTS:g} (2026-11-13)")
     if not es.get("ran"):
         why = f"Test 6 did not run ({es.get('result')})"
         add("enc_no_falls", None, 0, "<=", False, why); add("enc_stand_drift", None, dc, "<=", True, why); add("enc_stand_lifts", None, lf, "<=", True, why)
@@ -1070,18 +1073,18 @@ def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None,
     sc["version"] = 5; sc["exam"] = 3; sc["calib"] = cver
     sc["cal"] = {k: list(v) for k, v in C.items()}
     sc["enc"] = es
-    sc["constraints"] = constraints_v4(sc, out["L"], out["P"], track_floor, tilt_floor_deg)
+    sc["constraints"] = constraints_v4(sc, out["L"], out["P"], track_floor, tilt_floor_deg, walk_min=E3_WALK_MIN_CMD)   # walks_*: every rung
     # no_falls stays the v4 definition (Tests 0, 1, 3): the survival row now also counts Test 6, which has its own constraint
     for c in sc["constraints"]:
         if c["name"] == "no_falls":
             v4c = next(x for x in v4["constraints"] if x["name"] == "no_falls"); c.update({k: v4c[k] for k in ("value", "c", "pass", "detail")})
-    sc["feasible_v4"] = all(c["pass"] for c in sc["constraints"])
-    sc["constraints"] = sc["constraints"] + constraints_e3(es, out["L"])
+    sc["feasible_v4"] = v4["feasible"]   # the v4 rules on the same run (walks_* from 0.10 m/s / 0.2 rad/s)
+    sc["constraints"] = sc["constraints"] + constraints_e3(es, out["L"], metrics=M)
     sc["feasible"] = all(c["pass"] for c in sc["constraints"])
     sc["v4"] = v4["v4"]
     sc["score_v4"] = v4["score"]; sc["parts_v4"] = v4["parts"]
     sc["e3"] = {"share": E3_SHARE, "weights": E3_W, "pushes": [EXPECTED_PUSHES_V4, E3_PUSHES], "walks_low": walks_low(out["L"]) if out.get("L") and out["L"].get("segments") else None,
-                "limits": {"enc_stand_drift_cm": ENC_STAND_DRIFT_CM, "enc_stand_lifts": ENC_STAND_LIFTS, "walks_low_share": WALKS_LOW_SHARE},
-                "provisional": ["walks_low", "enc_stand_drift", "enc_stand_lifts"] + sorted(PROV_E3), "inj_tol_rad": ENC_INJ_TOL, "base": ENC_BASE, "stress": es.get("stress"),
+                "limits": {"enc_stand_drift_cm": ENC_STAND_DRIFT_CM, "enc_stand_lifts": ENC_STAND_LIFTS, "stand_quiet_lifts": STAND_QUIET_LIFTS}, "walk_min_cmd": E3_WALK_MIN_CMD,
+                "provisional": ["stand_quiet", "enc_stand_drift", "enc_stand_lifts"] + sorted(PROV_E3), "inj_tol_rad": ENC_INJ_TOL, "base": ENC_BASE, "stress": es.get("stress"),
                 "values": X}
     return sc

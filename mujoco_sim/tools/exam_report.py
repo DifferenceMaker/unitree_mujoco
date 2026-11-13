@@ -109,13 +109,13 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
         mrow = lambda sc, k: next((m for m in sc["metrics"] if m["key"] == k), {})
         el = ["| policy | Exam #3 | same run, v4 rules | Test 6 | injection (max err mrad) | falls in patterns / offset pushes not held | P5 stand: drift cm · lifts · rate rad/s "
               "| worst in-band stand drift cm | walk tilt change° (worst P1..P5) | impact ΔBW · roughness Δrad · power ΔW (walk, vs P0) | offset pushes: score · held · energy J (Test 2 same pushes: score · held) "
-              "| Test 6 points stab/gait/energy/push | walks_low vx · vy · wz | bias (recorded): worst lean° · walk vy mm/s · P5 lean° | Exam #3 constraints |",
+              "| Test 6 points stab/gait/energy/push | low rungs passed vx · vy · wz (information) | bias (recorded): worst lean° · walk vy mm/s · P5 lean° | Exam #3 constraints |",
               "|" + "---|" * 15]
         for nm, sc, *_ in R:
             es = sc.get("enc") or {}
             wl = (sc.get("e3") or {}).get("walks_low")
             wls = "—" if not wl else " · ".join(f"{wl[ax][0]}/{wl[ax][1]}" for ax in ("vx", "vy", "wz")) + f" = {wl['share']:.2f}"
-            ec = [c for c in sc["constraints"] if c["name"].startswith("enc_") or c["name"] == "walks_low"]
+            ec = [c for c in sc["constraints"] if c["name"].startswith(("enc_", "walks_")) or c["name"] == "stand_quiet"]
             bad = [f"{c['name']} {'—' if c['value'] is None else format(c['value'], '.3g')} {'<' if c['sense'] == '>=' else '>'} {c['threshold']:g}" + (" p" if c["provisional"] else "") for c in ec if not c["pass"]]
             cons = "pass" if not bad else "FAIL: " + ", ".join(bad)
             if not es.get("ran"):
@@ -135,7 +135,7 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
                   "+-0.010 rad band, P5 = the measured residuals unscaled = stress; per pattern a 15 s stand + a 15 s measured walk at vx 0.30, then 8 offset pushes at 1.0 m/s under P5): stability 5 "
                   "(P5 stand drift 1.5, lifts 1, torso rate 0.5, worst in-band stand drift 1, walk tilt change 1), gait 2 (impact, roughness change), energy 2 (offset-push recovery, walking power change), "
                   "pushes 1.43 (the 8 offset pushes, the Test 2 formula); a fall under a pattern or an offset push not held halves survival like any fall. 'same run, v4 rules' = score_v4 of the same record "
-                  f"(Exam #3 and Exam #2 scores do not compare). Constraints added: walks_low >= {exam_score.WALKS_LOW_SHARE:g} p (low rungs vx / vy +-0.05, +-0.10, wz +-0.10..0.30 at gain >= 0.5), "
+                  f"(Exam #3 and Exam #2 scores do not compare). Constraints: walks_vx / vy / wz count EVERY ladder rung (30 / 12 / 32) at gain >= 0.5, share >= {exam_score.WALK_SHARE:g} (v4 counted from 0.10 m/s / 0.2 rad/s); added: stand_quiet (foot lifts 60 s stand + 120 s stand after walking <= {exam_score.STAND_QUIET_LIFTS:g} p), "
                   f"enc_no_falls, enc_stand_drift <= {exam_score.ENC_STAND_DRIFT_CM:g} cm p, enc_stand_lifts <= {exam_score.ENC_STAND_LIFTS:g} p (p = provisional); the 'feasible' column above includes them. "
                   "The bias numbers (lean, drift vs P0) are recorded, not scored.\n\n" + "\n".join(el) + "\n")
     print(block)
