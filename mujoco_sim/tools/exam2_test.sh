@@ -3,6 +3,7 @@
 #   bash mujoco_sim/tools/exam2_test.sh ladders [--start "-3 0 180"] [--timeout 900]
 #   bash mujoco_sim/tools/exam2_test.sh pushes  [--start "-3 0 180"] [--timeout 600]
 #   bash mujoco_sim/tools/exam2_test.sh stumble [--start "x y yaw"] [--timeout 300]      # Test 5 (2026-11-02): needs a rig launched with LOCOSW_STUMBLE_SEED
+#   bash mujoco_sim/tools/exam2_test.sh enc     [--start "x y yaw"] [--timeout 500]      # Test 6 (2026-11-13, Exam #3): needs a sim built from 2026-11-13 on ("enc_at")
 # ladders: teleport, a 20 s stand (stance + the joint state for the stance drawing), then per axis a continuous ladder of 0.05 rungs
 #   (4 s each, the last 2.5 s measured) up to the top, a 4 s stop, the same ladder backwards, a 4 s stop: vx 0.05..1.00 / -0.05..-0.50,
 #   vy +-0.05..0.30, wz +-0.05..0.80 (340 s of sim). Record -> logs/staircase[$SFX].jsonl (kind "ladders").
@@ -13,13 +14,20 @@
 #   15 s, vx 0.30 for 15 s, a 3 s stop (36 s): per rung the ground-corrected swing apex per foot, scuffs / catches / trips, tilt, falls
 #   (bumps 0.4-1 cm since 2026-11-02 evening; the same swing engine runs on EVERY ladder segment -> "sw" in the ladders print below).
 #   Record -> logs/stumble[$SFX].jsonl. Without LOCOSW_STUMBLE_SEED the rig has no field: the test runs on the flat (field: null).
+# enc: Test 6 encoder offsets (EXAM2_SPEC section 12): the commander teleports to its ENC_START (the ladders' lane) under the balance policy,
+#   switches the walk in, walks 8 s, then per FIXED pattern of tools/enc_patterns.py (P0 zero .. P5) tells the sim "enc_at <sim_t> <offsets>"
+#   (reported joint angle = true + offset, PD on the reading) and runs a 4 s settle, a 15 s stand and a 19 s walk at vx 0.30 (the last 15 s
+#   measured); then, under the stress pattern P5, 8 OFFSET PUSHES (Test 2's 1.0 m/s kick from the 4 sides, standing and walking at 0.3: the
+#   same "pre" / "push:..." segments, printed like Test 2's); offsets back to zero at the end (311 s of sim). Record -> logs/enc[$SFX].jsonl;
+#   per segment "enc" = the raw bias numbers.
 # Start default "-3 0 180": free floor west of the desk, facing away from it (the vx ladder walks ~31 m net to -x).
 set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WHAT="${1:-}"; shift || true
-[[ "$WHAT" == ladders || "$WHAT" == pushes || "$WHAT" == stumble ]] || { sed -n '2,16p' "$0"; exit 1; }
+[[ "$WHAT" == ladders || "$WHAT" == pushes || "$WHAT" == stumble || "$WHAT" == enc ]] || { sed -n '2,23p' "$0"; exit 1; }
 START="-3 0 180"; TO=$([[ "$WHAT" == ladders ]] && echo 900 || echo 600)
 [[ "$WHAT" == stumble ]] && { START=""; TO=300; }   # no coordinates = the commander uses the field's own start
+[[ "$WHAT" == enc ]] && { START=""; TO=500; }       # no coordinates = the commander's ENC_START
 while [[ $# -gt 0 ]]; do case "$1" in --start) START="$2"; shift 2;; --timeout) TO="$2"; shift 2;; *) echo "unknown arg: $1"; exit 1;; esac; done
 SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"
 CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"
@@ -56,6 +64,11 @@ for s in S:
                   f"  yaw {s.get('yaw_change_deg')} deg  z {s.get('z_mean')} (1 s min {s.get('z_run_min')})  tilt peak {s.get('tilt_peak')}")
     if s.get("floor_contact"): extra += f"  FLOOR {s['floor_contact']}"
     if (s.get("self_contact") or {}).get("peak_N", 0) > 20: extra += f"  self-contact {s['self_contact']}"
+    if s.get("enc") and s["enc"].get("T"):   # Test 6 (2026-11-13): the segment's raw bias numbers (the paired differences are the scorer's)
+        e = s["enc"]
+        extra += (f"  ENC {e['phase']}: pitch {e['pitch']:+.2f} roll {e['roll']:+.2f} deg  drift {e['drift_mm_s']:.1f} mm/s  yaw {e['yaw_rate_deg_s']:+.2f} deg/s"
+                  + (f"  vx {e['vx']:+.3f} vy {1000 * e['vy']:+.1f} mm/s" if e.get("vx") is not None else "")
+                  + (f"  obs-true max {1000 * max(abs(v) for v in e['obs_minus_true']):.1f} mrad (n {e.get('inj_n')}, echo {'yes' if e.get('eo') else 'no'})" if e.get("obs_minus_true") else ""))
     if max(s.get("arm_up_s") or [0]) > 0.5 or max(s.get("arm_cross_s") or [0]) > 0.5: extra += f"  ARMS up {s.get('arm_up_s')} cross {s.get('arm_cross_s')} s"
     vs = "" if v[0] is None else f"v ({v[0]:+.3f} {v[1]:+.3f} {v[2]:+.3f})"
     print(f"  {s['name']:22s} cmd {s.get('cmd')} {vs}  tilt {s.get('tilt_mean')} P {e.get('P_W')} W  lifts {s.get('lifts')}{extra}{'  FELL' if s.get('fell') else ''}")

@@ -12,6 +12,11 @@ in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/ex
               applied as falls, the 60 s clean-engagement stand's separation / stagger departure, arm stance departure, self-contact, joint-limit
               dwell; every ladder / push / handover segment and homing trial carries the Watch numbers (z_run_min, tilt_peak, floor_contact,
               self_contact, joint_limit, arm_dev_deg, arm_up_s, arm_cross_s)
+  EXAM #3 (--exam 3, 2026-11-13; EXAM2_SPEC sections 12 + 13): everything of an Exam #2 v4 record + "enc" = Test 6, the encoder-offset record
+              (the fixed patterns as numbers, per pattern the stand / walk segments with their raw bias numbers "enc" and the injection
+              check, the 8 offset pushes under the stress pattern, + 2 Hz rows); meta.exam_version 3, meta.score = exam_score.score_e3
+              (version 5, exam 3): Test 6 scored inside the qualities, + the constraints walks_low / enc_no_falls / enc_stand_drift /
+              enc_stand_lifts, + score_v4 / parts_v4 / feasible_v4 = the same run under the v4 rules. --exam 2 writes what it always wrote.
   stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
               scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")
   homing      the 10 trial records (homing_<name>.jsonl) + per trial a 2 Hz copy of its 10 Hz trajectory (t, phase, x, y, yaw, cmd, truth vel)
@@ -72,8 +77,9 @@ if stairs:
     cols, rows = traj_rows(stairs.get("traj_file"), every=1)           # 10 Hz, every row (the stance sheet needs the lifts)
     stairs["rows"] = {"hz": 10, "cols": cols, "rows": rows} if rows else None
 
-ladders = pushes = stumble = None
-if a.exam == "2":
+ladders = pushes = stumble = enc = None
+E3 = a.exam == "3"   # Exam #3 (2026-11-13) = the Exam #2 record + Test 6
+if a.exam in ("2", "3"):
     import re, subprocess
     ladders = load(f"{EX}/ladders_{name}.jsonl"); ladders = ladders[-1] if ladders else None
     pushes = load(f"{EX}/pushes_{name}.jsonl"); pushes = pushes[-1] if pushes else None
@@ -122,13 +128,22 @@ if a.exam == "2":
                         keep.append(r)
             pushes["rows"] = {"hz": 10, "cols": cols, "rows": [[round(v, 3) if isinstance(v, float) else v for v in r] for r in keep]}
 
+if E3:   # Test 6 (2026-11-13): the record + its rows at 2 Hz (the numbers live in the segments; the rows are for a drawing)
+    enc = load(f"{EX}/enc_{name}.jsonl"); enc = enc[-1] if enc else None
+    if enc:
+        E_COLS = ["t", "seg", "cmd_vx", "x", "y", "z", "yaw_deg", "ovx", "ovy", "owz", "tilt"]
+        cols, rows = traj_rows(enc.get("traj_file"), every=5, cols=E_COLS)   # 10 -> 2 Hz
+        enc["rows"] = {"hz": 2, "cols": cols, "rows": rows} if rows else None
+
 # the score, same formula as exam_report.py (kept in one place there; here only the parts the sheet shows)
 import importlib.util, sys
 spec = importlib.util.spec_from_file_location("exam_report_lib", os.path.join(SIM, "tools", "exam_score.py"))
 score = None
 if spec and os.path.exists(spec.origin):
     lib = importlib.util.module_from_spec(spec); spec.loader.exec_module(lib)
-    if a.exam == "2":   # v4 (2026-11-09): v3 (hard fails, 60 s stand rows) + rung error floor 0.05 + 48 pushes + the constraints block;
+    if E3:   # Exam #3 (2026-11-13): the v4 rows re-weighted inside the qualities + the Test 6 rows + the Exam #3 constraints
+        score = lib.score_e3(handover, ladders, pushes, homing, enc=enc, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
+    elif a.exam == "2":   # v4 (2026-11-09): v3 (hard fails, 60 s stand rows) + rung error floor 0.05 + 48 pushes + the constraints block;
         # score_v3 / score_v2 stay callable for the older records (their version is in meta.score.version)
         score = lib.score_v4(handover, ladders, pushes, homing, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
     else:
@@ -145,8 +160,9 @@ rec = {"meta": {"exam_version": int(a.exam), "tag": a.tag, "stamp": stamp, "seed
                 "arm_ff": int(a.arm_ff) if a.arm_ff not in (None, "") else None,   # 2026-11-03: the plant (1 = arm gravity ff sender in the rig, 0 = PD-only arms, None = a record before the flag)
                 "rig": rig, "score": score, "metrics_doc": "unitree_mujoco/mujoco_sim/results/EXAM_METRICS.md"},
        "homing": homing, "stairs": stairs, "handover": handover}
-if a.exam == "2":
+if a.exam in ("2", "3"):
     rec["ladders"], rec["pushes"], rec["stumble"] = ladders, pushes, stumble
+    if E3: rec["enc"] = enc   # only an Exam #3 record has the key (an Exam #2 record's structure is what it was)
     rec["meta"]["metrics_doc"] = "unitree_mujoco/mujoco_sim/results/EXAM2_SPEC.md"
 out_local = f"{EX}/exam_{name}.json"
 json.dump(rec, open(out_local, "w"), separators=(",", ":"))

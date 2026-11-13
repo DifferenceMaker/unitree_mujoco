@@ -39,13 +39,17 @@ _spec = importlib.util.spec_from_file_location("exam_score", os.path.join(os.pat
 exam_score = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(exam_score)
 SEGS = exam_score.SEGS
 
-if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v2), one row per policy
+E3 = a.exam == "3"   # EXAM #3 (2026-11-13) = Exam #2's tests + Test 6 (encoder offsets), scored by exam_score.score_e3
+if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v2), one row per policy
     names = sorted({os.path.basename(p)[len("ladders_"):-len(".jsonl")] for p in glob.glob(f"{EX}/ladders_*.jsonl")} | set(names))
     R = []
     for nm in names:
         H = load(f"{EX}/homing_{nm}.jsonl"); L = load(f"{EX}/ladders_{nm}.jsonl"); P = load(f"{EX}/pushes_{nm}.jsonl"); HO = load(f"{EX}/handover_{nm}.jsonl")
         U = load(f"{EX}/stumble_{nm}.jsonl")   # Test 5 (2026-11-02): key columns only, not scored
         sc = exam_score.score_v4(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)   # v4 (2026-11-09)
+        if E3:
+            EN = load(f"{EX}/enc_{nm}.jsonl")
+            sc = exam_score.score_e3(HO, L[-1] if L else None, P[-1] if P else None, H, enc=EN[-1] if EN else None, n_homing=int(a.n) if a.n != "?" else 10)
         m = {x["key"]: x for x in sc["metrics"]}
         R.append((nm, sc, m, exam_score.ladder_swing(L[-1] if L else None), exam_score.stumble_summary(U[-1] if U else None),
                   exam_score.ladder_scuffs(L[-1] if L else None),
@@ -88,7 +92,7 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
                      f"| {stu(su, 'vx+0.15')} | {stu(su, 'vx+0.30')} | {su['falls'] if su else '—'} | {times.get(nm) or '-'} |")
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     ff = os.environ.get("EXAM_FF", "1")
-    head = (f"## EXAM #2 {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
+    head = (f"## EXAM #{a.exam} {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
             f"wall {a.wall // 60} min {a.wall % 60} s, arm ff {ff}\n\nScore by quality (tools/exam_score.py score_v4 since 2026-11-09 = v3 + rung error e = |v - c| / max(|c|, 0.05) + 48 pushes "
             f"(8 directions) + calibration {exam_score.load_cal_v4()[1]}; 'feasible' = every v4 constraint passes (no_falls, walks_vx/vy/wz >= 90 % of the rungs from 0.10 m/s / 0.2 rad/s at gain >= 0.5, "
             f"track_floor_* and tilt_floor = provisional 'p'); v3: hard fails = height / tilt {exam_score.TILT_FAIL_DEG:g} deg / "
@@ -99,6 +103,41 @@ if a.exam == "2":   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v
             f"before 2026-11-02 evening). Stumble = Test 5 (rough floor: 0.4-1 cm sphere bumps every 20 cm, seed {a.seed}, NOT scored): ground-corrected swing "
             f"apex L/R, trips (scuffs + catches), peak torso tilt per rung. Records: {EX}\n")
     block = head + "\n" + "\n".join(lines) + "\n"
+    if E3:   # Exam #3 (2026-11-13): what the table above means now + Test 6's own table (the v4 columns above keep their places)
+        g = lambda x, p=2: "—" if x is None else f"{x:.{p}f}"
+        w_ = lambda es, k, p=2: "—" if not (es.get("worst") or {}).get(k) else f"{es['worst'][k][0]:.{p}f} ({es['worst'][k][1]})"
+        mrow = lambda sc, k: next((m for m in sc["metrics"] if m["key"] == k), {})
+        el = ["| policy | Exam #3 | same run, v4 rules | Test 6 | injection (max err mrad) | falls in patterns / offset pushes not held | P5 stand: drift cm · lifts · rate rad/s "
+              "| worst in-band stand drift cm | walk tilt change° (worst P1..P5) | impact ΔBW · roughness Δrad · power ΔW (walk, vs P0) | offset pushes: score · held · energy J (Test 2 same pushes: score · held) "
+              "| Test 6 points stab/gait/energy/push | walks_low vx · vy · wz | bias (recorded): worst lean° · walk vy mm/s · P5 lean° | Exam #3 constraints |",
+              "|" + "---|" * 15]
+        for nm, sc, *_ in R:
+            es = sc.get("enc") or {}
+            wl = (sc.get("e3") or {}).get("walks_low")
+            wls = "—" if not wl else " · ".join(f"{wl[ax][0]}/{wl[ax][1]}" for ax in ("vx", "vy", "wz")) + f" = {wl['share']:.2f}"
+            ec = [c for c in sc["constraints"] if c["name"].startswith("enc_") or c["name"] == "walks_low"]
+            bad = [f"{c['name']} {'—' if c['value'] is None else format(c['value'], '.3g')} {'<' if c['sense'] == '>=' else '>'} {c['threshold']:g}" + (" p" if c["provisional"] else "") for c in ec if not c["pass"]]
+            cons = "pass" if not bad else "FAIL: " + ", ".join(bad)
+            if not es.get("ran"):
+                el.append(f"| {nm} | **{sc['score']}** | {sc.get('score_v4')} | {es.get('result', 'MISSING')} |" + " — |" * 8 + f" {wls} | — | {cons} |"); continue
+            X = sc["e3"]["values"]; inj = es["injection"]; sk = es.get("stress")
+            op = es.get("pushes") or []; t2 = [p["t2"] for p in op if p.get("t2")]
+            pts = {q: sum(m["pts"] for m in sc["metrics"] if m["test"] == "enc" and m["quality"] == q) for q in ("stability", "gait", "energy", "pushes")}
+            d5 = (es["patterns"].get(sk) or {}).get("d") or {}
+            el.append(f"| {nm} | **{sc['score']}** | {sc.get('score_v4')} | {es['result']} | {'ok' if inj['ok'] else 'NOT VERIFIED'} ({1000 * inj['max_err']:.2f}) | {es['falls']} / {es['push_falls']} "
+                      f"| {g(None if X['enc_stand_drift'] is None else 100 * X['enc_stand_drift'], 1)} · {g(X['enc_stand_lifts'], 0)} · {g(X['enc_stand_rate'], 3)} "
+                      f"| {g(None if X['enc_creep'] is None else 100 * X['enc_creep'], 1)} | {g(X['enc_walk_tilt'])} | {g(X['enc_impact'], 3)} · {g(X['enc_smooth'], 4)} · {g(X['enc_power'], 1)} "
+                      f"| {g(mrow(sc, 'enc_pushes').get('value'), 3)} · {sum(1 for p in op if p['held'])}/{len(op)} · {g(X['enc_push_energy'], 0)} ({g(mean([t['score'] for t in t2]), 3)} · {sum(1 for t in t2 if t['held'])}/{len(t2)}) "
+                      f"| {pts['stability']:.2f} / {pts['gait']:.2f} / {pts['energy']:.2f} / {pts['pushes']:.2f} | {wls} "
+                      f"| {w_(es, 'lean')} · {w_(es, 'walk_vy', 1)} · {g(d5.get('lean'))} | {cons} |")
+        block += ("\nEXAM #3 (tools/exam_score.py score_e3, results/EXAM2_SPEC.md section 13) = the v4 rows above re-weighted inside the qualities (stability x 25/30, gait x 8/10, energy x 8/10, "
+                  "the 48 pushes 8.57 of the 10 push points) + Test 6 — encoder offsets (tools/enc_patterns.py: reported joint angle = true + offset in the sim; P0 zero, P1..P4 inside the trained "
+                  "+-0.010 rad band, P5 = the measured residuals unscaled = stress; per pattern a 15 s stand + a 15 s measured walk at vx 0.30, then 8 offset pushes at 1.0 m/s under P5): stability 5 "
+                  "(P5 stand drift 1.5, lifts 1, torso rate 0.5, worst in-band stand drift 1, walk tilt change 1), gait 2 (impact, roughness change), energy 2 (offset-push recovery, walking power change), "
+                  "pushes 1.43 (the 8 offset pushes, the Test 2 formula); a fall under a pattern or an offset push not held halves survival like any fall. 'same run, v4 rules' = score_v4 of the same record "
+                  f"(Exam #3 and Exam #2 scores do not compare). Constraints added: walks_low >= {exam_score.WALKS_LOW_SHARE:g} p (low rungs vx / vy +-0.05, +-0.10, wz +-0.10..0.30 at gain >= 0.5), "
+                  f"enc_no_falls, enc_stand_drift <= {exam_score.ENC_STAND_DRIFT_CM:g} cm p, enc_stand_lifts <= {exam_score.ENC_STAND_LIFTS:g} p (p = provisional); the 'feasible' column above includes them. "
+                  "The bias numbers (lean, drift vs P0) are recorded, not scored.\n\n" + "\n".join(el) + "\n")
     print(block)
     open(f"{EX}/EXAM.md", "w").write(block)
     with open(f"{SIM}/results/EXAM.md", "a") as fh:

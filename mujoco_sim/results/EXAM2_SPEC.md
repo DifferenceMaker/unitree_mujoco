@@ -11,6 +11,8 @@ hand790 body, p14h_stancewide as the balance policy) and changes what is tested 
 
 **Current score version: v4 (2026-11-09, section 11)** — balance partner = CURRENT_BALANCE, 48 pushes (8 directions), rung error floor
 0.05, the constraints block, calibration v4-2026-11-09; v3 = section 10, v2 = sections 1–7.
+**EXAM #3 (2026-11-13, sections 12 + 13) = Exam #2 v4's tests + Test 6 "encoder offsets", scored inside the qualities**: `exam.sh --exam 3`
+(owner: "No flags. This is our new test"); `exam.sh --exam 2` = Exam #2 v4 exactly (the running s1_pilot study). The default: section 13.6.
 
 Operator brief (meeting 2026-10-30): everything the exam records must count (Test 0 and the stance included); the full command band,
 in 0.05 steps, for vx, vy and wz; stands tested on their own; a push test; energy in every phase; stability first in the weights;
@@ -732,3 +734,167 @@ tilt_floor passes everywhere (2.1–6.3°, margin ≥ 1.7° at enc). Where the 2
 the v3 rules give 63.0 / 61.5 / 60.8 / 56.8 / 54.7 / 47.7, so the floor 0.05 costs 0.3–0.6 points (tracking), the v4 table −0.7..+0.5, and the
 rest is the new exam content (diagonal pushes: push points 5.3–6.0 vs v3's 6.2–7.0; the p16c partner: homing points fell on all six, legs 7.0 → 5.6 — over
 the anchors' arrived trials the settled-error median +11 %, heading +19 % — and the handover switch-wait median 0.36 → 1.13 s) plus the run-to-run spread (sd ≈ 2.3 points per run, section 6).
+
+## 12. Test 6 — encoder offsets (2026-11-13): the injection, the patterns, the test, the first validation (the bias numbers)
+Part of **Exam #3** (section 13: how it is scored, the offset pushes, the constraints). This section = the instrument and what its bias
+numbers showed. (First built the same morning as an opt-in "v5" with two bias constraints; the owner replaced that scoring -- 12.4.)
+Why: the robot's joint encoders have zero errors (stop tests 10-07 / 11-06: residuals up to 1.75° at the ankle pitch) and the walk rows now
+train with an encoder-offset band (13 joints = legs + torso, uniform ±0.010 rad per episode: the policy observes $q + o$, its target lands
+at $q_{cmd} - o$). The rig's encoders were perfect, so Tests 0–5 could not tell whether a policy tolerates offsets.
+
+### 12.1 Injection: the SIM's robot is miscalibrated, the deployed stack is untouched
+`simulate/src/unitree_sdk2_bridge.h` (`set_encoder_offsets`): reported $q = q_{true} + o$ in `rt/lowstate` and the compact `rt/lockstep/state`,
+and the motor PD closes on the reading,
+$$\tau = \tau_{ff} + k_p (q_{cmd} - (q_{true} + o)) + k_d (\dot q_{cmd} - \dot q)$$
+i.e. the target is applied at $q_{cmd} - o$. Worked: $k_p$ 200, $o$ = +0.010 rad → the first frame's torque moves by −2 N m and the joint
+settles 0.57° below where the policy believes it is. Velocity and torque are unchanged; the truth channel `rt/sim_base_pose` ("qj") stays true
+and gains "eo" (the table in force) only while an offset is non-zero. Set at run time on a planned frame: `enc_at <sim_t> zero | <27 rad>`
+(`enc ...` = the next frame; stdin or `rt/sim_cmd`, a FIFO, applied before that frame's PD; |value| > 0.2 refused). Never sent = the old sim:
+the zero path keeps the original expressions, and `tools/wire_check.sh` traces (per-frame hashes of ctrl / qpos / qvel) of the rebuilt binary
+are **identical to the pre-feature binary's over 48 153 frames (96.3 s)**.
+The rig's Bridge corrects nothing in sim: `BridgeModule/main/config.py` returns zero offsets under `BRIDGE_SIM=1` (the container's launch),
+`ENCODER_OFFSET_ON` is False and the "ENCODER OFFSET CORRECT" line never appears in a rig log — the injected table is the whole error.
+
+### 12.2 The patterns (`tools/enc_patterns.py`, fixed: the same numbers for every policy and run; `--check` re-draws P3 / P4)
+mrad, reported − true; RESID = the measured residual per joint group (`study_env_cfg.RESID`), band = 10 mrad:
+
+| joint (L / R) | P0 zero | P1 resid_band | P2 resid_mirror | P3 rand_a | P4 rand_b | P5 resid_full (stress) |
+|---|---|---|---|---|---|---|
+| hip yaw | 0 | 5 / 5 | −5 / −5 | −6.3 / −0.1 | 5.8 / 8.2 | 5 / 5 |
+| hip pitch | 0 | 4 / 4 | 4 / 4 | 6.8 / −9.0 | 5.2 / −6.8 | 4 / 4 |
+| hip roll | 0 | 10 / 10 | −10 / −10 | −5.8 / −4.2 | −0.7 / −3.9 | 20 / 20 |
+| knee | 0 | 4 / 4 | 4 / 4 | −6.5 / −6.6 | 5.6 / 8.4 | 4 / 4 |
+| ankle pitch | 0 | 10 / 10 | 10 / 10 | 0.9 / 6.1 | 9.8 / −6.4 | 30.5 / 30.5 |
+| ankle roll | 0 | 10 / 10 | −10 / −10 | 4.2 / −4.0 | 1.8 / −6.3 | 13 / 13 |
+| torso | 0 | 0 | 0 | −9.7 | 0.8 | 0 |
+
+P1 = +RESID **clipped** to the band (the three large groups sit at the edge, the small ones keep their measured size; a scaled copy would
+have shrunk them to 1.3–1.6 mrad). The stop tests give pair sums, not a sign per joint, so "+" = each joint's own positive direction. P2 =
+the same error on the other side (sides swapped, roll / yaw signs flipped). P3 / P4 = numpy 2.4.5 `default_rng(20261113).uniform(-0.010,
+0.010, 13)` twice, rounded to 0.1 mrad, hard-coded. P5 = the unscaled residuals (3 × the band at the ankle pitch): recorded, never counted.
+
+### 12.3 The test (`homing_commander.py` kind "enc"; `tools/exam2_test.sh enc`; `exam.sh --exam 3` runs it LAST, after Tests 0–5)
+Teleport to (−3, 0, 180°) under the balance policy, 5 s settle, switch to the walk (the ladders' clean engagement), 2 s stand + 8 s walk on
+perfect encoders (so every stand, P0's too, follows a walk and its stop), then per pattern P0..P5: **settle 4 s** (the pattern lands on its
+first frame) → **stand 15 s**, all measured → **walk 19 s at vx 0.30**, the last 15 s measured; then the 8 offset pushes under P5 (13.2);
+then offsets back to zero. 311 s of sim + the switch wait (312.9 s measured), **59–70 s of wall** per policy at rtf ~5 (1 to 4 rigs; 247 s /
+46–51 s before the offset pushes were added). A fall under a pattern: offsets to zero, reset on the spot, the next pattern. Every stand also runs the **injection check**: the mean of (joint angle the stack observes on `/BridgeModule/joints_imu_b` −
+the sim's true angle) per joint must equal the pattern within 1.5 mrad, and the sim's "eo" echo must match; if not, the enc constraints are
+"not measured" (c = 1) — a policy that never saw the offsets must not pass.
+
+### 12.4 The bias numbers (`tools/exam_score.py` `enc_summary`; recorded, not scored)
+The record's `enc.segments[*].enc` keeps the raw time-means per pattern (signed pitch / roll, base displacement in the heading frame, yaw
+rate, walking body-frame vx / vy, tilt); the score block `meta.score.enc` holds the **paired** differences against the same run's P0,
+$d = x(P_k) - x(P_0)$: `lean` = standing $\lVert(\Delta pitch, \Delta roll)\rVert$ (deg), `stand_drift` (mm/s), `walk_vy` = |Δ lateral
+velocity| (mm/s), `walk_yaw` (deg/s), `walk_vx` (m/s), `walk_tilt` (deg); `worst` / `mean` over P1..P4. Worked: P0 pitch −0.28°, roll −0.10°;
+P1 +1.40°, +0.20° → Δ = (1.68, 0.30), lean 1.70°.
+These bias numbers are **recorded, not scored** (owner 2026-11-13, after 12.5: they do not separate a band-trained policy from an untrained
+one). The morning's first scoring -- `score_v4` + the constraints `enc_lean` ≤ 2.9° and `enc_drift` ≤ 75 mm/s -- was replaced by Exam #3
+(section 13); its 13 records were moved out of the milestones to `logs/exam/superseded_examdev_enc_2026-11-13/`.
+
+### 12.5 First validation: the bias numbers (`examdev_enc`, 13 full exams of 5 checkpoints without the offset pushes, seed 1, n 10, ff on)
+v4 unchanged: the exam without the flag on lm7k_micro_legs_squeeze scored **61.6** (stored v4 records 59.8 / 59.9, one run's sd ~2.3), same
+record structure, no `enc_at` sent. Injection: max |observed − true − offset| 0.08–0.27 mrad over all 13 records. No fall under any pattern,
+P5 included, for any policy. Checkpoint means (runs), worst over P1..P4 unless marked; noise = one run's sd pooled within checkpoints (8 dof):
+
+| policy | enc training | runs | lean ° | stand drift mm/s | walk vy mm/s | walk yaw °/s | walk Δvx m/s | P5 lean ° | P5 Δvx m/s |
+|---|---|---|---|---|---|---|---|---|---|
+| lm7k_micro_legs_squeeze | none | 3 | 1.75 | 4.3 | 19 | 0.28 | 0.107 | 3.63 | 0.213 |
+| lm7l_arch_armsway | none | 2 | 2.36 | 1.7 | 64 | 0.20 | 0.037 | 4.04 | 0.119 |
+| s1_pilot_t37 | none | 2 | 2.12 | 5.6 | 42 | 0.08 | 0.043 | 2.97 | 0.135 |
+| lm7m_enc_ladder | ±0.003 | 2 | **3.47** | 2.3 | 65 | 0.29 | 0.071 | 3.41 | 0.130 |
+| lm7n_enc_survive (+ nodecay, the same checkpoint) | ±0.010 | 4 | 1.74 | 1.5 | 53 | 0.11 | 0.037 | 4.24 | 0.090 |
+| noise (one run's sd) | | | 0.29 | 1.1 | 3.5 | 0.07 | 0.006 | 0.33 | 0.002 |
+
+**The test does not separate the ±0.010-trained policy from the untrained ones on the bias metrics.** Its lean (1.74°) equals the untrained
+squeeze's (1.75°, 0.0 sd apart) and its lateral drift (53 mm/s) lies inside the untrained range (19–64). The worst in-band lean is always
+P1 or P2, 1.3–3.5° per run, mostly more than the 1.03° the pitch chain alone gives on rigid flat feet (0.004 + 0.004 + 0.010 rad): no policy cancels the offsets, the
+band training taught surviving them. Where the ±0.010 policy is best: standing creep under P1..P4 (raw 1.5 vs ≥ 2.7 mm/s, 1.8 sd to the best
+untrained), mean walking-tilt change (0.50 vs ≥ 0.64°, 2.8 sd) and the stress pattern's forward speed-up (+0.090 vs ≥ +0.119 m/s) and
+stillness (0 steps in the P5 stand in 4 of 4 runs; the others 1.5–6.5). What the test does show clearly: lm7m_enc_ladder is the outlier on
+lean (3.47°, 3.9 sd above the next), and P4 moves the lateral drift by 38–66 mm/s for four of the five checkpoints.
+Consequence (owner, the same day): the bias limits were dropped, the P5 stand and pushes under P5 became the scored part -- section 13.
+
+## 13. EXAM #3 (2026-11-13): Test 6 inside the qualities, the offset pushes, `walks_low`
+Owner 2026-11-13: "No flags. This is our new test ... The previous runs are just flagged with what exam version they were done"; the pushes
+under an offset go "under survivability, stability and gait and body care. Energy." Exam #3 = every test of Exam #2 v4, unchanged and in
+the same order (so Tests 0–5 of an Exam #3 run are a v4 run: `meta.score.score_v4` is the same record under the v4 rules), then Test 6.
+Records: `meta.exam_version` 3, `meta.score.version` 5, `meta.score.exam` 3, a top-level `enc` block. **Exam #3 scores do not compare
+with Exam #2 scores** (the weights inside the qualities moved). `score_v2 / v3 / v4` are untouched (byte-identical on the 162 stored records).
+
+### 13.1 The weights (`tools/exam_score.py score_e3`; the seven quality totals stay)
+Inside a quality Test 6 takes a fixed share and every v4 row of that quality is scaled by $(W_q - share) / W_q$ (the v3 way: it halved
+the stand rows to make room for the second stand). A row's ramp score s is the same number in both readings; only its weight moves.
+
+| quality | total | v4 rows | Test 6 rows (weight; ramp) |
+|---|---|---|---|
+| survival | 10 | 10 × 0.5^falls | falls now also = a fall / hard fail in any pattern's stand or walk + an offset push not held |
+| stability | 30 | × 25/30 = 25 | 5: P5 stand base drift 1.5 (`stand_drift` 1 → 10 cm), P5 stand foot lifts 1.0 (`stand_lifts` 0 → 3), P5 stand torso rate 0.5 (`stand_rate`), worst in-band stand base drift 1.0 (`stand_drift`), worst walking tilt change vs P0 over P1..P5 1.0 (`enc_walk_tilt` *p*) |
+| tracking | 20 | 20 | — |
+| gait & body care | 10 | × 8/10 = 8 | 2: touchdown impact p95 change vs P0, mean over the pattern walks 1.0 (`enc_impact` *p*), action roughness change vs P0 1.0 (`enc_smooth` *p*) |
+| energy | 10 | × 8/10 = 8 | 2: recovery energy of the held offset pushes 1.0 (`enc_push_energy` *p*), walking mechanical power change vs P0 1.0 (`enc_power` *p*) |
+| push robustness | 10 | × 48/56 = 8.57 | 1.43: the 8 offset pushes, the Test 2 per-push formula and ramps (one score over 56 pushes) |
+| homing | 10 | 10 | — |
+
+Test 6 carries 10.43 of the 100 points + its falls in survival. Worked: P5 stand drift 2.1 cm → s = (10 − 2.1) / 9 = 0.88 → 1.32 of 1.5;
+37.6 cm → 0. The P5 stand uses the stand's own ramps on purpose (a stand is a stand; no new calibration). If Test 6 did not run or its
+injection check failed, its rows score 0 and its constraints are "not measured".
+
+### 13.2 The offset pushes
+After the P5 walk, still under P5 ("enc:P5:hold" 4 s re-sends the pattern): Test 2's kick (`push_at`, the same "pre" / "push:mode:level:dir"
+segments and metrics) at **1.0 m/s from front / back / left / right, standing (2 s before, 5 s after) and walking at 0.3 (3 s before)** =
+8 pushes, 64 s. Test 2 holds the very same 8 pushes on perfect encoders; `meta.score.enc.pushes[*].t2` pairs them. A fall: reset on the spot
+with the pattern still on, the next push. The v3 push hard fails (deep drop, tilt, floor contact, arm envelope) apply.
+
+### 13.3 Constraints added (the v4 eight are unchanged; `no_falls` keeps its v4 definition = Tests 0, 1, 3)
+- **walks_low** (provisional, ≥ 0.5): the share of the LOW ladder rungs — vx ±0.05 / ±0.10, vy ±0.05 / ±0.10, wz ±0.10 .. ±0.30 (18) — at
+  gain ≥ 0.5; per axis in the detail and in `meta.score.e3.walks_low`. No new test: the ladder data. `walks_vx / vy / wz` start at 0.10
+  (wz 0.20) and pass at a 0.9 share, so a policy can stand still at the smallest commands and pass; this one counts exactly those rungs.
+  0.5 = a policy that walks at every rung where the `walks_*` rules start counting (|c| = 0.10, wz 0.20–0.30 → 10 of 18 = 0.56) passes,
+  one that also stands at ±0.10 does not. Today: the 36 s1_pilot final records 0.00–0.28 (median 0.06), the 12 stored v4 records ≤ 0.33:
+  nobody passes. Whether the study enforces it is the study's choice.
+- **enc_no_falls** (definition, ≤ 0): falls + hard fails in the stand / walk of any pattern, P5 included. An offset push not held is shown,
+  not counted (the v4 rule for Test 2: it costs survival and push points).
+- **enc_stand_drift** (provisional, ≤ 5 cm) and **enc_stand_lifts** (provisional, ≤ 1): the 15 s stand under P5.
+Env: `EXAM_ENC_STAND_DRIFT_CM`, `EXAM_ENC_STAND_LIFTS`, `EXAM_WALKS_LOW_SHARE`.
+
+### 13.4 Validation (`exam3_val*`, 12 full Exam #3 runs of 5 checkpoints, seed 1, n 10, ff on, 4 rigs; 2026-11-13)
+Calibration `e3-2026-11-13` (`exam_calibrate.py --e3 --write`, `results/exam3_calibration.json` = the v4 table + the five new keys, p10 → p90
+of the 12 records): enc_walk_tilt 1.46 → 2.83°, enc_impact 0.141 → 0.353 BW, enc_smooth 0.0007 → 0.0076 rad, enc_push_energy 782 → 1277 J
+(widened to half the median), enc_power −13.6 → −5.5 W (every policy uses LESS power walking under offsets: a rank, not a cost — weak row).
+Checkpoint means (runs); noise = one run's sd pooled within checkpoints (7 dof):
+
+| policy | enc training | runs | Exam #3 | v4, same runs | Test 6 points /10.43 | P5 stand drift cm · lifts (each run) | offset pushes held · score | Test 2, same 8 pushes: held · score | walks_low | enc constraints passed (runs) |
+|---|---|---|---|---|---|---|---|---|---|---|
+| lm7k_micro_legs_squeeze | none | 2 | 61.5 | 59.0 | 8.1 | 1.1 · 0, 0.5 · 0 | 8/8 · 0.56 | 8/8 · 0.55 | 0.19 | 2/2 |
+| s1_pilot_t37 | none | 2 | 60.9 | 61.9 | 5.4 | 0.6 · 1, 54.6 · 14 | 8/8 · 0.55 | 8/8 · 0.56 | 0.08 | 1/2 |
+| lm7n_enc_survive + nodecay (one checkpoint) | ±0.010 | 4 | 57.6 | 56.4 | 8.2 | 2.2 · 0, 1.8 · 0, 1.8 · 0, 1.8 · 0 | 8/8 · 0.61 | 8/8 · 0.60 | 0.01 | 4/4 |
+| lm7l_arch_armsway | none | 2 | 55.3 | 59.6 | 2.5 | 37.6 · 8, 68.2 · 12 | 8/8 · 0.60 | 8/8 · 0.66 | 0.03 | 0/2 |
+| lm7m_enc_ladder | ±0.003 | 2 | 48.8 | 53.3 | 4.2 | 39.5 · 11, 28.4 · 6 | 7.5/8 · 0.51 | 7/8 · 0.47 | 0.00 | 0/2 |
+| noise (one run's sd) | | | 2.0 | 1.2 | 1.1 | | 0.04 | 0.03 | 0.05 | |
+
+- **The P5 stand is the part that tells the band-trained policy apart, and it is bimodal for the others.** Over all 25 P5 stands on record
+  (these 12 + the 13 of 12.5): lm7n ±0.010 passes both limits in **8 of 8** (drift 1.8–2.8 cm, 0 lifts); lm7m ±0.003 0 of 4 (12.8–39.5 cm,
+  6–11 lifts); armsway 1 of 4; t37 1 of 4; squeeze 4 of 5 (0.2–1.1 cm, 0 lifts — and once 42.2 cm, 10 lifts). An untrained policy either
+  stands as still as the trained one or creeps away stepping; one 15 s stand samples that coin once. So: the limits (5 cm in the gap
+  2.8 .. 11.1 cm; 1 lift: the passing mode has 0–2, the failing one 3–14) are right, the band-trained policy passes with margin, but **a
+  single run does not reject an untrained policy reliably** (squeeze 80 % pass). Fix if wanted: enter P5 several times (the mode seems set
+  at the pattern switch), or require the pass in each of N runs.
+- **The offset pushes do not separate anyone.** Every policy holds 8 of 8 (lm7m 7–8, as in Test 2), and the push score under P5 equals the
+  same pushes' score on perfect encoders within the noise (0.51–0.61 vs 0.47–0.66, sd 0.04): a 1.0 m/s kick is not made harder by P5.
+- **Exam #3 vs v4 on the same runs**: +2.5 (squeeze), +1.2 (lm7n), −1.0 (t37), −4.3 (armsway), −4.5 (lm7m: − the P5 stand and one offset
+  push fall = survival halved in one run). The band-trained checkpoint moves from 4th to 3rd of the five. One run's sd rises from 1.2 to
+  2.0 points: the P5 stand's coin (up to 3 points) and an offset-push fall (5 points of survival) are in the total now.
+- `walks_low` fails everywhere (0.00–0.28), as in the study's records. Injection check: 0.08–0.24 mrad in all 12 runs. `--exam 2` on the
+  final code: section 13.6.
+
+### 13.5 fleetdeck
+`fleetdeck/exam2.py section_enc`: "Test 6 — encoder offsets" (per-pattern table + the offset pushes above Test 2's same pushes), the new
+constraints as badges with the others, "Exam #3" in the head, the score title and the constraints line (fleetdeck CONTEXT.md, round 2026-11-13b).
+
+### 13.6 Versions and the default
+`exam.sh --exam 3` = Exam #3; `--exam 2` = Exam #2 v4 exactly (no Test 6, `score_v4`, `exam_version` 2, no `enc_at` ever sent); `--exam 1` =
+the 2026-10-29 exam. **The default is the one value `EXAM=` in `tools/exam.sh`: still 2 on 2026-11-13**, because the s1_pilot watcher calls
+`exam.sh` without `--exam` and its 8 running trials must be scored with v4; the owner's decision is 3 — flip it once the study's stored
+flags carry `--exam 2`.
+

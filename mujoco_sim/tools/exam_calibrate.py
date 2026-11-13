@@ -17,12 +17,16 @@ per-policy keys one value per policy.
 --write: results/exam2_calibration.json (exam_score.load_cal reads it) -- the version travels in every score (meta.score.calib).
 --apply: re-score the given records in place with the table in results/exam2_calibration.json (written by --write) (the raw data in the records is untouched; scores are recomputable).
   Since v4 (2026-11-09) --apply re-scores each record with ITS OWN score version (meta.score.version: v2 -> score_v2, v3 -> score_v3, v4 ->
-  score_v4 with the v4 table); before, every record was re-scored with score_v2.
+  score_v4 with the v4 table; version 5 = Exam #3 (2026-11-13) -> score_e3 with the record's own "enc" block and the Exam #3 table); before, every record was re-scored with score_v2.
 --v4 (2026-11-09, Exam #2 v4): the rung errors use the v4 floor (exam_score.E_FLOOR_V4 = 0.05), the CURRENT table = the v2 calibration
   file (results/exam2_calibration.json; a key it lacks = CAL_DEFAULT) and --write goes to results/exam2_calibration_v4.json (the v2 file
   that scores the v2 / v3 records stays intact). --keys k1,k2 (fnmatch patterns): only these keys are re-derived from the given records
   (the keys whose distribution v4 changes: the pushes with the diagonals, the push share of the all-phase energy, ...); every other key is
-  inherited from the v2 table. The population for a v4 key must be v4 records (a 4-direction push test has no diagonals)."""
+  inherited from the v2 table. The population for a v4 key must be v4 records (a 4-direction push test has no diagonals).
+--e3 (2026-11-13, Exam #3): the CURRENT table = the v4 calibration + the Test 6 keys (exam_score.CAL_E3_DEFAULT: enc_walk_tilt, enc_impact,
+  enc_smooth, enc_push_energy, enc_power -- all provisional), --write goes to results/exam3_calibration.json (a complete table; the v4
+  file stays intact) and by default ONLY the enc_* keys are re-derived (--keys overrides): the v4 rows keep their v4 ramps, so a row's
+  score s is the same number in a v4 and an Exam #3 reading of one run. The population must be Exam #3 records (they carry "enc")."""
 import argparse, glob, importlib.util, json, os, statistics as st, time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +71,9 @@ def samples(recs, e_floor=None):
         for x in V["homing"]:
             if x["ok"]:
                 for k in ("planar", "head", "sw", "prog", "turn"): add("hm_" + k, x[k])
+        if r.get("enc"):   # Exam #3 (2026-11-13): the Test 6 quantities with a ramp of their own, one value per record
+            X = es.enc_values(es.enc_summary(r["enc"]))
+            for k in es.CAL_E3_DEFAULT: add(k, X.get(k))
     return S
 
 
@@ -75,13 +82,16 @@ def main():
     ap.add_argument("records", nargs="+"); ap.add_argument("--version", default=time.strftime("v1-%Y-%m-%d"))
     ap.add_argument("--write", action="store_true"); ap.add_argument("--apply", action="store_true")
     ap.add_argument("--v4", action="store_true", help="Exam #2 v4: e floor 0.05, base = the v2 table, --write -> results/exam2_calibration_v4.json")
-    ap.add_argument("--keys", default="", help="--v4: comma-separated fnmatch patterns of the keys to re-derive (default: all keys)")
+    ap.add_argument("--keys", default="", help="--v4 / --e3: comma-separated fnmatch patterns of the keys to re-derive (default: all keys; --e3: enc_*)")
+    ap.add_argument("--e3", action="store_true", help="Exam #3: base = the v4 table + the Test 6 keys, --write -> results/exam3_calibration.json, default keys enc_*")
     a = ap.parse_args()
+    if a.e3 and not a.keys: a.keys = "enc_*"
     import fnmatch
     pats = [k.strip() for k in a.keys.split(",") if k.strip()]
     pick = (lambda k: any(fnmatch.fnmatch(k, p_) for p_ in pats)) if pats else (lambda k: True)
-    e_floor = es.E_FLOOR_V4 if a.v4 else es.E_FLOOR
-    out_file = es.CAL_FILE_V4 if a.v4 else es.CAL_FILE
+    e_floor = es.E_FLOOR_V4 if (a.v4 or a.e3) else es.E_FLOOR
+    out_file = es.CAL_FILE_E3 if a.e3 else (es.CAL_FILE_V4 if a.v4 else es.CAL_FILE)
+    prov = es.PROV | es.PROV_E3 if a.e3 else es.PROV
     base_ver = "CAL_DEFAULT"
     files = [f for p in a.records for f in sorted(glob.glob(p))]
     recs = []
@@ -93,6 +103,8 @@ def main():
     cur = dict(es.CAL_DEFAULT)
     if a.v4:   # the v4 table starts from the v2 calibration (the keys v4 does not touch keep their v2 ends)
         cur, base_ver = es.load_cal(es.CAL_FILE)
+    if a.e3:   # the Exam #3 table starts from the v4 calibration + the Test 6 keys' first values
+        cur, base_ver = es.load_cal_v4(); cur = dict(cur, **es.CAL_E3_DEFAULT)
     new = dict(cur)
     rows = []
     for k, (g, b) in cur.items():
@@ -104,7 +116,7 @@ def main():
         p10, p50, p90 = pct(v, 0.1), pct(v, 0.5), pct(v, 0.9)
         full = sum(1 for x in v if es.ramp(x, g, b) >= 0.999) / len(v); zero = sum(1 for x in v if es.ramp(x, g, b) <= 0.001) / len(v)
         dead = f"DEAD: {100 * full:.0f} % at full marks" if full > 0.8 else (f"DEAD: {100 * zero:.0f} % at zero" if zero > 0.8 else "")
-        if k not in es.PROV:
+        if k not in prov:
             ng, nb, why = g, b, "definition kept" + (f" -- {dead}" if dead else "")
         elif p90 - p10 < 1e-9:
             ng, nb, why = g, b, "no spread"
@@ -117,7 +129,7 @@ def main():
         new[k] = (round(ng, 6), round(nb, 6))
         rows.append((k, g, b, p10, p50, p90, len(v), full, zero, new[k][0], new[k][1], why))
     f = lambda x: "–" if x is None else f"{x:.4g}"
-    print(f"## Exam #2 calibration {a.version}: {len(recs)} policies ({len(files)} files){' -- v4: e floor %g, base %s, keys %s' % (e_floor, base_ver, a.keys or 'all') if a.v4 else ''}\n")
+    print(f"## Exam #{3 if a.e3 else 2} calibration {a.version}: {len(recs)} policies ({len(files)} files){' -- %s: e floor %g, base %s, keys %s' % ('e3' if a.e3 else 'v4', e_floor, base_ver, a.keys or 'all') if (a.v4 or a.e3) else ''}\n")
     print("| key | current g → b | n | p10 / p50 / p90 | at full / at zero (current) | proposed g → b | note |")
     print("|---|---|---|---|---|---|---|")
     for k, g, b, p10, p50, p90, n, full, zero, ng, nb, why in rows:
@@ -127,7 +139,8 @@ def main():
                "records": [os.path.relpath(r["_file"], os.path.expanduser("~/Projects/robot_projects/repos")) for r in recs],
                "rule": f"provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= {MIN_SPAN} x median; the rest kept",
                "cal": {k: list(v) for k, v in new.items()}}
-        if a.v4:
+        if a.e3: out["source"] = f"{len(recs)} Exam #3 records"
+        if a.v4 or a.e3:
             out.update({"base": base_ver, "e_floor": e_floor, "keys": a.keys or "all",
                         "recalibrated": sorted(k for k, *_r in rows if pick(k)),
                         "changed": {k: [list(cur[k]), list(new[k])] for k in new if pick(k) and tuple(new[k]) != tuple(cur[k])}})
@@ -140,6 +153,8 @@ def main():
             ver = int((r["meta"].get("score") or {}).get("version") or 2)   # each record keeps its own score version (v4: the v4 table)
             fn = {2: es.score_v2, 3: es.score_v3}.get(ver, es.score_v4)
             sc = fn(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), n_homing=int(r["meta"].get("n") or 10))
+            if ver == 5:   # Exam #3 (2026-11-13, meta.score.version 5): score_e3 with the record's own "enc" (without this it would drop to v4)
+                sc = es.score_e3(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), enc=r.get("enc"), n_homing=int(r["meta"].get("n") or 10))
             r["meta"]["score"] = sc
             path = r.pop("_file")
             json.dump(r, open(path, "w"), separators=(",", ":"))

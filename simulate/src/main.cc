@@ -198,6 +198,20 @@ struct ScriptedTeleport
 };
 inline ScriptedTeleport scripted_teleport;
 
+// Scripted ENCODER OFFSETS (Exam #2 v5 Test 6, 2026-11-13): "enc_at <sim_t> zero | <one value per motor, rad>" (and "enc ..." = the
+// next frame) sets the joint encoders' zero errors of the simulated ROBOT -- reported q = true q + offset, the PD runs on the reading
+// (UnitreeSDK2BridgeBase::set_encoder_offsets). Like push_at / reset_at it lands on the first frame with d->time >= sim_t, inside the
+// physics lock and BEFORE that frame's PD, so a lock-step run switches pattern on the same frame every time. A FIFO, not one slot:
+// the commander may schedule the next pattern while one is still waiting. Never sent = perfect encoders, the sim as it always was.
+struct ScriptedEnc
+{
+  std::mutex mtx;
+  struct Item { double t_apply; std::vector<double> off; };   // off empty = all zero
+  std::vector<Item> pending;
+};
+inline ScriptedEnc scripted_enc;
+inline const double kEncMaxAbs = 0.2;   // rad: a value above this is a typo (deg for rad), not an encoder error -- the whole command is refused
+
 // Reads harness commands from stdin:
 //   push <vx> <vy>   instantaneous base velocity change (m/s, world frame)
 // Each applied push is printed with wall + sim timestamps so runs can be
@@ -254,6 +268,32 @@ void HandleCommand(const std::string &line)
       cam.type = mjCAMERA_TRACKING; cam.trackbodyid = bid; cam.distance = dist; cam.azimuth = 135; cam.elevation = -18;
       std::printf("[FOLLOW] tracking %s at %.1f m\n", body.c_str(), dist);
     }
+    else if (cmd == "enc" || cmd == "enc_at")   // encoder zero offsets (2026-11-13, see ScriptedEnc)
+    {
+      double t_at = -1.0;
+      std::vector<double> off;
+      std::string tok;
+      bool ok = (cmd == "enc") || bool(iss >> t_at);
+      bool zero = false;
+      while (ok && (iss >> tok))
+      {
+        if (tok == "zero" || tok == "off") { zero = true; continue; }
+        char *end = nullptr;
+        const double v = std::strtod(tok.c_str(), &end);
+        if (end == tok.c_str() || *end != '\0' || !(std::fabs(v) <= kEncMaxAbs)) ok = false;   // not a number / nan / too large
+        else off.push_back(v);
+      }
+      if (ok && zero == !off.empty()) ok = false;   // "zero" or a value list, never both, never neither
+      if (!ok)
+      {
+        std::printf("[ENC] usage: enc zero | enc <q0 .. qN-1> | enc_at <sim_t> zero | enc_at <sim_t> <q0 .. qN-1>   (rad per motor, "
+                    "reported = true + offset, |value| <= %.2f)\n", kEncMaxAbs);
+        std::fflush(stdout);
+        return;
+      }
+      std::lock_guard<std::mutex> lk(scripted_enc.mtx);
+      scripted_enc.pending.push_back({t_at, off});
+    }
     else if (cmd == "teleport" || cmd == "teleport_at")
     {
       double x, y, yaw, t_at = -1.0;
@@ -272,7 +312,7 @@ void HandleCommand(const std::string &line)
     }
     else
     {
-      std::printf("[CMD] unknown: '%s' (commands: push[_at] [<sim_t>] <vx> <vy> | teleport[_at] [<sim_t>] <x> <y> <yaw_deg> | reset[_at] [<sim_t>] <x> <y> <yaw_deg> | follow [<body>|off] [<dist>])\n", cmd.c_str());
+      std::printf("[CMD] unknown: '%s' (commands: push[_at] [<sim_t>] <vx> <vy> | teleport[_at] [<sim_t>] <x> <y> <yaw_deg> | reset[_at] [<sim_t>] <x> <y> <yaw_deg> | enc[_at] [<sim_t>] zero|<q per motor> | follow [<body>|off] [<dist>])\n", cmd.c_str());
     }
   }
 }
@@ -528,6 +568,35 @@ namespace
   // scripted push / teleport from the stdin command thread (applied inside the physics lock)
   void ApplyScriptedCommands()
   {
+            // scripted encoder offsets (2026-11-13, see ScriptedEnc): every pending item that is due, in the order it was sent
+            {
+              std::lock_guard<std::mutex> elk(scripted_enc.mtx);
+              while (!scripted_enc.pending.empty() && g_bridge != nullptr)
+              {
+                size_t k = 0;
+                for (; k < scripted_enc.pending.size(); ++k)
+                  if (scripted_enc.pending[k].t_apply < 0.0 || d->time >= scripted_enc.pending[k].t_apply) break;
+                if (k == scripted_enc.pending.size()) break;
+                const std::vector<double> off = scripted_enc.pending[k].off;
+                scripted_enc.pending.erase(scripted_enc.pending.begin() + k);
+                if (!off.empty() && (int)off.size() != g_bridge->num_motor())
+                {
+                  std::printf("[ENC] ignored: %d values, the robot has %d motors\n", (int)off.size(), g_bridge->num_motor());
+                }
+                else
+                {
+                  g_bridge->set_encoder_offsets(off);
+                  double mx = 0.0; int nz = 0;
+                  for (double v : off) { if (v != 0.0) ++nz; mx = std::max(mx, std::fabs(v)); }
+                  std::printf("[ENC] sim_t=%.3f encoder offsets %s: %d joints non-zero, max |offset| %.5f rad%s", d->time,
+                              g_bridge->encoder_offsets_on() ? "ON" : "OFF (perfect encoders)", nz, mx, nz ? " [" : "\n");
+                  for (size_t i = 0; nz && i < off.size(); ++i) std::printf("%s%.5f", i ? " " : "", off[i]);
+                  if (nz) std::printf("]\n");
+                }
+                std::fflush(stdout);
+              }
+            }
+
             // scripted push (harness): apply pending base velocity change
             {
               std::lock_guard<std::mutex> plk(scripted_push.mtx);
@@ -893,6 +962,14 @@ namespace
                     add_vec("dq", m->nv - 6, [&](int k) { return (double)d->qvel[va + 6 + k]; });
                     if (g_bridge && (int)g_bridge->q_target_.size() == nmot)
                       add_vec("qt", nmot, [&](int k) { return g_bridge->q_target_[k]; });
+                    // encoder test (2026-11-13): "eo" = the encoder offsets the sim applies NOW (rad per motor), present only while
+                    // any is non-zero -- the commander checks its pattern landed; "qj" above stays the TRUE joint angle
+                    if (g_bridge && g_bridge->encoder_offsets_on() && n > 0 && n < jscap - 64) {
+                      const std::vector<double> eo = g_bridge->encoder_offsets();
+                      n += std::snprintf(js + n, jscap - n, ",\"eo\":[");
+                      for (size_t k = 0; k < eo.size() && n < jscap - 32; ++k) n += std::snprintf(js + n, jscap - n, "%s%.5f", k ? "," : "", eo[k]);
+                      if (n < jscap - 2) n += std::snprintf(js + n, jscap - n, "]");
+                    }
                   }
                   add_body("tl", tl_id); add_body("tr", tr_id);
                   // ---- v4: all bodies — world position "xb", linear "vb" and angular

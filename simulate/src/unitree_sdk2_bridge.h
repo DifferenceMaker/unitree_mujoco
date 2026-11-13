@@ -93,6 +93,32 @@ public:
     int num_motor() const { return num_motor_; }
     std::vector<double> q_target_;                    // exam #2 (2026-10-30): the joint targets of the lowcmd last applied ("qt" in rt/sim_base_pose)
 
+    // ENCODER ZERO-OFFSET INJECTION (Exam #2 v5 Test 6, 2026-11-13): the real robot's joint encoders carry small zero errors and the
+    // walk policies now train with them (unitree_rl_lab mdp/dr.py randomize_encoder_offset: 13 joints, +-0.010 rad), but this sim had
+    // perfect encoders, so the exam could not see whether a policy tolerates them. Here the ROBOT is miscalibrated and the deployed
+    // stack stays untouched:   reported q = true q + offset   in every state message (rt/lowstate and the compact rt/lockstep/state),
+    // and the motor's PD runs on that reading:   tau = tau_ff + kp (q_cmd - (q + offset)) + kd (dq_cmd - dq)   -- the same as applying
+    // the target at q_cmd - offset (the training's Enc action). Worked: kp 200, offset +0.010 rad -> the first frame's torque moves by
+    // -2 N m and the joint settles 0.010 rad (0.57 deg) below where the policy believes it is. Velocity and torque have no zero: unchanged.
+    // The sim-truth channel rt/sim_base_pose ("qj") stays TRUE (it is the exam's ruler) and "qt" stays the command as sent.
+    // Default = no offsets: enc_on_ false keeps the ORIGINAL expressions below (not "+ 0.0"), so every published bit and every torque
+    // is what it was before this feature (proved with SIM_TRACE: tools/wire_check.sh traces identical to the pre-feature binary).
+    // Set from main.cc ApplyScriptedCommands ("enc_at <sim_t> ..."), inside the physics lock, on a planned frame.
+    void set_encoder_offsets(const std::vector<double>& off)   // empty or all zero = perfect encoders again
+    {
+        std::lock_guard<std::mutex> lk(enc_mtx_);
+        enc_offset_.assign(num_motor_, 0.0);
+        bool any = false;
+        for (int i = 0; i < num_motor_ && i < (int)off.size(); i++) { enc_offset_[i] = off[i]; any = any || off[i] != 0.0; }
+        enc_on_.store(any, std::memory_order_release);
+    }
+    bool encoder_offsets_on() const { return enc_on_.load(std::memory_order_acquire); }
+    std::vector<double> encoder_offsets()             // a copy (the GUI build reads it from the 1 kHz bridge thread)
+    {
+        std::lock_guard<std::mutex> lk(enc_mtx_);
+        return enc_offset_;
+    }
+
     void printSceneInformation()
     {
         auto printObjects = [this](const char* title, int count, int type, auto getIndex) {
@@ -127,6 +153,9 @@ protected:
     int dim_motor_sensor_ = 0;
 
     mjData *mj_data_;
+    std::vector<double> enc_offset_;                  // per motor: reported - true (rad); see set_encoder_offsets
+    std::atomic<bool> enc_on_{false};
+    std::mutex enc_mtx_;
     mjModel *mj_model_;
 
     // Sensor data indices
@@ -265,6 +294,19 @@ public:
     void pd_from(const typename LowCmd_t::MsgType& msg)
     {
         if ((int)q_target_.size() != num_motor_) q_target_.assign(num_motor_, 0.0);
+        if (encoder_offsets_on()) {
+            // encoder test (2026-11-13, see set_encoder_offsets): the motor's PD closes on the MISCALIBRATED reading q + offset,
+            // i.e. the joint is driven to q_cmd - offset. q_target_ ("qt") stays the command as the stack sent it.
+            const std::vector<double> off = encoder_offsets();
+            for(int i(0); i<num_motor_; i++) {
+                auto & m = msg.motor_cmd()[i];
+                q_target_[i] = m.q();
+                mj_data_->ctrl[i] = m.tau() +
+                                    m.kp() * (m.q() - (mj_data_->sensordata[i] + off[i])) +
+                                    m.kd() * (m.dq() - mj_data_->sensordata[i + num_motor_]);
+            }
+            return;
+        }
         for(int i(0); i<num_motor_; i++) {
             auto & m = msg.motor_cmd()[i];
             q_target_[i] = m.q();
@@ -374,6 +416,12 @@ public:
                 lowstate->msg_.motor_state()[i].q() = mj_data_->sensordata[i];
                 lowstate->msg_.motor_state()[i].dq() = mj_data_->sensordata[i + num_motor_];
                 lowstate->msg_.motor_state()[i].tau_est() = mj_data_->sensordata[i + 2 * num_motor_];
+            }
+            if (encoder_offsets_on()) {
+                // encoder test (2026-11-13, see set_encoder_offsets): the encoder REPORTS true + offset. Written here, before the
+                // compact wire below copies motor_state().q(), so rt/lowstate and rt/lockstep/state carry the same reading.
+                const std::vector<double> off = encoder_offsets();
+                for(int i(0); i<num_motor_; i++) lowstate->msg_.motor_state()[i].q() = mj_data_->sensordata[i] + off[i];
             }
             
             if(imu_quat_adr_ >= 0) {

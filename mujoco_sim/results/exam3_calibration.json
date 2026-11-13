@@ -1,0 +1,336 @@
+{
+ "version": "e3-2026-11-13",
+ "date": "2026-11-13 14:27",
+ "source": "12 Exam #3 records",
+ "records": [
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_2026-11-13_13-59-27/exam_lm7k_micro_legs_squeeze.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_2026-11-13_13-59-27/exam_lm7l_arch_armsway.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_2026-11-13_13-59-27/exam_lm7m_enc_ladder.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_2026-11-13_13-59-27/exam_lm7n_enc_survive.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_2026-11-13_14-08-55/exam_lm7n_enc_nodecay.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r2_2026-11-13_14-08-57/exam_lm7k_micro_legs_squeeze.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r2_2026-11-13_14-08-57/exam_lm7n_enc_survive.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r2_2026-11-13_14-08-57/exam_s1_pilot_t37.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r3_2026-11-13_14-17-57/exam_lm7l_arch_armsway.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r3_2026-11-13_14-17-57/exam_lm7m_enc_ladder.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r3_2026-11-13_14-17-57/exam_lm7n_enc_nodecay.json",
+  "unitree_mujoco/mujoco_sim/logs/exam/exam3_val_r3_2026-11-13_14-17-57/exam_s1_pilot_t37.json"
+ ],
+ "rule": "provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= 0.5 x median; the rest kept",
+ "cal": {
+  "stand_drift": [
+   0.01,
+   0.1
+  ],
+  "stand_yaw": [
+   1.0,
+   10.0
+  ],
+  "stand_lifts": [
+   0.0,
+   3.0
+  ],
+  "stand_rate": [
+   0.047415,
+   0.078515
+  ],
+  "stand_sep_trend": [
+   0.0,
+   0.03
+  ],
+  "stand_stagger": [
+   0.01,
+   0.08
+  ],
+  "stand_toe": [
+   2.0,
+   10.0
+  ],
+  "stand_jitter": [
+   0.2,
+   1.0
+  ],
+  "stop_settle": [
+   1.0,
+   4.0
+  ],
+  "stop_steps": [
+   1.0,
+   5.0
+  ],
+  "stop_resid": [
+   0.005,
+   0.05
+  ],
+  "stop_over_m": [
+   0.1,
+   0.6
+  ],
+  "stop_over_deg": [
+   5.0,
+   30.0
+  ],
+  "walk_tilt": [
+   1.5,
+   6.0
+  ],
+  "walk_rate": [
+   0.147711,
+   0.244944
+  ],
+  "walk_sag": [
+   0.03,
+   0.15
+  ],
+  "ho_lifts": [
+   0.0,
+   2.0
+  ],
+  "ho_drift": [
+   0.01,
+   0.05
+  ],
+  "ho_sep": [
+   0.01,
+   0.05
+  ],
+  "ho_yaw": [
+   1.0,
+   5.0
+  ],
+  "ho_dip": [
+   0.005,
+   0.03
+  ],
+  "ho_jolt": [
+   0.1181,
+   0.30095
+  ],
+  "ho_jump": [
+   13.3443,
+   40.457
+  ],
+  "ho_wait": [
+   0.5,
+   3.0
+  ],
+  "rung_e": [
+   0.1,
+   0.5
+  ],
+  "impact": [
+   1.161938,
+   1.931604
+  ],
+  "smooth": [
+   0.059163,
+   0.103634
+  ],
+  "smooth_v1": [
+   0.06,
+   0.15
+  ],
+  "pivot": [
+   0.05,
+   0.5
+  ],
+  "slip": [
+   0.058244,
+   0.109931
+  ],
+  "steady": [
+   0.023513,
+   0.038831
+  ],
+  "cot": [
+   0.688696,
+   1.318691
+  ],
+  "stand_tau2": [
+   3734.46,
+   8409.82
+  ],
+  "push_dist": [
+   0.21058,
+   1.03532
+  ],
+  "push_tilt": [
+   2.93,
+   17.602
+  ],
+  "push_rec": [
+   0.96,
+   3.152
+  ],
+  "push_steps": [
+   2.0,
+   6.0
+  ],
+  "push_foot": [
+   1.968,
+   4.3458
+  ],
+  "hm_planar": [
+   0.02,
+   0.1
+  ],
+  "hm_head": [
+   1.0,
+   5.0
+  ],
+  "hm_sw": [
+   0.02,
+   0.1
+  ],
+  "hm_prog": [
+   0.25,
+   0.05
+  ],
+  "hm_turn": [
+   0.9,
+   0.3
+  ],
+  "arm_sway": [
+   1.159847,
+   1.961963
+  ],
+  "push_counter": [
+   0.5,
+   4.468
+  ],
+  "push_sway": [
+   0.19752,
+   0.51296
+  ],
+  "push_sep": [
+   9.238,
+   51.98
+  ],
+  "push_arm": [
+   6.654,
+   15.938
+  ],
+  "push_energy": [
+   520.928,
+   1638.01
+  ],
+  "en_all_tau2": [
+   7023.887713,
+   11911.894437
+  ],
+  "en_all_power": [
+   99.710283,
+   167.102706
+  ],
+  "stand_sep_dev_max": [
+   0.05248,
+   0.19954
+  ],
+  "stand_sep_dev_end": [
+   0.01294,
+   0.19748
+  ],
+  "stand_stag_dev_max": [
+   0.0469,
+   0.16381
+  ],
+  "stand_stag_dev_end": [
+   0.00482,
+   0.08309
+  ],
+  "arm_dev_mean": [
+   2.553204,
+   4.27444
+  ],
+  "arm_dev_max": [
+   18.39,
+   29.98
+  ],
+  "sc_dur": [
+   1.282,
+   5.903
+  ],
+  "enc_walk_tilt": [
+   1.4585,
+   2.833
+  ],
+  "enc_impact": [
+   0.141174,
+   0.353166
+  ],
+  "enc_smooth": [
+   0.000742,
+   0.007616
+  ],
+  "enc_push_energy": [
+   782.379813,
+   1277.285437
+  ],
+  "enc_power": [
+   -13.6114,
+   -5.4994
+  ]
+ },
+ "base": "v4-2026-11-09",
+ "e_floor": 0.05,
+ "keys": "enc_*",
+ "recalibrated": [
+  "enc_impact",
+  "enc_power",
+  "enc_push_energy",
+  "enc_smooth",
+  "enc_walk_tilt"
+ ],
+ "changed": {
+  "enc_walk_tilt": [
+   [
+    0.5,
+    2.0
+   ],
+   [
+    1.4585,
+    2.833
+   ]
+  ],
+  "enc_impact": [
+   [
+    0.0,
+    0.4
+   ],
+   [
+    0.141174,
+    0.353166
+   ]
+  ],
+  "enc_smooth": [
+   [
+    0.0,
+    0.01
+   ],
+   [
+    0.000742,
+    0.007616
+   ]
+  ],
+  "enc_push_energy": [
+   [
+    500.0,
+    1600.0
+   ],
+   [
+    782.379813,
+    1277.285437
+   ]
+  ],
+  "enc_power": [
+   [
+    0.0,
+    30.0
+   ],
+   [
+    -13.6114,
+    -5.4994
+   ]
+  ]
+ }
+}
