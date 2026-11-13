@@ -6,8 +6,8 @@ copies the table into every record (meta.homing_starts), the spec prints `--md`.
 
 Why: until rev 2 the 10 starts of Test 3 were seeded draws (homing_trials.sh --ring: distance uniform 3-5 m, bearing uniform 0-360 deg,
 heading uniform +-180 deg, random.seed(seed * 1000 + trial)). The draws were the same in every exam, so they were not noise -- but they
-were an accident of one seed: 7 of the 10 seed-1 starts lay within 100 deg of each other and no two shared a distance or a heading rule,
-so "homing" measured one arbitrary sample of the task. A designed table covers the ring evenly and repeats each condition.
+were an accident of one seed: the seed-1 bearings were 4, 28, 80, 89, 123, 193, 214, 221, 260, 274 deg (two clusters, 90 deg empty
+behind the desk), distances and headings drawn independently, so "homing" measured one arbitrary sample of the task. A designed table covers the ring evenly and repeats each condition.
 
 The design (goal = the desk edge centre (gx, gy) + the approach heading psi; exam: 0.35, 0, 0 deg):
   bearing   i x 36 deg around the goal, i = 0..9, measured from the approach heading (0 deg = straight behind the desk, 180 deg = in

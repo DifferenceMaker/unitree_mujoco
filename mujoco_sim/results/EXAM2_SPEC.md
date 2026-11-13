@@ -13,6 +13,10 @@ hand790 body, p14h_stancewide as the balance policy) and changes what is tested 
 0.05, the constraints block, calibration v4-2026-11-09; v3 = section 10, v2 = sections 1–7.
 **EXAM #3 (2026-11-13, sections 12 + 13) = Exam #2 v4's tests + Test 6 "encoder offsets", scored inside the qualities**: `exam.sh --exam 3`
 (owner: "No flags. This is our new test"); `exam.sh --exam 2` = Exam #2 v4 exactly (the running s1_pilot study). The default: section 13.6.
+**EXAM #3 REV 2 (2026-11-13 evening, section 14) = what `exam.sh --exam 3` runs since then**: the same tests de-randomized -- the rig's
+wall-clock streams frame-stamped (same policy + same seed = the same record, bit for bit), the whole exam queued at start-up, fixed
+homing starts, a reset to the standing snapshot before each test, the P5 stand entered three times (scored on the worst). Records
+`meta.exam_rev` 2, `meta.score.version` 6; needs the Aspired branch MM_rig_derand in the rig worktree; `--rev 1` = the first Exam #3.
 
 Operator brief (meeting 2026-10-30): everything the exam records must count (Test 0 and the stance included); the full command band,
 in 0.05 steps, for vx, vy and wz; stands tested on their own; a push test; energy in every phase; stability first in the weights;
@@ -896,7 +900,8 @@ constraints as badges with the others, "Exam #3" in the head, the score title an
 `exam.sh --exam 3` = Exam #3; `--exam 2` = Exam #2 v4 exactly (no Test 6, `score_v4`, `exam_version` 2, no `enc_at` ever sent); `--exam 1` =
 the 2026-10-29 exam. **The default is the one value `EXAM=` in `tools/exam.sh`: still 2 on 2026-11-13**, because the s1_pilot watcher calls
 `exam.sh` without `--exam` and its 8 running trials must be scored with v4; the owner's decision is 3 — flip it once the study's stored
-flags carry `--exam 2`.
+flags carry `--exam 2`. (Later the same day: `EXAM=3` in `tools/exam.sh`, the study passes `--exam 2`; since the evening `--exam 3` runs
+rev 2 (section 14), `--exam 3 --rev 1` the exam of this section.)
 
 
 ### 13.9 Afternoon rulings, 2026-11-13 (operator): every rung counts; a stillness constraint
@@ -909,3 +914,120 @@ flags carry `--exam 2`.
   13 in one record and 1 in another (one sample per exam: the stand is as run-dependent as the P5 stand); 16 of 36 s1_pilot finals pass.
 - Under the all-rungs rule on 2026-11-13: vx 0.87-0.93 (t21 / t36 / t37 27/30 = 0.90, pass), vy 0.17-0.83, wz 0.28-0.59: no policy is
   feasible on vy or wz yet.
+
+## 14. EXAM #3 REV 2 (2026-11-13 evening, operator-approved scope): the de-randomized exam
+Why: one Exam #3 run of a policy was one sample of its outcome under tiny timing differences (section 6: one run's sd 2.0 points; the
+same checkpoint gave 1 and 19 stand foot lifts and 2.8 and 13 cm of P5 stand drift in two runs). The study s2 compares trials whose
+scores differ by less than that. Rev 2 removes the run-to-run randomness that the rig itself added, so the same policy on the same seed
+gives the same record, and it samples the two coin-like measurements (the P5 stand, the homing starts) on purpose instead of by accident.
+`exam.sh --exam 3` = rev 2 since this date (`--rev 1` reproduces the rev-1 exam); `--exam 2` is unchanged. Records: `meta.exam_rev` 2,
+`meta.score.version` 6 (+ `meta.score.rev` 2), `meta.det`, `meta.homing_starts`. **Rev-2 scores do not compare with rev-1 Exam #3 scores**
+(the plant moved: the arm ff is fresher, every test starts from the standing snapshot, the P5 rows read the worst of three stands);
+`exam_report.py` names the revision in its header and flags a mixed exam dir.
+
+### 14.1 Frame-stamped streams (LOCKSTEP_DET=1; Aspired branch MM_rig_derand; set only by `exam.sh --exam 3` rev 2)
+Rule of section 7 / lockstep-rig: every producer in the loop stamps with the frame, publishes every period, reliable QoS, no wall clock.
+What was still arriving on the wall clock in rev 1, and what replaces it (robot / every other rig: the code paths are unchanged, every
+change sits behind LOCKSTEP_DET inside the lock-step branches):
+
+| stream | rev 1 (wall clock) | rev 2 (frame-stamped) |
+|---|---|---|
+| arm targets (Test 0 poses) | commander -> `/BridgeModule/joint_set_arms`, merged by the conductor the moment they arrived (a different frame per run; first trace difference 1.8 s after Test 0's walk -> balance switch) | inside the commander's per-step sync message `/MovementModule/ls_sync` {t, arms, pol}; MovementModule takes the sync of the same period as the cmd_vel it uses (arm_pose_command obs, the arm park's start), the Bridge conductor joins it with MovementModule's command of frame F and enqueues one merged item: arms land on frame F in both modules |
+| arm gravity ff | `arm_ff_only.py` by `docker exec` after the commander banner, g(q) of the newest joints_imu at 30 Hz WALL (= one sample per 100–170 ms of sim at rtf 3–5), applied on arrival | started with the stack (`_nodes_in_container.sh`), one g(q) per policy frame computed from THAT frame's joints_imu, published with the stamp on `/BridgeModule/arm_tau_ff_ls`; the conductor waits for it and enqueues it right before frame F's command; the setter's freshness / fade clock runs on sim time |
+| arm-owner window (walk owns the arms) | 0.25 s of wall = 0.75–1.25 s of sim | 0.25 s of sim, from the frame stamps |
+| policy switch requests | `/MovementModule/policy` "name@ms" read whenever it arrived (a late arrival = a later frame) | in the sync message: the request of the period MovementModule steps on |
+| active policy (commander) | the latched `policy_active_stamped`, read in whichever pose slot it arrived | MovementModule publishes `/MovementModule/ls_state` "name@since@frame" after every step; the commander's step at pose t reads the frame W = the last policy frame <= t - 18 ms and waits for exactly that message |
+| test start frames | each test's lines sent when the host saw the previous record | the plan (14.4) |
+| sim events (push_at / enc_at) | planned 20 ms ahead (~1 ms of wall margin before the frame) | 40 ms ahead (a full period of margin) |
+| Test 6 injection check | the newest cached joints_imu sample | the joints_imu of the step's frame W |
+| localiser noise before a homing goto (found by tracing, 14.5) | the stream since the commander's start-up (its first pose 0.10–0.22 s into the run) feeds the pose filter between the teleport and the goto | reseeded on each queue item's start step (the goto reseeds again, as before) |
+
+### 14.2 The fixed homing starts (`tools/homing_starts.py`, the one place; copied into every record as `meta.homing_starts`)
+Until rev 2 the 10 starts were seeded draws (`homing_trials.sh --ring`: distance uniform 3–5 m, bearing uniform 0–360°, heading uniform
+±180°, `random.seed(seed·1000 + trial)`): the same in every exam, so not noise, but one accidental sample of the task (the seed-1 bearings:
+4, 28, 80, 89, 123, 193, 214, 221, 260, 274°, two clusters with 90° empty behind the desk; distances and headings drawn independently). The designed table: bearing $b_i = 36° \cdot i$ around the goal from the approach heading
+(0° = straight behind the desk, 180° = in front of the edge on the approach line), distance 3 m for even i and 5 m for odd i, heading
+relative to the direction to the goal cycling away (+180°) / +90° (goal on the right) / −90° (goal on the left). Start
+$= (g_x + d\cos(\psi + b), g_y + d\sin(\psi + b))$; worked, trial 2: $b$ = 36°, d = 5 m → x = 0.35 + 5 cos 36° = 4.395, y = 5 sin 36° = 2.939;
+to the goal 216°, +90° → 306° = −54.0°. Goal (0.35, 0, 0°), n 10:
+
+| trial | bearing ° | distance m | heading rule | x m | y m | yaw ° |
+|---|---|---|---|---|---|---|
+| 1 | 0 | 3 | away | 3.350 | 0.000 | 0.0 |
+| 2 | 36 | 5 | +90 | 4.395 | 2.939 | -54.0 |
+| 3 | 72 | 3 | -90 | 1.277 | 2.853 | 162.0 |
+| 4 | 108 | 5 | away | -1.195 | 4.755 | 108.0 |
+| 5 | 144 | 3 | +90 | -2.077 | 1.763 | 54.0 |
+| 6 | 180 | 5 | -90 | -4.650 | 0.000 | -90.0 |
+| 7 | 216 | 3 | away | -2.077 | -1.763 | -144.0 |
+| 8 | 252 | 5 | +90 | -1.195 | -4.755 | 162.0 |
+| 9 | 288 | 3 | -90 | 1.277 | -2.853 | 18.0 |
+| 10 | 324 | 5 | away | 4.395 | -2.939 | -36.0 |
+
+`homing_trials.sh --fixed` reads it; `exam.sh` rev 2 queues the same lines in the plan (14.4).
+
+### 14.3 Reset before each test, three P5 stands
+- **Reset**: the first item of every test (Test 0's first pose, the ladders, the pushes, the first homing trial, the stumble, Test 6) starts
+  with `reset_at` to the standing snapshot (taken at sim 10 s) instead of a teleport that keeps the posture: a stumble in one test cannot
+  carry into the next. Between the items of one test nothing changed (the 3 handover poses and the 10 trials keep their teleports; a
+  test's internal sequence, e.g. the stand after walking, still follows its walk). Records carry `start_reset`.
+- **P5 x 3**: Test 6 enters the stress pattern's stand three times: `enc:P5:stand` (as rev 1), then twice `enc:P5:pre<k>` (8 s at
+  vx 0.30 on perfect encoders) → `enc:P5:settle<k>` (P5 lands again, 4 s) → `enc:P5:stand<k>` (15 s, measured like the first, incl. the
+  injection check). `enc_stand_drift` / `enc_stand_lifts` / `enc_stand_rate` and the three P5 rows read the WORST of the three per metric;
+  the record keeps all three (`meta.score.enc.patterns.P5.stands`). A fall in any repeated segment is a P5 fall. +54 s of sim.
+  Worked: drifts 1.8 / 2.2 / 42.0 cm → 42.0 cm → $s = 0$ of 1.5 (rev 1 would have read 1.8 cm → $(10 - 1.8)/9 \cdot 1.5 = 1.37$).
+
+### 14.4 The plan: the whole exam queued at start-up
+The drivers (`handover.sh`, `exam2_test.sh`, `homing_trials.sh`) sent each test's command lines when the previous test's record had
+appeared on the host (a 0.5 s wall poll = 1.5–2.5 s of sim at rtf 3–5): every test after the first started on a wall-dependent frame
+(the scheduler starts an item at max(previous result + 2 s, the moment its line was read)). Rev 2: `exam.sh` writes `plan_<policy>.txt`
+(the same lines) before the rig starts, the commander queues it before its first step (`HOMING_PLAN_FILE`), every item then starts on
+the planned frame (the first at sim 15 s, each next one 2 s of sim after the previous result); the drivers only wait for the records
+(`EXAM_PLAN_BASE` = the record files' line counts taken before the launch).
+
+### 14.5 Validation
+All runs 2026-11-13 evening, seed 1, n 10, ff on, unpinned rigs (instances 11-13, the derand worktree), `EXAM_TRACE=1`.
+**Same policy, same seed = the same record** (`tools/det_compare.py`: every value of the record except stamp / tag / instance / the
+trajectory file names, the sim's per-frame hashes of ctrl / qpos / qvel, MovementModule's per-step obs / action / command hashes):
+
+| pair | rigs at once | record values differing | sim frames identical | MovementModule steps identical | score |
+|---|---|---|---|---|---|
+| lm7p_enc_best fixA vs fixB (same round) | 3 | 0 of 267 258 | 1 213 292 (all) | 121 072 (all) | 57.4 / 57.4 |
+| lm7p_enc_best fixA vs fixC (next round) | 3 / 3 | 0 of 267 258 | 1 212 646 (all) | 121 022 (all) | 57.4 / 57.4 |
+| lm7n_enc_survive fixN1 vs fixN2 (two rounds) | 3 / 3 | 0 of 270 866 | 1 282 890 (all) | 128 022 (all) | 56.5 / 56.5 |
+| lm7p_enc_best fixA (3 rigs) vs alone (the only rig on the box) | 3 / 1 | 0 of 267 258 | 1 213 292 (all) | 121 072 (all) | 57.4 / 57.4 |
+
+**The leak the traces found on the way** (the first draft frame-stamped the streams above and passed two rigs started together, then a
+third run differed): the first differing frame was 1021.444 s, ctrl only (qpos equal), 3.8 s into homing trial 1; MovementModule's obs
+differed at that step with the same imu hash and the same command to 5 decimals; the commander's 10 Hz trajectory of that trial already
+differed in its FIRST row in the filtered localiser pose only (fx 3.3470 vs 3.3492 m, true x equal). Cause: the localiser-noise stream is
+reseeded at each goto, but the 2 s between the trial's teleport and its goto feed the pose filter from the stream as it stood since the
+commander's start-up, and the commander's first pose message is 0.10–0.22 s into the run (when its DDS reader matched; four rigs: 0.098,
+0.158, 0.178, 0.218 s). Fix: under LOCKSTEP_DET the stream is also reseeded on every queue item's start step. (lm7n's pair before the fix
+shows the same cause in 14 record values of homing trial 1 while its physics stayed identical.)
+
+**Rev-1 spread beside it** (the same checkpoint, rev 1, same day): lm7p_enc_best 59.9 / 56.3 (land_lm7p 16:02 / rev1P 18:31), 60 s stand
+lifts 1 / 4, 120 s stand lifts 8 / 5, P5 drift 6.3 / 10.6 cm, homing arrived 7 / 5; rev 2 three runs: 57.4 · 1 · 10 · 6.6 cm (worst of
+6.6 / 0.8 / 4.7) · 7, sd 0 on every number. The spread is gone from the re-run, not from the policy: a different seed or plant change still
+moves the outcome (section 6); rev 2 makes it the same outcome every time for one seed, and samples the P5 stand three times on purpose.
+
+**Meaning changes vs rev 1** (why rev-2 scores do not compare with rev 1): (a) the arm ff is g(q) of every policy frame (20 ms of sim)
+from the first command on, rev 1 = one sample per 100–170 ms of sim from ~5–15 s on (the robot: 30 Hz real time = 33 ms) -- closer to the
+robot; (b) the walk -> balance arm-owner window is 0.25 s of sim (the robot's 0.25 s), rev 1 0.75–1.25 s of sim; (c) push_at / enc_at land
+one policy period later relative to their segment (`push_at_rel` 0.04 s); (d) every test starts from the standing snapshot; (e) the
+homing starts are the designed table (harder for some policies: lm7p_enc_best 6–7 of 10 arrive, lm7n_enc_survive 1 of 10 -- it arrived
+0–1 of 10 on the rev-1 starts too); (f) the P5 constraints read the worst of three stands: lm7n_enc_survive (band-trained, 8 of 8 single
+P5 stands passed in rev 1) read 1.7 / 6.2 / 2.1 cm and 0 / 2 / 0 lifts -> `enc_stand_drift` 6.2 > 5 cm and `enc_stand_lifts` 2 > 1 fail;
+the provisional limits were set on single stands and need a look before the study enforces them on the worst of three.
+
+**Exam #2 untouched**: `exam.sh --exam 2` on the default worktree after the change, lm7k_micro_legs_squeeze: 59.5 (stored v4 range
+58.6–63.4), record structure identical to the stored v4 record merge_mm_robot_2026-11-12 (same top-level / meta / score / metric /
+constraint keys; the only key-path differences are the floor-contact fields of fallen pushes, which exist per fall); the s1_pilot study's
+own 32-policy `--exam 2` batch ran on the changed scripts the same evening (exam_version 2, score v4, no new keys). `score_v4` of the 156
+stored v4 records recomputes byte-identically (old and new exam_score.py, one sha256 over all); the 9 stored rev-1 Exam #3 records
+re-score via `exam_calibrate.py --e3 --apply` (on copies) to their stored scores, version 5.
+
+**Wall time per policy** (one full Exam #3): rev 1 434 s (rev1P, 3 rigs) / 482 s (land_lm7p, 4 rigs); rev 2 463–472 s (3 rigs), 398 s alone (rtf 6.25);
+rev 2 adds 54 s of sim (two more P5 entries); rtf 5.3–6.3 per rig at 3 rigs (rev 1 in the same round 5.8): the frame joins cost
+~0.1–0.25 ms per policy frame (the sim's policy-frame wait 1.43–1.65 ms vs 1.38 ms in rev 1); the homing timeouts (120 s each) set
+most of the difference between policies.

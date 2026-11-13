@@ -64,6 +64,12 @@ ENC=0; EXB="$EXAM"; [[ "$EXAM" == 3 ]] && { ENC=1; EXB=2; }
 # Exam #3 rev 2 (2026-11-13): the de-randomized exam (DET = everything below that reads it); --exam 1 / 2 never see it
 DET=0; P5N=3; [[ "$EXAM" == 3 && "$REV" == 2 ]] && DET=1
 [[ "$EXAM" != 3 || "$REV" == 1 || "$REV" == 2 ]] || { echo "unknown --rev $REV (Exam #3: 2 = de-randomized, 1 = the first Exam #3)"; exit 1; }
+# rev 2 needs a rig worktree whose stack knows LOCKSTEP_DET (Aspired MM_rig_derand, 2026-11-13): an older stack ignores the plan file and the
+# drivers (which only wait in rev 2) would wait for records that never come -- refuse instead
+if [[ $DET -eq 1 ]] && ! grep -q 'HOMING_PLAN_FILE' "$ASPIRED_W/MovementModule/Utils/homing_commander.py" 2>/dev/null; then
+  echo "FATAL: Exam #3 rev 2 needs a rig worktree with the LOCKSTEP_DET stack (Aspired branch MM_rig_derand); $ASPIRED_W has none."
+  echo "       ASPIRED=<worktree with MM_rig_derand> bash $0 ...   or   --rev 1 (the first Exam #3)"; exit 1
+fi
 # v4 (2026-11-09): the balance partner = the line's CURRENT balance policy of the rig worktree, read now (one value for the whole run)
 if [[ -z "$BALANCE" ]]; then
   BALANCE="$(tr -d '[:space:]' < "$MMP/CURRENT_BALANCE" 2>/dev/null)"
