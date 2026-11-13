@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""exam_report.py <exam dir> [--seed S --n N --balance B --tag T --wall SECONDS --parallel P] -- the ranking table of one exam run.
+"""exam_report.py <exam dir> [--exam 3|2|1 --seed S --n N --balance B --tag T --wall SECONDS --parallel P --rev R] -- the ranking table of one exam run.
+(--rev, 2026-11-13: Exam #3 rev 2 -> "EXAM #3 rev 2" in the head, score_e3(rev=2); each policy's exam_<name>.json meta.exam_rev wins.)
 
 Reads per policy homing_<name>.jsonl (Test 2 records) and stairs_<name>.jsonl (Test 1 record) from tools/exam.sh, prints the table,
 writes <exam dir>/EXAM.md and appends the same block to mujoco_sim/results/EXAM.md.
@@ -18,6 +19,8 @@ import argparse, glob, json, os, statistics as st, sys, datetime
 ap = argparse.ArgumentParser()
 ap.add_argument("exam_dir"); ap.add_argument("--exam", default="1"); ap.add_argument("--seed", default="?"); ap.add_argument("--n", default="?"); ap.add_argument("--balance", default="?")
 ap.add_argument("--tag", default=""); ap.add_argument("--wall", type=int, default=0); ap.add_argument("--parallel", default="?")
+ap.add_argument("--rev", default=None, help="Exam #3 revision exam.sh ran (2 = the repeated P5 stand, 2026-11-13); a policy's own record "
+                "(<exam dir>/exam_<name>.json meta.exam_rev) wins; mixed revisions are named in the header")
 a = ap.parse_args()
 EX = a.exam_dir
 SIM = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,13 +46,28 @@ E3 = a.exam == "3"   # EXAM #3 (2026-11-13) = Exam #2's tests + Test 6 (encoder 
 if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.score_v2), one row per policy
     names = sorted({os.path.basename(p)[len("ladders_"):-len(".jsonl")] for p in glob.glob(f"{EX}/ladders_*.jsonl")} | set(names))
     R = []
+    REV = {}   # Exam #3 rev 2 (2026-11-13): per policy (rev, p5_stands) -- the record exam_record.py wrote says how it was examined, else --rev
+
+    def rev_of(nm):
+        try:
+            m = json.load(open(f"{EX}/exam_{nm}.json")).get("meta") or {}
+        except (OSError, ValueError, AttributeError):
+            m = {}
+        if int(m.get("exam_version") or 0) == 3:
+            return int(m.get("exam_rev") or 1), (m.get("det") or {}).get("p5_stands")
+        return (int(a.rev) if a.rev else 1), None
     for nm in names:
         H = load(f"{EX}/homing_{nm}.jsonl"); L = load(f"{EX}/ladders_{nm}.jsonl"); P = load(f"{EX}/pushes_{nm}.jsonl"); HO = load(f"{EX}/handover_{nm}.jsonl")
         U = load(f"{EX}/stumble_{nm}.jsonl")   # Test 5 (2026-11-02): key columns only, not scored
         sc = exam_score.score_v4(HO, L[-1] if L else None, P[-1] if P else None, H, n_homing=int(a.n) if a.n != "?" else 10)   # v4 (2026-11-09)
         if E3:
             EN = load(f"{EX}/enc_{nm}.jsonl")
-            sc = exam_score.score_e3(HO, L[-1] if L else None, P[-1] if P else None, H, enc=EN[-1] if EN else None, n_homing=int(a.n) if a.n != "?" else 10)
+            REV[nm] = rev_of(nm)
+            if REV[nm][0] >= 2:   # rev 2: the P5 rows read the worst of the repeated P5 stands (score version 6)
+                sc = exam_score.score_e3(HO, L[-1] if L else None, P[-1] if P else None, H, enc=EN[-1] if EN else None, n_homing=int(a.n) if a.n != "?" else 10,
+                                         rev=REV[nm][0], p5_stands=REV[nm][1])
+            else:
+                sc = exam_score.score_e3(HO, L[-1] if L else None, P[-1] if P else None, H, enc=EN[-1] if EN else None, n_homing=int(a.n) if a.n != "?" else 10)
         m = {x["key"]: x for x in sc["metrics"]}
         R.append((nm, sc, m, exam_score.ladder_swing(L[-1] if L else None), exam_score.stumble_summary(U[-1] if U else None),
                   exam_score.ladder_scuffs(L[-1] if L else None),
@@ -92,7 +110,16 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
                      f"| {stu(su, 'vx+0.15')} | {stu(su, 'vx+0.30')} | {su['falls'] if su else '—'} | {times.get(nm) or '-'} |")
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     ff = os.environ.get("EXAM_FF", "1")
-    head = (f"## EXAM #{a.exam} {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
+    revlab = ""   # Exam #3 rev 2 (2026-11-13): "EXAM #3 rev 2"; rev 1 without --rev = the header as it always was; mixed revisions said loudly
+    revs = sorted({rv for rv, _ in REV.values()}) if E3 else []
+    if len(revs) > 1:
+        revlab = " MIXED REVISIONS (" + "; ".join(f"rev {r_}: " + ", ".join(n_ for n_, (rv, _) in sorted(REV.items()) if rv == r_) for r_ in revs) + \
+                 " -- scores of different revisions do not compare)"
+    elif revs and (revs[0] >= 2 or a.rev):
+        revlab = f" rev {revs[0]}"
+    if E3 and a.rev and revs and revs != [int(a.rev)]:
+        revlab += f" (exam.sh said --rev {a.rev}; the records say rev {'/'.join(str(r_) for r_ in revs)})"
+    head = (f"## EXAM #{a.exam}{revlab} {a.tag} — {stamp} — {len(R)} policies, seed {a.seed}, homing n {a.n}, balance {a.balance}, {a.parallel} instances, "
             f"wall {a.wall // 60} min {a.wall % 60} s, arm ff {ff}\n\nScore by quality (tools/exam_score.py score_v4 since 2026-11-09 = v3 + rung error e = |v - c| / max(|c|, 0.05) + 48 pushes "
             f"(8 directions) + calibration {exam_score.load_cal_v4()[1]}; 'feasible' = every v4 constraint passes (no_falls, walks_vx/vy/wz >= 90 % of the rungs from 0.10 m/s / 0.2 rad/s at gain >= 0.5, "
             f"track_floor_* and tilt_floor = provisional 'p'); v3: hard fails = height / tilt {exam_score.TILT_FAIL_DEG:g} deg / "
@@ -111,6 +138,8 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
               "| worst in-band stand drift cm | walk tilt change° (worst P1..P5) | impact ΔBW · roughness Δrad · power ΔW (walk, vs P0) | offset pushes: score · held · energy J (Test 2 same pushes: score · held) "
               "| Test 6 points stab/gait/energy/push | low rungs passed vx · vy · wz (information) | bias (recorded): worst lean° · walk vy mm/s · P5 lean° | Exam #3 constraints |",
               "|" + "---|" * 15]
+        R2 = any(rv >= 2 for rv, _ in REV.values())   # rev 2: the P5 stand cell = the worst of the N stands + each stand in brackets
+        if R2: el[0] = el[0].replace("| P5 stand: drift cm · lifts · rate rad/s ", "| P5 stand (rev 2: the WORST of the N stands; each stand drift · lifts in brackets): drift cm · lifts · rate rad/s ")
         for nm, sc, *_ in R:
             es = sc.get("enc") or {}
             wl = (sc.get("e3") or {}).get("walks_low")
@@ -124,8 +153,11 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
             op = es.get("pushes") or []; t2 = [p["t2"] for p in op if p.get("t2")]
             pts = {q: sum(m["pts"] for m in sc["metrics"] if m["test"] == "enc" and m["quality"] == q) for q in ("stability", "gait", "energy", "pushes")}
             d5 = (es["patterns"].get(sk) or {}).get("d") or {}
+            S5 = (es["patterns"].get(sk) or {}).get("stands") or []   # rev 2: each P5 stand's own drift / lifts ('✗' = fell / hard fail)
+            p5e = "" if not S5 else (" (" + " / ".join("✗" if not s_.get("measured") else g(100 * s_["drift_m"], 1) for s_ in S5) + " cm · "
+                                     + " / ".join(g(s_.get("lifts"), 0) for s_ in S5) + ")")
             el.append(f"| {nm} | **{sc['score']}** | {sc.get('score_v4')} | {es['result']} | {'ok' if inj['ok'] else 'NOT VERIFIED'} ({1000 * inj['max_err']:.2f}) | {es['falls']} / {es['push_falls']} "
-                      f"| {g(None if X['enc_stand_drift'] is None else 100 * X['enc_stand_drift'], 1)} · {g(X['enc_stand_lifts'], 0)} · {g(X['enc_stand_rate'], 3)} "
+                      f"| {g(None if X['enc_stand_drift'] is None else 100 * X['enc_stand_drift'], 1)} · {g(X['enc_stand_lifts'], 0)} · {g(X['enc_stand_rate'], 3)}{p5e} "
                       f"| {g(None if X['enc_creep'] is None else 100 * X['enc_creep'], 1)} | {g(X['enc_walk_tilt'])} | {g(X['enc_impact'], 3)} · {g(X['enc_smooth'], 4)} · {g(X['enc_power'], 1)} "
                       f"| {g(mrow(sc, 'enc_pushes').get('value'), 3)} · {sum(1 for p in op if p['held'])}/{len(op)} · {g(X['enc_push_energy'], 0)} ({g(mean([t['score'] for t in t2]), 3)} · {sum(1 for t in t2 if t['held'])}/{len(t2)}) "
                       f"| {pts['stability']:.2f} / {pts['gait']:.2f} / {pts['energy']:.2f} / {pts['pushes']:.2f} | {wls} "
@@ -137,7 +169,12 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
                   "pushes 1.43 (the 8 offset pushes, the Test 2 formula); a fall under a pattern or an offset push not held halves survival like any fall. 'same run, v4 rules' = score_v4 of the same record "
                   f"(Exam #3 and Exam #2 scores do not compare). Constraints: walks_vx / vy / wz count EVERY ladder rung (30 / 12 / 32) at gain >= 0.5, share >= {exam_score.WALK_SHARE:g} (v4 counted from 0.10 m/s / 0.2 rad/s); added: stand_quiet (foot lifts 60 s stand + 120 s stand after walking <= {exam_score.STAND_QUIET_LIFTS:g} p), "
                   f"enc_no_falls, enc_stand_drift <= {exam_score.ENC_STAND_DRIFT_CM:g} cm p, enc_stand_lifts <= {exam_score.ENC_STAND_LIFTS:g} p (p = provisional); the 'feasible' column above includes them. "
-                  "The bias numbers (lean, drift vs P0) are recorded, not scored.\n\n" + "\n".join(el) + "\n")
+                  "The bias numbers (lean, drift vs P0) are recorded, not scored."
+                  + (" REV 2 (2026-11-13, score version 6): the P5 stand is entered 3 times (stand; then 8 s walking at 0.30 on perfect encoders, P5 lands again, stand2; "
+                     "the same for stand3) and the three P5 stand rows + enc_stand_drift / enc_stand_lifts read the WORST of them per metric (drift, lifts, rate = the max); "
+                     "a fall / hard fail in any repeated segment is a P5 fall; every test starts from the standing snapshot; Test 3 starts = the fixed table "
+                     "(tools/homing_starts.py). Weights and ramps as rev 1." if R2 else "")
+                  + "\n\n" + "\n".join(el) + "\n")
     print(block)
     open(f"{EX}/EXAM.md", "w").write(block)
     with open(f"{SIM}/results/EXAM.md", "a") as fh:

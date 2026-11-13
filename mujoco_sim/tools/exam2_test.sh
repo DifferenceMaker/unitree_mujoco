@@ -36,7 +36,9 @@ JL="$SIM/logs/$([[ "$WHAT" == ladders ]] && echo staircase || echo "$WHAT")$SFX.
 for _i in $(seq 1 240); do L2="$(readlink -f "$LOG" 2>/dev/null)"; [[ -n "$L2" && "$L2" -nt "$CMD" ]] && grep -q "\[homing\] pose=" "$L2" 2>/dev/null && break; sleep 0.5; done
 grep -q "\[homing\] pose=" "$LOG" || { echo "FATAL: homing_commander not up in $LOG"; exit 2; }
 touch "$JL"; n0=$(wc -l < "$JL")
-echo "$WHAT${START:+ $START}" >> "$CMD"
+# EXAM_PLAN_BASE (Exam #3 rev 2, 2026-11-13): the item is in the commander's plan file already -- send nothing, wait for the record after
+# the line count exam.sh took before the rig started
+if [[ -n "${EXAM_PLAN_BASE:-}" ]]; then n0="$EXAM_PLAN_BASE"; else echo "$WHAT${START:+ $START}" >> "$CMD"; fi
 for _i in $(seq 1 $((TO * 2))); do [[ "$(wc -l < "$JL")" -gt "$n0" ]] && break; sleep 0.5; done
 [[ "$(wc -l < "$JL")" -gt "$n0" ]] || { echo "!! no $WHAT record within $TO s"; echo "stop" >> "$CMD"; exit 3; }
 python3 - "$JL" <<'PY'

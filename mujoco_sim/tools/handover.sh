@@ -15,7 +15,10 @@ CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL
 for _i in $(seq 1 240); do L2="$(readlink -f "$LOG" 2>/dev/null)"; [[ -n "$L2" && "$L2" -nt "$CMD" ]] && grep -q "\[homing\] pose=" "$L2" 2>/dev/null && break; sleep 0.5; done
 grep -q "\[homing\] pose=" "$LOG" || { echo "FATAL: homing_commander not up in $LOG"; exit 2; }
 touch "$JL"; n0=$(wc -l < "$JL"); np=$(wc -w <<< "$POSES")
-for p in $POSES; do echo "handover $START $p" >> "$CMD"; done
+# EXAM_PLAN_BASE (Exam #3 rev 2, 2026-11-13): the commander already holds these items (its plan file, queued before the first step) --
+# send nothing, count this test's records from the line count exam.sh took BEFORE the rig started
+if [[ -n "${EXAM_PLAN_BASE:-}" ]]; then n0="$EXAM_PLAN_BASE"
+else for p in $POSES; do echo "handover $START $p" >> "$CMD"; done; fi
 for _i in $(seq 1 $((TO * 2))); do [[ "$(wc -l < "$JL")" -ge $((n0 + np)) ]] && break; sleep 0.5; done
 got=$(( $(wc -l < "$JL") - n0 ))
 [[ $got -ge $np ]] || { echo "!! $got of $np handover records within $TO s"; echo "stop" >> "$CMD"; }

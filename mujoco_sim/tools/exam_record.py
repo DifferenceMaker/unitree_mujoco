@@ -17,6 +17,10 @@ in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/ex
               check, the 8 offset pushes under the stress pattern, + 2 Hz rows); meta.exam_version 3, meta.score = exam_score.score_e3
               (version 5, exam 3): Test 6 scored inside the qualities, + walks_vx / vy / wz over EVERY rung + the constraints enc_no_falls / enc_stand_drift /
               enc_stand_lifts, + score_v4 / parts_v4 / feasible_v4 = the same run under the v4 rules. --exam 2 writes what it always wrote.
+  EXAM #3 rev 2 (--exam 3 --rev 2 [--det 0/1 --test-reset 0/1 --p5-stands N --homing-fixed 0/1], 2026-11-13): + meta.exam_rev 2,
+              meta.homing_starts (tools/homing_starts.py meta(), with --homing-fixed 1), meta.det {lockstep_det, test_reset, p5_stands};
+              meta.score = score_e3(rev=2) (version 6, 'rev' 2: the P5 stand entered N times, the P5 rows read the worst). Without --rev
+              the record is the rev-1 record, key for key.
   stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
               scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")
   homing      the 10 trial records (homing_<name>.jsonl) + per trial a 2 Hz copy of its 10 Hz trajectory (t, phase, x, y, yaw, cmd, truth vel)
@@ -37,6 +41,12 @@ ap.add_argument("--stop-dist", default=None, help="homing: torso front -> desk e
 ap.add_argument("--exam", default="1"); ap.add_argument("--instance", default="")
 ap.add_argument("--arm-ff", default=None, help="1 = the arm gravity feedforward sender ran in the rig (exam.sh EXAM_FF, default since 2026-11-03); 0 = PD-only arms")
 ap.add_argument("--tilt-fail-deg", default=None, help="Exam #2 v3 hard fail b (default exam_score.TILT_FAIL_DEG = 45.8, env EXAM_TILT_FAIL_DEG)"); ap.add_argument("--ail", default=os.path.expanduser("~/Projects/robot_projects/repos/aspired-isaac-lab"))
+# Exam #3 rev 2 (2026-11-13): exam.sh passes these only for --exam 3 rev 2; without --rev the record is exactly the rev-1 / Exam #2 record
+ap.add_argument("--rev", default=None, help="Exam #3 revision (2 = the repeated P5 stand, fixed homing starts, a reset per test): meta.exam_rev, score_e3(rev=)")
+ap.add_argument("--det", default=None, help="1 = the frame-stamped lock-step mode (meta.det.lockstep_det)")
+ap.add_argument("--test-reset", default=None, help="1 = every test began with a reset to the standing snapshot (meta.det.test_reset)")
+ap.add_argument("--p5-stands", default=None, help="how many times the stress pattern's stand was entered (meta.det.p5_stands; score_e3 default 3 for rev 2)")
+ap.add_argument("--homing-fixed", default=None, help="1 = Test 3 used the fixed start table (tools/homing_starts.py) -> meta.homing_starts")
 a = ap.parse_args()
 SIM = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 EX, name, slug = a.exam_dir, a.name, a.slug
@@ -79,6 +89,10 @@ if stairs:
 
 ladders = pushes = stumble = enc = None
 E3 = a.exam == "3"   # Exam #3 (2026-11-13) = the Exam #2 record + Test 6
+iv = lambda x: int(x) if x not in (None, "") else None
+REV = iv(a.rev) if E3 else None   # rev 2 (2026-11-13): only an Exam #3 record carries a revision
+if a.rev not in (None, "") and not E3:
+    print(f"exam_record: --rev {a.rev} ignored (only Exam #3 has revisions; --exam {a.exam})")
 if a.exam in ("2", "3"):
     import re, subprocess
     ladders = load(f"{EX}/ladders_{name}.jsonl"); ladders = ladders[-1] if ladders else None
@@ -141,7 +155,10 @@ spec = importlib.util.spec_from_file_location("exam_report_lib", os.path.join(SI
 score = None
 if spec and os.path.exists(spec.origin):
     lib = importlib.util.module_from_spec(spec); spec.loader.exec_module(lib)
-    if E3:   # Exam #3 (2026-11-13): the v4 rows re-weighted inside the qualities + the Test 6 rows + the Exam #3 constraints
+    if E3 and REV is not None:   # Exam #3 rev 2 (2026-11-13): the P5 rows read the worst of the repeated P5 stands; version 6
+        score = lib.score_e3(handover, ladders, pushes, homing, enc=enc, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None,
+                             rev=REV, p5_stands=iv(a.p5_stands))
+    elif E3:   # Exam #3 (2026-11-13): the v4 rows re-weighted inside the qualities + the Test 6 rows + the Exam #3 constraints
         score = lib.score_e3(handover, ladders, pushes, homing, enc=enc, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
     elif a.exam == "2":   # v4 (2026-11-09): v3 (hard fails, 60 s stand rows) + rung error floor 0.05 + 48 pushes + the constraints block;
         # score_v3 / score_v2 stay callable for the older records (their version is in meta.score.version)
@@ -160,6 +177,13 @@ rec = {"meta": {"exam_version": int(a.exam), "tag": a.tag, "stamp": stamp, "seed
                 "arm_ff": int(a.arm_ff) if a.arm_ff not in (None, "") else None,   # 2026-11-03: the plant (1 = arm gravity ff sender in the rig, 0 = PD-only arms, None = a record before the flag)
                 "rig": rig, "score": score, "metrics_doc": "unitree_mujoco/mujoco_sim/results/EXAM_METRICS.md"},
        "homing": homing, "stairs": stairs, "handover": handover}
+if REV is not None:   # Exam #3 rev 2 (2026-11-13): the revision, the fixed homing start table, the rig's determinism / reset flags
+    rec["meta"]["exam_rev"] = REV
+    if a.homing_fixed == "1":   # tools/homing_starts.py = THE table (imported by path, like exam_score)
+        hs_spec = importlib.util.spec_from_file_location("homing_starts", os.path.join(SIM, "tools", "homing_starts.py"))
+        hs = importlib.util.module_from_spec(hs_spec); hs_spec.loader.exec_module(hs)
+        rec["meta"]["homing_starts"] = hs.meta(goal=(0.35, 0.0, 0.0), n=int(a.n))
+    rec["meta"]["det"] = {"lockstep_det": iv(a.det), "test_reset": iv(a.test_reset), "p5_stands": iv(a.p5_stands)}
 if a.exam in ("2", "3"):
     rec["ladders"], rec["pushes"], rec["stumble"] = ladders, pushes, stumble
     if E3: rec["enc"] = enc   # only an Exam #3 record has the key (an Exam #2 record's structure is what it was)

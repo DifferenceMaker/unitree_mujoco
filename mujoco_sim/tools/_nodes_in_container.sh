@@ -136,6 +136,16 @@ elif [ "$MODE" = "w" ]; then
       python3 /workspace/ActionModule/Utils/arm_ik_commander.py ) & PIDS+=($!)
   fi
 elif [ "$MODE" = "h" ]; then
+  if [ "${LOCKSTEP_DET:-0}" = "1" ] && [ "${LOCKSTEP_DET_FF:-0}" = "1" ]; then
+    # EXAM #3 rev 2 (2026-11-13; only tools/exam.sh --exam 3 sets LOCKSTEP_DET_FF): the arm gravity feedforward starts WITH the stack,
+    # in its frame-stamped mode (ActionModule/Utils/arm_ff_only.py: one g(q) per policy frame -> /BridgeModule/arm_tau_ff_ls), because
+    # the Bridge conductor joins every MovementModule command with that frame's ff from the first command on (a sender started later by
+    # docker exec would land its first sample on a wall-dependent frame). Same log path as exam.sh's docker-exec sender of rev 1.
+    need_venv ActionModule
+    echo ">>> [container] LOCK-STEP DET: arm gravity ff sender (frame-stamped) -> /tmp/arm_ff_only.log"
+    ( cd /workspace && PYTHONPATH="/workspace/.global:/workspace/ActionModule/main:${PYTHONPATH:-}" \
+      /workspace/.venv/ActionModule/bin/python3 ActionModule/Utils/arm_ff_only.py > /tmp/arm_ff_only.log 2>&1 ) & PIDS+=($!)
+  fi
   # HOMING (2026-10-27): the goal-to-velocity commander drives the walk policy from the localiser pose (sim: rt/sim_base_pose +
   # the measured LIO-SAM noise) to a workstation goal and requests the balance switch at arrival. Commands from the host via
   # HOMING_CMD_FILE ("goto X Y YAW_DEG" | "walk" | "stop"); trial records to HOMING_LOG (JSON lines).

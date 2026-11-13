@@ -20,7 +20,13 @@ N=10; GOAL="0.35 0 0"; DMIN=3.0; DMAX=5.0; SEED=1; SETTLE=25; CONTAINER=archb_lo
 while [[ $# -gt 0 ]]; do case "$1" in
   --n) N="$2"; shift 2;; --goal) GOAL="$2"; shift 2;; --dmin) DMIN="$2"; shift 2;; --dmax) DMAX="$2"; shift 2;;
   --seed) SEED="$2"; shift 2;; --settle) SETTLE="$2"; shift 2;; --tag) TAG="$2"; shift 2;; --no-plot) PLOT=0; shift;; --ring) RING=1; shift;;
+  --fixed) FIXED=1; shift;;
   *) echo "unknown arg: $1"; exit 1;; esac; done
+# --fixed (Exam #3 rev 2, 2026-11-13): the starts are the designed table of tools/homing_starts.py (one place: bearing i x 36 deg, 3 / 5 m,
+# heading away / +90 / -90 to the goal) instead of the seeded draws; --seed then only names the batch.
+# EXAM_PLAN_BASE (env, rev 2): the commander already holds the trials (its plan file) -- send nothing, wait for record base + t.
+FIXED="${FIXED:-0}"; PLAN_BASE="${EXAM_PLAN_BASE:-}"
+if [[ "$FIXED" == 1 ]]; then mapfile -t FIXED_STARTS < <(python3 "$SIM/tools/homing_starts.py" --goal "$GOAL" --n "$N"); fi
 SFX="${LOCOSW_INSTANCE:+_$LOCOSW_INSTANCE}"; CONTAINER="archb_locosw$SFX"   # instances (2026-10-28): the rig launched with the same LOCOSW_INSTANCE
 SFIFO="$SIM/logs/.sim_stdin$SFX"; CMD="$SIM/logs/.homing_cmd$SFX"; LOG="$SIM/logs/stack_locosw_latest$SFX.log"; JL="$SIM/logs/homing_trials$SFX.jsonl"
 TRAJ="$SIM/logs/homing_traj$SFX"; BENCH="${HOMING_BENCH_FILE:-$SIM/results/HOMING_BENCH.md}"; STAMP="$(date +%Y-%m-%d_%H-%M-%S)"
@@ -43,15 +49,16 @@ wait_active() {  # wait_active <policy> <timeout>
 touch "$JL"
 for t in $(seq 1 "$N"); do
   # start pose: distance d in [DMIN, DMAX] from the goal, direction spread +-60 deg around the approach line (behind the table edge), random heading
-  read -r SX SY SYAW <<< "$(python3 -c "
+  if [[ "$FIXED" == 1 ]]; then read -r SX SY SYAW <<< "${FIXED_STARTS[$((t - 1))]}"
+  else read -r SX SY SYAW <<< "$(python3 -c "
 import math,random; random.seed($SEED*1000+$t)
 d=random.uniform($DMIN,$DMAX); u=random.uniform(-60,60); th=math.radians($GPSI)+(random.uniform(0,2*math.pi) if $RING else math.pi+math.radians(u))
-print(f'{$GX+d*math.cos(th):.3f} {$GY+d*math.sin(th):.3f} {random.uniform(-180,180):.1f}')")"
+print(f'{$GX+d*math.cos(th):.3f} {$GY+d*math.sin(th):.3f} {random.uniform(-180,180):.1f}')")"; fi
   echo "=== trial $t: teleport to ($SX, $SY, $SYAW deg), goal ($GOAL)"
   # the COMMANDER runs the trial (2026-10-28): walk policy back -> teleport at a planned SIM time (rt/sim_cmd teleport_at) ->
   # goto HOMING_TRIAL_DROP_S later -- every input lands on a planned frame, so a lock-step batch is reproducible bit for bit
-  n0=$(mark); echo "trial $SX $SY $SYAW $GOAL" >> "$CMD"
-  if wait_result "$n0" $((${HOMING_TIMEOUT_S:-90} + 60 + SETTLE)); then tail -1 "$JL" | python3 -c "
+  if [[ -n "$PLAN_BASE" ]]; then n0=$((PLAN_BASE + t - 1)); else n0=$(mark); echo "trial $SX $SY $SYAW $GOAL" >> "$CMD"; fi
+  if wait_result "$n0" $((${HOMING_TIMEOUT_S:-90} + 60 + SETTLE)); then { if [[ -n "$PLAN_BASE" ]]; then sed -n "$((n0 + 1))p" "$JL"; else tail -1 "$JL"; fi; } | python3 -c "
 import sys,json
 r=json.loads(sys.stdin.readline()); e=r.get('final_err') or {}; s=r.get('err_at_switch') or {}
 def off(d): return (-d['along_m'], -d['lateral_m'], -d['heading_deg']) if d else (None,)*3   # to-go error -> the robot's offset (fwd, left, CCW)

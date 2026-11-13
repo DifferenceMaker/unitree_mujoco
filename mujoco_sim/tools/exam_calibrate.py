@@ -26,7 +26,10 @@ per-policy keys one value per policy.
 --e3 (2026-11-13, Exam #3): the CURRENT table = the v4 calibration + the Test 6 keys (exam_score.CAL_E3_DEFAULT: enc_walk_tilt, enc_impact,
   enc_smooth, enc_push_energy, enc_power -- all provisional), --write goes to results/exam3_calibration.json (a complete table; the v4
   file stays intact) and by default ONLY the enc_* keys are re-derived (--keys overrides): the v4 rows keep their v4 ramps, so a row's
-  score s is the same number in a v4 and an Exam #3 reading of one run. The population must be Exam #3 records (they carry "enc")."""
+  score s is the same number in a v4 and an Exam #3 reading of one run. The population must be Exam #3 records (they carry "enc").
+--rev N (2026-11-13, Exam #3 rev 2): keep only Exam #3 records of revision N (meta.exam_rev; none = rev 1). Without it the revision counts
+  are printed (--e3) and a mixed population is flagged. --apply re-scores a version-6 record (rev 2) with score_e3(rev=meta.exam_rev,
+  p5_stands=meta.det.p5_stands); a version-5 record (rev 1) exactly as before."""
 import argparse, glob, importlib.util, json, os, statistics as st, time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -84,6 +87,8 @@ def main():
     ap.add_argument("--v4", action="store_true", help="Exam #2 v4: e floor 0.05, base = the v2 table, --write -> results/exam2_calibration_v4.json")
     ap.add_argument("--keys", default="", help="--v4 / --e3: comma-separated fnmatch patterns of the keys to re-derive (default: all keys; --e3: enc_*)")
     ap.add_argument("--e3", action="store_true", help="Exam #3: base = the v4 table + the Test 6 keys, --write -> results/exam3_calibration.json, default keys enc_*")
+    ap.add_argument("--rev", type=int, default=None, help="Exam #3 revision filter (2026-11-13): only Exam #3 records of this rev (1 = no meta.exam_rev, 2 = "
+                    "the repeated P5 stand) enter the population / --apply; without it the rev counts are printed and a mixed population is flagged")
     a = ap.parse_args()
     if a.e3 and not a.keys: a.keys = "enc_*"
     import fnmatch
@@ -99,6 +104,17 @@ def main():
         r = json.load(open(f))
         if int((r.get("meta") or {}).get("exam_version") or 1) >= 2 and r.get("ladders"):
             r["_file"] = f; recs.append(r)
+    # Exam #3 revisions (2026-11-13): rev 2 enters the P5 stand three times -- never pool the revisions silently
+    rev_of = lambda r: int(r["meta"].get("exam_rev") or 1) if int(r["meta"].get("exam_version") or 1) == 3 else None
+    if a.rev is not None:
+        n0 = len(recs); recs = [r for r in recs if rev_of(r) == a.rev]
+        print(f"--rev {a.rev}: {len(recs)} of {n0} records kept (Exam #3 rev {a.rev} only)\n")
+    revc = {}
+    for r in recs:
+        if rev_of(r) is not None: revc[rev_of(r)] = revc.get(rev_of(r), 0) + 1
+    if a.e3 or any(k >= 2 for k in revc):
+        print("Exam #3 records by revision: " + (", ".join(f"rev {k}: {v}" for k, v in sorted(revc.items())) or "none")
+              + ("  -- WARNING: MIXED revisions pooled (pass --rev N to keep one)" if len(revc) > 1 else "") + "\n")
     S = samples(recs, e_floor)
     cur = dict(es.CAL_DEFAULT)
     if a.v4:   # the v4 table starts from the v2 calibration (the keys v4 does not touch keep their v2 ends)
@@ -139,7 +155,7 @@ def main():
                "records": [os.path.relpath(r["_file"], os.path.expanduser("~/Projects/robot_projects/repos")) for r in recs],
                "rule": f"provisional keys (exam_score.PROV) g = p10, b = p90 of the population (oriented), span >= {MIN_SPAN} x median; the rest kept",
                "cal": {k: list(v) for k, v in new.items()}}
-        if a.e3: out["source"] = f"{len(recs)} Exam #3 records"
+        if a.e3: out["source"] = f"{len(recs)} Exam #3 records"; out["exam3_revs"] = {f"rev {k}": v for k, v in sorted(revc.items())}
         if a.v4 or a.e3:
             out.update({"base": base_ver, "e_floor": e_floor, "keys": a.keys or "all",
                         "recalibrated": sorted(k for k, *_r in rows if pick(k)),
@@ -153,8 +169,10 @@ def main():
             ver = int((r["meta"].get("score") or {}).get("version") or 2)   # each record keeps its own score version (v4: the v4 table)
             fn = {2: es.score_v2, 3: es.score_v3}.get(ver, es.score_v4)
             sc = fn(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), n_homing=int(r["meta"].get("n") or 10))
-            if ver == 5:   # Exam #3 (2026-11-13, meta.score.version 5): score_e3 with the record's own "enc" (without this it would drop to v4)
-                sc = es.score_e3(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), enc=r.get("enc"), n_homing=int(r["meta"].get("n") or 10))
+            if ver in (5, 6):   # Exam #3 (2026-11-13, meta.score.version 5; rev 2 = version 6): score_e3 with the record's own "enc" (without this it would drop to v4)
+                rv = int(r["meta"].get("exam_rev") or (2 if ver == 6 else 1))   # rev 2: the worst of the repeated P5 stands
+                kw = {"rev": rv, "p5_stands": (r["meta"].get("det") or {}).get("p5_stands")} if rv >= 2 else {}
+                sc = es.score_e3(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), enc=r.get("enc"), n_homing=int(r["meta"].get("n") or 10), **kw)
             r["meta"]["score"] = sc
             path = r.pop("_file")
             json.dump(r, open(path, "w"), separators=(",", ":"))

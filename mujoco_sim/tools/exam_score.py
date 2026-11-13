@@ -761,6 +761,15 @@ def score_v4(handover, ladders, pushes, homing, n_homing=10, cal=None, tilt_fail
 #   enc_stand_lifts  (PROVISIONAL) foot lifts in that stand <= ENC_STAND_LIFTS
 # Not measurable (Test 6 did not run, the P5 stand fell, or the INJECTION CHECK failed: the stack's observed joint angle minus the sim truth
 # must equal the pattern within ENC_INJ_TOL, else the policy never saw the offsets) = c 1, infeasible; the Test 6 rows then score 0.
+#
+# REV 2 (2026-11-13, meta.exam_rev 2, meta.score.version 6 + 'rev' 2): section 13.4 found the P5 stand bimodal for an untrained policy (it
+# stands still or creeps away stepping; one 15 s stand samples that coin once), so the stress pattern's stand is entered THREE times
+# (enc:P5:stand; then pre2 = 8 s walk at 0.30 on perfect encoders, settle2 = P5 lands again, stand2; the same again for 3) and the three P5
+# rows + enc_stand_drift / enc_stand_lifts read the WORST of the three PER METRIC: drift = max, lifts = max, rate = max. A fall / hard
+# fail in any of the repeated segments is a fall of P5 (survival, enc_no_falls) and makes the P5 stand "not measured"; each stand runs the
+# injection check. Weights, ramps, calibration: rev 1's. Worked: drifts 1.8 / 2.2 / 42.0 cm -> 42.0 cm -> s = 0 of 1.5 (rev 1 would have
+# read 1.8 cm -> (10 - 1.8) / 9 x 1.5 = 1.37). Rev 1 records (one stand) score exactly as before (version 5).
+E3_REV2_P5_STANDS = 3
 ENC_STAND_DRIFT_CM = float(os.environ.get("EXAM_ENC_STAND_DRIFT_CM", "5.0"))   # PROVISIONAL (section 13.4)
 ENC_STAND_LIFTS = float(os.environ.get("EXAM_ENC_STAND_LIFTS", "1"))          # PROVISIONAL (section 13.4)
 WALKS_LOW_SHARE = float(os.environ.get("EXAM_WALKS_LOW_SHARE", "0.5"))        # INFORMATION only since the all-rungs rule (e3.walks_low; no constraint)
@@ -832,11 +841,31 @@ def _push_row(p):
             "energy": p.get("energy_J"), "mode": p.get("mode"), "dir": p.get("dir"), "level": p.get("level")}
 
 
-def enc_summary(enc, tilt_fail_deg=None):
+def _stand_no(phase):
+    """'stand' -> 1, 'stand2' -> 2, ... (rev 2's repeated stress-pattern stands); any other phase -> None"""
+    if phase == "stand":
+        return 1
+    return int(phase[5:]) if phase.startswith("stand") and phase[5:].isdigit() and int(phase[5:]) >= 2 else None
+
+
+def _rep_phase(phase):
+    """rev 2 (2026-11-13): the stress pattern's repeated block 'pre2' / 'settle2' / 'stand2', 'pre3', ... -> True"""
+    base = phase.rstrip("0123456789")
+    return base in ("pre", "settle", "stand") and phase != base and int(phase[len(base):]) >= 2
+
+
+def enc_summary(enc, tilt_fail_deg=None, stands=None):
     """Test 6 -> {ran, result, patterns: {key: {name, stress, max_abs, stand, walk (the raw segment numbers), fell [reasons], d {the paired
     differences vs P0: lean, stand_drift, walk_vy, ...}, inj}}, base (= P0's raw numbers), worst / mean {bias metric} over the in-band
     patterns, stress (the stress pattern's key), pushes [the offset pushes, _push_row + seg], falls (pattern segments, every pattern),
-    stress_falls (of them under the stress pattern), push_falls, injection {ok, max_err, why}}. Missing record -> {ran: False}."""
+    stress_falls (of them under the stress pattern), push_falls, injection {ok, max_err, why}}. Missing record -> {ran: False}.
+    Exam #3 rev 2 (2026-11-13): the stress pattern's stand is entered N times (phases stand, stand2, stand3, each after its own pre<k> walk on
+    perfect encoders and settle<k>). Then patterns[stress]: 'stand' = the WORST of the N per metric (drift_m, lifts, rate_rms = the max; the
+    other fields from the stand with the largest drift_m; None = not measured when ANY of them fell / hard-failed / is missing), 'stands' =
+    each one's own numbers (+ phase, fell, inj), 'n_stands', 'stand_worst_of' {metric: phase}; a fall / hard fail in any of the repeated
+    segments (pre<k> / settle<k> / stand<k>) is a fall of the pattern like one in 'stand'; every stand runs the injection check. d (the bias
+    numbers vs P0) keeps reading the FIRST stand. stands = the expected N for the stress pattern (score_e3 rev 2: 3): fewer in the record =
+    'missing' (an abort, counted once). A record with one stand (rev 1) gives exactly the rev-1 output."""
     tf = TILT_FAIL_DEG if tilt_fail_deg is None else tilt_fail_deg
     if not enc or not enc.get("segments"):
         return {"ran": False, "result": (enc or {}).get("result") or "MISSING"}
@@ -862,10 +891,18 @@ def enc_summary(enc, tilt_fail_deg=None):
 
     b_st, b_wk = raw(b.get("stand")), raw(b.get("walk"))
     inj_ok, inj_err, inj_why = True, 0.0, []
+    ST_KEYS = ("pitch", "roll", "tilt", "z", "drift_fwd", "drift_lat", "drift_m", "drift_mm_s", "yaw_rate_deg_s", "T", "lifts", "rate_rms", "tau2_mean")
+    keep = lambda r, ks: None if r is None else {k: r.get(k) for k in ks}
     for key, pm in meta.items():
         ph = by.get(key, {})
-        fell = [f"{n}: {r}" for n, r in ((n, _enc_hard(ph[n], z_stand, tf)) for n in ("settle", "stand", "walk", "hold") if n in ph) if r]
-        missing = [n for n in ("stand", "walk") if n not in ph]
+        rep = any(_rep_phase(n) for n in ph)   # rev 2: the stress pattern's repeated stands -> its segments in record order
+        fell = [f"{n}: {r}" for n, r in ((n, _enc_hard(ph[n], z_stand, tf)) for n in
+                                         ([n for n in ph if n in ("settle", "stand", "walk", "hold") or _rep_phase(n)] if rep else
+                                          [n for n in ("settle", "stand", "walk", "hold") if n in ph])) if r]
+        sn = sorted((_stand_no(n), n) for n in ph if _stand_no(n))   # [(1, 'stand'), (2, 'stand2'), ...]
+        n_exp = stands if (stands and pm.get("stress")) else 0
+        missing = [n for n in ("stand", "walk") if n not in ph] + [f"stand{k}" for k in range(2, n_exp + 1) if f"stand{k}" not in ph]
+        multi = max(len(sn), n_exp) > 1
         st_, wk = raw(ph.get("stand")), raw(ph.get("walk"))
         d = {}
         if st_ and b_st and key != ENC_BASE:
@@ -881,28 +918,53 @@ def enc_summary(enc, tilt_fail_deg=None):
                       "walk_vx": round(wk["vx"] - b_wk["vx"], 4), "walk_tilt": round(wk["tilt"] - b_wk["tilt"], 3),
                       "walk_pitch": round(wk["pitch"] - b_wk["pitch"], 3), "walk_roll": round(wk["roll"] - b_wk["roll"], 3),
                       "walk_impact": rnd(df("impact_bw"), 4), "walk_smooth": rnd(df("smooth"), 6), "walk_power": rnd(df("P_W"), 2)})
-        # the injection check of this pattern's stand: the stack observed true + offset, and the sim echoes the table it applies
+        # the injection check of this pattern's stand(s): the stack observed true + offset, and the sim echoes the table it applies
         off = pm.get("offsets") or []
-        e = (ph.get("stand") or {}).get("enc") or {}
-        inj = {"n": e.get("inj_n"), "err": None, "echo": None}
-        if e.get("obs_minus_true") and len(e["obs_minus_true"]) == len(off):
-            inj["err"] = round(max(abs(a - o) for a, o in zip(e["obs_minus_true"], off)), 5)
-        if any(off):
-            inj["echo"] = bool(e.get("eo")) and len(e["eo"]) == len(off) and max(abs(a - o) for a, o in zip(e["eo"], off)) < 2e-5
-        else:
-            inj["echo"] = not e.get("eo_n")   # perfect encoders: the sim sends no echo
-        if "stand" in ph and not ph["stand"].get("fell"):
-            if inj["err"] is None: inj_ok = False; inj_why.append(f"{key}: no observed joint angles")
+        injs = {}
+        for _, n in (sn or [(1, "stand")]):
+            e = (ph.get(n) or {}).get("enc") or {}
+            inj = {"n": e.get("inj_n"), "err": None, "echo": None}
+            if e.get("obs_minus_true") and len(e["obs_minus_true"]) == len(off):
+                inj["err"] = round(max(abs(a - o) for a, o in zip(e["obs_minus_true"], off)), 5)
+            if any(off):
+                inj["echo"] = bool(e.get("eo")) and len(e["eo"]) == len(off) and max(abs(a - o) for a, o in zip(e["eo"], off)) < 2e-5
             else:
-                inj_err = max(inj_err, inj["err"])
-                if inj["err"] > ENC_INJ_TOL: inj_ok = False; inj_why.append(f"{key}: observed - true off by {1000 * inj['err']:.1f} mrad")
-            if not inj["echo"]: inj_ok = False; inj_why.append(f"{key}: the sim's echo does not match the pattern")
-        keep = lambda r, ks: None if r is None else {k: r.get(k) for k in ks}
+                inj["echo"] = not e.get("eo_n")   # perfect encoders: the sim sends no echo
+            injs[n] = inj
+            lab = key if n == "stand" else f"{key} {n}"
+            if n in ph and not ph[n].get("fell"):
+                if inj["err"] is None: inj_ok = False; inj_why.append(f"{lab}: no observed joint angles")
+                else:
+                    inj_err = max(inj_err, inj["err"])
+                    if inj["err"] > ENC_INJ_TOL: inj_ok = False; inj_why.append(f"{lab}: observed - true off by {1000 * inj['err']:.1f} mrad")
+                if not inj["echo"]: inj_ok = False; inj_why.append(f"{lab}: the sim's echo does not match the pattern")
+        inj = next(iter(injs.values()))
+        st_keep, extra = keep(st_, ST_KEYS), {}
+        if multi:   # rev 2: the stress pattern's stand entered N times -> the worst per metric; each stand's own numbers in 'stands'
+            rows = []
+            for _, n in sn:
+                r = raw(ph[n])
+                row = dict({"phase": n}, **(keep(r, ST_KEYS) or {"lifts": sum(ph[n].get("lifts") or [0])}))
+                row.update({"measured": r is not None, "fell": _enc_hard(ph[n], z_stand, tf), "inj": injs[n]})
+                rows.append(row)
+            worst_of = None
+            if rows and all(row["measured"] for row in rows) and not any(_stand_no(m) for m in missing):
+                wst = max(rows, key=lambda row: row["drift_m"])   # the first of equal drifts
+                st_keep = {k: wst.get(k) for k in ST_KEYS}; worst_of = {"drift_m": wst["phase"]}
+                for mk in ("lifts", "rate_rms"):
+                    vals = [(row[mk], row["phase"]) for row in rows if row.get(mk) is not None]
+                    if vals:
+                        st_keep[mk], worst_of[mk] = max(vals, key=lambda t: t[0])
+            else:
+                st_keep = None   # one of the N fell / hard-failed / was not reached: the worst is not measured
+            ns_ = [i["n"] for i in injs.values() if i["n"] is not None]; er_ = [i["err"] for i in injs.values() if i["err"] is not None]
+            inj = {"n": min(ns_) if ns_ else None, "err": max(er_) if er_ else None, "echo": all(i["echo"] for i in injs.values())}
+            extra = {"n_stands": max(len(sn), n_exp), "stands": rows, "stand_worst_of": worst_of}
         out["patterns"][key] = {"name": pm.get("name"), "stress": bool(pm.get("stress")), "max_abs": pm.get("max_abs"), "offsets": off,
-                                "stand": keep(st_, ("pitch", "roll", "tilt", "z", "drift_fwd", "drift_lat", "drift_m", "drift_mm_s", "yaw_rate_deg_s", "T",
-                                                    "lifts", "rate_rms", "tau2_mean")),
+                                "stand": st_keep,
                                 "walk": keep(wk, ("vx", "vy", "vx_err", "lat_v", "yaw_rate_deg_s", "pitch", "roll", "tilt", "z", "T", "impact_bw", "smooth", "P_W", "rate_rms")),
-                                "lifts_stand": sum((ph.get("stand") or {}).get("lifts") or [0]), "fell": fell, "missing": missing, "d": d, "inj": inj}
+                                "lifts_stand": max(sum(ph[n].get("lifts") or [0]) for _, n in sn) if multi and sn else sum((ph.get("stand") or {}).get("lifts") or [0]),
+                                "fell": fell, "missing": missing, "d": d, "inj": inj, **extra}
         n_bad = len(fell) + (1 if missing and not fell else 0)   # a pattern the test never reached (an abort) counts once
         out["falls"] += n_bad
         if pm.get("stress"): out["stress_falls"] += n_bad
@@ -965,6 +1027,11 @@ def walks_low(ladders):
     return out
 
 
+def _enc_bad(p):
+    """a pattern's falls for the texts, or 'not reached'; rev 2 (n_stands) names what was not reached (rev 1: the text as it was)"""
+    return ", ".join(p["fell"]) or ("not reached" + (f" ({', '.join(p['missing'])})" if p.get("n_stands") else ""))
+
+
 def constraints_e3(es, ladders, drift_cm=None, lifts=None, metrics=None):
     """the Exam #3 constraints added to constraints_v4's eight (the same record format); ladders unused since walks_low left the list"""
     dc = ENC_STAND_DRIFT_CM if drift_cm is None else float(drift_cm); lf = ENC_STAND_LIFTS if lifts is None else float(lifts)
@@ -985,32 +1052,51 @@ def constraints_e3(es, ladders, drift_cm=None, lifts=None, metrics=None):
         add("enc_no_falls", None, 0, "<=", False, why); add("enc_stand_drift", None, dc, "<=", True, why); add("enc_stand_lifts", None, lf, "<=", True, why)
         return C
     inj = es["injection"]; P = es["patterns"]; sk = es.get("stress")
-    fl = "; ".join(f"{k} {', '.join(p['fell']) or 'not reached'}" for k, p in P.items() if p["fell"] or p["missing"])
+    fl = "; ".join(f"{k} {_enc_bad(p)}" for k, p in P.items() if p["fell"] or p["missing"])
     bad_inj = None if inj["ok"] else "INJECTION NOT VERIFIED (" + "; ".join(inj["why"][:3]) + "): the policy may never have seen the offsets"
     pf = [f"{r['mode']} {r['dir']}" for r in es.get("pushes") or [] if not r["held"]]
     add("enc_no_falls", None if bad_inj else es["falls"], 0, "<=", False,
         bad_inj or (f"{es['falls']} falls / hard fails in the stand / walk of the patterns ({', '.join(P)})" + (f": {fl}" if fl else "") +
                     f"; offset pushes not held {len(pf)}/{len(es.get('pushes') or [])}" + (f" ({', '.join(pf)})" if pf else "") + " (scored in survival + pushes, not counted here)"))
     sst = (P.get(sk) or {}).get("stand") if sk else None
-    why_none = bad_inj or (None if sst else f"the {sk} stand was not measured (fell / not reached)")
+    ns = int((P.get(sk) or {}).get("n_stands") or 1) if sk else 1   # rev 2: the stress stand entered N times, the worst of N is read
+    if ns <= 1:
+        why_none = bad_inj or (None if sst else f"the {sk} stand was not measured (fell / not reached)")
+        add("enc_stand_drift", None if why_none else 100.0 * sst["drift_m"], dc, "<=", True,
+            why_none or f"base drift over the {sst['T']:g} s stand under {sk} (the unscaled measured residuals), cm; PROVISIONAL limit {dc:g} cm (2026-11-13)")
+        add("enc_stand_lifts", None if why_none else sst["lifts"], lf, "<=", True,
+            why_none or f"foot lifts in the stand under {sk}; PROVISIONAL limit {lf:g} (2026-11-13)")
+        return C
+    S = P[sk].get("stands") or []
+    bad = [f"{r['phase']} {r['fell'] or 'not measured'}" for r in S if not r.get("measured")] + [f"{m} not reached" for m in P[sk].get("missing") or [] if _stand_no(m)]
+    why_none = bad_inj or (None if sst else f"the worst of {ns} {sk} stands was not measured ({', '.join(bad) or 'fell / not reached'})")
+    dr_each = " / ".join("—" if r.get("drift_m") is None else "%.1f" % (100.0 * r["drift_m"]) for r in S)
+    lf_each = " / ".join("—" if r.get("lifts") is None else "%g" % r["lifts"] for r in S)
     add("enc_stand_drift", None if why_none else 100.0 * sst["drift_m"], dc, "<=", True,
-        why_none or f"base drift over the {sst['T']:g} s stand under {sk} (the unscaled measured residuals), cm; PROVISIONAL limit {dc:g} cm (2026-11-13)")
+        why_none or f"base drift over the {sst['T']:g} s stand under {sk} (the unscaled measured residuals), the WORST of {ns} stands "
+                    f"({dr_each} cm), cm; PROVISIONAL limit {dc:g} cm (2026-11-13)")
     add("enc_stand_lifts", None if why_none else sst["lifts"], lf, "<=", True,
-        why_none or f"foot lifts in the stand under {sk}; PROVISIONAL limit {lf:g} (2026-11-13)")
+        why_none or f"foot lifts in the stand under {sk}, the worst of {ns} stands ({lf_each}); PROVISIONAL limit {lf:g} (2026-11-13)")
     return C
 
 
-def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None, tilt_fail_deg=None, track_floor=None, tilt_floor_deg=None):
+def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None, tilt_fail_deg=None, track_floor=None, tilt_floor_deg=None,
+             rev=None, p5_stands=None):
     """EXAM #3 (2026-11-13): the v4 rows on the v4 ramps, re-weighted inside stability / gait / energy / pushes to make room for the
     Test 6 rows (see the block comment above) + the Exam #3 constraints. Keys as score_v4 (fleetdeck) + 'exam' 3, 'enc' (enc_summary +
     the offset pushes paired with Test 2), 'e3' (shares, walks_low, limits), 'score_v4' / 'feasible_v4' (the same record under the v4
-    rules, for the comparison with every v4 record). version 5."""
+    rules, for the comparison with every v4 record). version 5.
+    rev 2 (Exam #3 rev 2, 2026-11-13; meta.exam_rev 2): the stress pattern's stand is entered p5_stands times (default E3_REV2_P5_STANDS = 3)
+    and the P5 rows / constraints read the WORST of them (enc_summary); version 6, 'rev' 2, e3.rev / e3.p5_stands. Weights, ramps and the
+    calibration are rev 1's. rev None / 1 = rev 1 exactly (version 5)."""
+    R2 = int(rev or 1) >= 2
+    n_exp = (int(p5_stands) if p5_stands is not None else E3_REV2_P5_STANDS) if R2 else None
     C, cver = (cal, "given") if cal is not None else load_cal_e3()
     out = {}
     v4 = score_v4(handover, ladders, pushes, homing, n_homing=n_homing, tilt_fail_deg=tilt_fail_deg, track_floor=track_floor, tilt_floor_deg=tilt_floor_deg)
     # the same rows again on the Exam #3 table (identical ramps unless exam3_calibration.json re-derived a v4 key)
     sc = score_v3(handover, ladders, pushes, homing, n_homing=n_homing, cal=C, tilt_fail_deg=tilt_fail_deg, _v4=True, _out=out)
-    es = enc_summary(enc, tilt_fail_deg)
+    es = enc_summary(enc, tilt_fail_deg) if n_exp is None else enc_summary(enc, tilt_fail_deg, stands=n_exp)
     ok_inj = bool(es.get("ran")) and es["injection"]["ok"]
     X = enc_values(es) if ok_inj else {k: None for k in E3_W}
     R = lambda x, k: ramp(x, *C[k])
@@ -1030,9 +1116,11 @@ def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None,
 
     sk = es.get("stress") or "P5"
     void = "" if ok_inj else (" -- NOT MEASURED (" + ("Test 6 did not run" if not es.get("ran") else "injection not verified") + ")")
-    add("stability", "enc_stand_drift", f"Test 6: stand under {sk} (the unscaled measured residuals): BASE drift in 15 s" + void, X["enc_stand_drift"], "m", ck="stand_drift")
-    add("stability", "enc_stand_lifts", f"Test 6: stand under {sk}: foot lifts" + void, X["enc_stand_lifts"], "", ck="stand_lifts")
-    add("stability", "enc_stand_rate", f"Test 6: stand under {sk}: torso roll/pitch rate rms" + void, X["enc_stand_rate"], "rad/s", ck="stand_rate")
+    ns = int(((es.get("patterns") or {}).get(sk) or {}).get("n_stands") or n_exp or 1)   # rev 2: the P5 rows read the worst of ns stands
+    ws = f", worst of {ns} stands" if ns > 1 else ""
+    add("stability", "enc_stand_drift", f"Test 6: stand under {sk} (the unscaled measured residuals){ws}: BASE drift in 15 s" + void, X["enc_stand_drift"], "m", ck="stand_drift")
+    add("stability", "enc_stand_lifts", f"Test 6: stand under {sk}{ws}: foot lifts" + void, X["enc_stand_lifts"], "", ck="stand_lifts")
+    add("stability", "enc_stand_rate", f"Test 6: stand under {sk}{ws}: torso roll/pitch rate rms" + void, X["enc_stand_rate"], "rad/s", ck="stand_rate")
     add("stability", "enc_creep", "Test 6: the worst in-band stand (P1..P4): BASE drift in 15 s" + void, X["enc_creep"], "m", ck="stand_drift")
     add("stability", "enc_walk_tilt", "Test 6: walking at 0.30 under offsets: the largest torso-tilt change vs P0 (P1..P5)" + void, X["enc_walk_tilt"], "deg", ck="enc_walk_tilt", prov=True)
     add("gait", "enc_impact", "Test 6: walking under offsets: touchdown impact p95 change vs P0 (mean P1..P5)" + void, X["enc_impact"], "BW", ck="enc_impact", prov=True)
@@ -1063,14 +1151,16 @@ def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None,
             m["value"] = m["value"] + n6; m["s"] = round((0.5 ** m["value"]) if ran else 0.0, 3); m["pts"] = round(m["w"] * m["s"], 3)
             m["label"] = "falls (Tests 0, 1, 3, 6 incl. the offset pushes) incl. hard fails"
     if es.get("ran"):
-        sc["falls"] = sc["falls"] + [["enc", f"{k}: {', '.join(p['fell']) or 'not reached'}"] for k, p in es["patterns"].items() if p["fell"] or p["missing"]] \
+        sc["falls"] = sc["falls"] + [["enc", f"{k}: {_enc_bad(p)}"] for k, p in es["patterns"].items() if p["fell"] or p["missing"]] \
             + [["enc", f"offset push {r['mode']} {r['dir']}: {r.get('why') or 'fell'}"] for r in es.get("pushes") or [] if not r["held"]]
     sc["parts"] = {q: round(sum(m["pts"] for m in M if m["quality"] == q), 1) for q in QUALITIES}
     sc["tests"] = {}
     for m in M:
         sc["tests"][m["test"]] = round(sc["tests"].get(m["test"], 0.0) + m["pts"], 1)
     sc["score"] = round(sum(sc["parts"].values()), 1)
-    sc["version"] = 5; sc["exam"] = 3; sc["calib"] = cver
+    sc["version"] = 6 if R2 else 5; sc["exam"] = 3
+    if R2: sc["rev"] = int(rev)   # Exam #3 rev 2 (2026-11-13): the repeated P5 stand; a rev-1 score has no 'rev' key
+    sc["calib"] = cver
     sc["cal"] = {k: list(v) for k, v in C.items()}
     sc["enc"] = es
     sc["constraints"] = constraints_v4(sc, out["L"], out["P"], track_floor, tilt_floor_deg, walk_min=E3_WALK_MIN_CMD)   # walks_*: every rung
@@ -1087,4 +1177,5 @@ def score_e3(handover, ladders, pushes, homing, enc=None, n_homing=10, cal=None,
                 "limits": {"enc_stand_drift_cm": ENC_STAND_DRIFT_CM, "enc_stand_lifts": ENC_STAND_LIFTS, "stand_quiet_lifts": STAND_QUIET_LIFTS}, "walk_min_cmd": E3_WALK_MIN_CMD,
                 "provisional": ["stand_quiet", "enc_stand_drift", "enc_stand_lifts"] + sorted(PROV_E3), "inj_tol_rad": ENC_INJ_TOL, "base": ENC_BASE, "stress": es.get("stress"),
                 "values": X}
+    if R2: sc["e3"].update({"rev": int(rev), "p5_stands": ns})
     return sc
