@@ -284,7 +284,7 @@ echo "    stack log: $STACK_LOG"
 HOMING_EX2=(); for _v in HOMING_TURN_LAW HOMING_K_TURN HOMING_RESCUE_S HOMING_RESCUE_DEG HOMING_DESK HOMING_DESK_MARGIN HOMING_TIMEOUT_S HOMING_PUSH_LOG HOMING_TRIAL_T0 \
                          HOMING_STUMBLE_SEED HOMING_STUMBLE_PY HOMING_STUMBLE_LOG STUMBLE_AMP \
                          $(compgen -e | grep -E '^HOMING_(STAND0_S|STAND1_S|WALK1_VX|WALK1_S|LADDER_ENGAGE|LADDER_BAL_S|CRAWL_N|SELF_CONTACT_N|LIMIT_DEG|RUNG_S|LADDER_STOP_S)$') \
-                         HOMING_PLAN_FILE HOMING_TEST_RESET HOMING_ENC_STRESS_STANDS LOCKSTEP_DET LOCKSTEP_DET_FF; do   # + Test 5 stumble (2026-11-02); + Exam #2 v3 knobs (2026-11-03); + Exam #3 rev 2 (2026-11-13: tools/exam.sh --exam 3 sets these, nothing else does)
+                         HOMING_PLAN_FILE HOMING_TEST_RESET HOMING_ENC_STRESS_STANDS LOCKSTEP_DET LOCKSTEP_DET_FF HOMING_LADDER_TOPS; do   # + Test 5 stumble (2026-11-02); + Exam #2 v3 knobs (2026-11-03); + Exam #3 rev 2 (2026-11-13: tools/exam.sh --exam 3 sets these, nothing else does); + rev 3's HOMING_LADDER_TOPS (2026-11-14, exam.sh rev 3 only)
   [[ -n "${!_v:-}" ]] && HOMING_EX2+=(-e "$_v=${!_v}"); done
 docker run --rm --name "$CONTAINER" --network host --ipc=host ${LOCOSW_CPUS:+--cpuset-cpus "$LOCOSW_CPUS"} \
   "${HOMING_EX2[@]}" \

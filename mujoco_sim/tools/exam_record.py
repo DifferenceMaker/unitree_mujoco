@@ -21,6 +21,9 @@ in the specific policy page"): aspired-isaac-lab/milestone_checkpoints/<slug>/ex
               meta.homing_starts (tools/homing_starts.py meta(), with --homing-fixed 1), meta.det {lockstep_det, test_reset, p5_stands};
               meta.score = score_e3(rev=2) (version 6, 'rev' 2: the P5 stand entered N times, the P5 rows read the worst). Without --rev
               the record is the rev-1 record, key for key.
+  EXAM #3 rev 3 (--rev 3, 2026-11-14; exam.sh's default since then): the rev-2 record on the rev-3 ladder (vx -0.50..+0.80, wz +-0.60:
+              exam_score.ladder_tops(3)); meta.exam_rev 3, meta.score = score_e3(rev=3) (version 7, 'rev' 3), meta.score.e3.ladder = {tops,
+              expected / ran rung counts per axis, extra, missing, match} (match False = the rig did not run that ladder: printed below).
   stumble     (exam #2, 2026-11-02) Test 5: the rough-floor record (field seed + checksum, per rung the ground-corrected swing apexes,
               scuffs / catches / trips, tilt, falls) + its rows at 10 Hz; None in older records (the report prints "—")
   homing      the 10 trial records (homing_<name>.jsonl) + per trial a 2 Hz copy of its 10 Hz trajectory (t, phase, x, y, yaw, cmd, truth vel)
@@ -42,7 +45,8 @@ ap.add_argument("--exam", default="1"); ap.add_argument("--instance", default=""
 ap.add_argument("--arm-ff", default=None, help="1 = the arm gravity feedforward sender ran in the rig (exam.sh EXAM_FF, default since 2026-11-03); 0 = PD-only arms")
 ap.add_argument("--tilt-fail-deg", default=None, help="Exam #2 v3 hard fail b (default exam_score.TILT_FAIL_DEG = 45.8, env EXAM_TILT_FAIL_DEG)"); ap.add_argument("--ail", default=os.path.expanduser("~/Projects/robot_projects/repos/aspired-isaac-lab"))
 # Exam #3 rev 2 (2026-11-13): exam.sh passes these only for --exam 3 rev 2; without --rev the record is exactly the rev-1 / Exam #2 record
-ap.add_argument("--rev", default=None, help="Exam #3 revision (2 = the repeated P5 stand, fixed homing starts, a reset per test): meta.exam_rev, score_e3(rev=)")
+ap.add_argument("--rev", default=None, help="Exam #3 revision (2 = the repeated P5 stand, fixed homing starts, a reset per test; 3 = rev 2 on the "
+                "rev-3 ladder, vx to 0.80 and wz +-0.60): meta.exam_rev, score_e3(rev=)")
 ap.add_argument("--det", default=None, help="1 = the frame-stamped lock-step mode (meta.det.lockstep_det)")
 ap.add_argument("--test-reset", default=None, help="1 = every test began with a reset to the standing snapshot (meta.det.test_reset)")
 ap.add_argument("--p5-stands", default=None, help="how many times the stress pattern's stand was entered (meta.det.p5_stands; score_e3 default 3 for rev 2)")
@@ -155,9 +159,14 @@ spec = importlib.util.spec_from_file_location("exam_report_lib", os.path.join(SI
 score = None
 if spec and os.path.exists(spec.origin):
     lib = importlib.util.module_from_spec(spec); spec.loader.exec_module(lib)
-    if E3 and REV is not None:   # Exam #3 rev 2 (2026-11-13): the P5 rows read the worst of the repeated P5 stands; version 6
+    if E3 and REV is not None:   # Exam #3 rev 2 (2026-11-13): the P5 rows read the worst of the repeated P5 stands; version 6 (rev 3: + the rev-3 ladder, version 7)
         score = lib.score_e3(handover, ladders, pushes, homing, enc=enc, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None,
                              rev=REV, p5_stands=iv(a.p5_stands))
+        lc = (score.get("e3") or {}).get("ladder")
+        if lc:   # rev 3: the ladder the record ran vs the rev-3 ladder (a stack that ignored HOMING_LADDER_TOPS runs the rev-2 ladder)
+            print(f"ladder rev {REV}: tops " + ", ".join(f"{ax} +{t[0]:.2f}/-{t[1]:.2f}" for ax, t in lc["tops"].items()) + " | rungs ran / expected "
+                  + ", ".join(f"{ax} {lc['ran'][ax]}/{lc['expected'][ax]}" for ax in lc["expected"]) + (" | MATCH" if lc["match"] else
+                  f" | !! MISMATCH: extra {', '.join(lc['extra'][:8]) or '-'}; missing {', '.join(lc['missing'][:8]) or '-'}"))
     elif E3:   # Exam #3 (2026-11-13): the v4 rows re-weighted inside the qualities + the Test 6 rows + the Exam #3 constraints
         score = lib.score_e3(handover, ladders, pushes, homing, enc=enc, n_homing=int(a.n), tilt_fail_deg=float(a.tilt_fail_deg) if a.tilt_fail_deg else None)
     elif a.exam == "2":   # v4 (2026-11-09): v3 (hard fails, 60 s stand rows) + rung error floor 0.05 + 48 pushes + the constraints block;

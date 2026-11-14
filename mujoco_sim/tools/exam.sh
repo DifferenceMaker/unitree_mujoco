@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # exam.sh -- THE standardized walk-policy exam, N rigs in parallel (2026-10-28 evening).
-#   bash mujoco_sim/tools/exam.sh [--exam 3|2|1, default 3 since 2026-11-13] [--parallel 8] [--seed 1] [--n 10] [--balance SLUG] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
+#   bash mujoco_sim/tools/exam.sh [--exam 3|2|1, default 3 since 2026-11-13] [--rev 3|2|1 (Exam #3; default 3 since 2026-11-14)] [--parallel 8] [--seed 1] [--n 10] [--balance SLUG] [--stop-dist 0.25] [--tag NAME] [--no-stairs] [--no-pushes] [--no-homing] [--stumble] <slug|name> ...
 # EXAM #3 (2026-11-13, owner: "No flags. This is our new test"; results/EXAM2_SPEC.md sections 12 + 13) = --exam 3 = every test of Exam #2 v4,
 #   unchanged and in the same order, THEN Test 6 ENCODER OFFSETS (tools/exam2_test.sh enc): the sim's robot gets the fixed zero-offset patterns of
 #   tools/enc_patterns.py (reported joint angle = true + offset; P0 zero, P1..P4 inside the trained +-0.010 rad band, P5 = the measured
@@ -18,6 +18,11 @@
 #   starts = the fixed table of tools/homing_starts.py (homing_trials.sh --fixed); (3) a reset to the standing snapshot before every test
 #   (HOMING_TEST_RESET); (4) Test 6 enters the P5 stand 3 times (HOMING_ENC_STRESS_STANDS, scored on the worst); records meta.exam_rev 2,
 #   meta.score.version 6. EXAM_TRACE=1: per rig the sim's per-frame hashes (SIM_TRACE) + MovementModule's (MM_TRACE) in <exam dir>/trace/.
+# EXAM #3 REV 3 (2026-11-14, operator: the training ranges trimmed to vx [-0.5, 0.8], wz +-0.6 -- "adjust the exam accordingly";
+#   results/EXAM2_SPEC.md section 15) = THE DEFAULT since then (--rev 2 / --rev 1 reproduce those exams exactly): rev 2 with the Test 1
+#   ladder cut to vx -0.50..+0.80 and wz +-0.60 (vy +-0.30 unchanged): 26 / 12 / 24 rungs. The tops = tools/exam_score.py
+#   E3_REV3_LADDER_TOPS (ONE place; E3_REV3_WZ_TOP = the wz maximum), handed to the rig's commander as HOMING_LADDER_TOPS (read there only
+#   under LOCKSTEP_DET); meta.exam_rev 3, meta.score.version 7, meta.score.e3.ladder = the ladder it was scored on + whether it ran exactly that.
 # --exam 2 = Exam #2 v4 EXACTLY as before 2026-11-13 (no Test 6, score_v4, exam_version 2): reproduces every v4 record; the running
 #   Optuna study s1_pilot is scored with it.
 # THE DEFAULT: the line "EXAM=..." below. Still 2 on 2026-11-13 (the s1_pilot watcher calls this script without --exam until its stored
@@ -51,7 +56,7 @@ set -uo pipefail
 SIM="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOS="${REPOS:-$HOME/Projects/robot_projects/repos}"
 AIL="${AIL:-$REPOS/aspired-isaac-lab}"; ASPIRED_W="${ASPIRED:-$REPOS/Aspired_Robot_Project-homing}"; MMP="$ASPIRED_W/MovementModule/policy"
-EXAM=3; REV=2; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
+EXAM=3; REV=3; PUSHES=1; STUMBLE=0; NOMS=0; PAR=8; PIN=1; FIRST=1; SEED=1; N=10; BALANCE="${HOMING_BALANCE:-}"; TAG="exam"; STAIRS=1; HOMING=1; HANDOVER=1; STOP_DIST=0.25
 FF="${EXAM_FF:-1}"   # 2026-11-03: the robot's arm gravity feedforward runs in EVERY rig (ActionModule/Utils/arm_ff_only.py in the container, as the ActionModule on the robot); EXAM_FF=0 = the pre-11-03 plant (PD-only arms)
 POLICIES=()
 while [[ $# -gt 0 ]]; do case "$1" in
@@ -62,8 +67,16 @@ while [[ $# -gt 0 ]]; do case "$1" in
 [[ "$EXAM" == 1 || "$EXAM" == 2 || "$EXAM" == 3 ]] || { echo "unknown --exam $EXAM (3 = Exam #3, 2 = Exam #2 v4, 1 = the 2026-10-29 exam)"; exit 1; }
 ENC=0; EXB="$EXAM"; [[ "$EXAM" == 3 ]] && { ENC=1; EXB=2; }
 # Exam #3 rev 2 (2026-11-13): the de-randomized exam (DET = everything below that reads it); --exam 1 / 2 never see it
-DET=0; P5N=3; [[ "$EXAM" == 3 && "$REV" == 2 ]] && DET=1
-[[ "$EXAM" != 3 || "$REV" == 1 || "$REV" == 2 ]] || { echo "unknown --rev $REV (Exam #3: 2 = de-randomized, 1 = the first Exam #3)"; exit 1; }
+# Exam #3 rev 3 (2026-11-14) = rev 2 (DET) + the rev-3 ladder (LTOPS = the commander's HOMING_LADDER_TOPS; empty = the commander's own ladder)
+DET=0; P5N=3; LTOPS=""; [[ "$EXAM" == 3 && ( "$REV" == 2 || "$REV" == 3 ) ]] && DET=1
+[[ "$EXAM" != 3 || "$REV" == 1 || "$REV" == 2 || "$REV" == 3 ]] || { echo "unknown --rev $REV (Exam #3: 3 = the rev-3 ladder (vx to 0.8, wz +-0.6), 2 = de-randomized, 1 = the first Exam #3)"; exit 1; }
+if [[ "$EXAM" == 3 && "$REV" == 3 ]]; then
+  LTOPS="$(cd "$SIM/tools" && python3 -c 'import exam_score as e; print(e.ladder_tops_env(3))')" || { echo "FATAL: no rev-3 ladder tops from tools/exam_score.py"; exit 1; }
+  # a stack whose commander does not read HOMING_LADDER_TOPS would run the rev-2 ladder silently: refuse
+  grep -q 'HOMING_LADDER_TOPS' "$ASPIRED_W/MovementModule/Utils/homing_commander.py" 2>/dev/null || {
+    echo "FATAL: Exam #3 rev 3 needs a rig worktree whose homing_commander reads HOMING_LADDER_TOPS (Aspired MM, 2026-11-14); $ASPIRED_W has none."
+    echo "       --rev 2 (the rev-2 ladder) or ASPIRED=<worktree> bash $0 ..."; exit 1; }
+fi
 # rev 2 needs a rig worktree whose stack knows LOCKSTEP_DET (Aspired MM_rig_derand, 2026-11-13): an older stack ignores the plan file and the
 # drivers (which only wait in rev 2) would wait for records that never come -- refuse instead
 if [[ $DET -eq 1 ]] && ! grep -q 'HOMING_PLAN_FILE' "$ASPIRED_W/MovementModule/Utils/homing_commander.py" 2>/dev/null; then
@@ -94,7 +107,7 @@ for slug in "${POLICIES[@]}"; do name="$(vendor "$slug")" && echo "$name $slug" 
 NP=$(wc -l < "$Q"); [[ $NP -gt 0 ]] || { echo "nothing to examine"; exit 2; }
 [[ $PAR -gt $NP ]] && PAR=$NP
 [[ "$EXB" == 2 ]] || STUMBLE=0
-echo "##### $(date +%T) EXAM #$EXAM$([[ $DET -eq 1 ]] && echo " rev 2 (de-randomized)") $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING stumble $STUMBLE arm ff $FF -> $EX"
+echo "##### $(date +%T) EXAM #$EXAM$([[ $DET -eq 1 ]] && echo " rev $REV (de-randomized)")${LTOPS:+ ladder $LTOPS} $TAG: $NP policies, $PAR instances (pin $PIN), seed $SEED, n $N, balance $BALANCE, stop $STOP_DIST m, stairs/ladders $STAIRS pushes $PUSHES homing $HOMING stumble $STUMBLE arm ff $FF -> $EX"
 if [[ "$EXB" == 2 ]]; then   # the commander knobs of exam #2 (forwarded into the rig by run_mujoco_loco_switch.sh)
   export HOMING_TURN_LAW=p HOMING_DESK="0.8 1.2" HOMING_TIMEOUT_S=120   # the desk scene: top 0.80 deep x 1.20 wide behind the edge (0.35, 0)
   export HOMING_TRIAL_T0="${HOMING_TRIAL_T0:-15}"   # 2026-11-01: the first item at sim 15 s (was 40; the walk engages at ~4.6 s)
@@ -132,8 +145,9 @@ worker() {  # worker <instance k>
       b_ho=$(wc -l < "$SIM/logs/handover_$k.jsonl"); b_st=$(wc -l < "$SIM/logs/staircase_$k.jsonl"); b_pu=$(wc -l < "$SIM/logs/pushes_$k.jsonl")
       b_hm=$(wc -l < "$SIM/logs/homing_trials_$k.jsonl"); b_su=$(wc -l < "$SIM/logs/stumble_$k.jsonl"); b_en=$(wc -l < "$SIM/logs/enc_$k.jsonl")
       DETENV=(LOCKSTEP_DET=1 LOCKSTEP_DET_FF="$FF" HOMING_PLAN_FILE="/unitree_mujoco/mujoco_sim/logs/exam/${EX##*/}/plan_$name.txt" HOMING_TEST_RESET=1 HOMING_ENC_STRESS_STANDS="$P5N")
+      [[ -n "$LTOPS" ]] && DETENV+=(HOMING_LADDER_TOPS="$LTOPS")   # rev 3: the rev-3 ladder (rev 2: unset = the commander's LADDER_AXES)
       if [[ "${EXAM_TRACE:-0}" == 1 ]]; then mkdir -p "$EX/trace"; DETENV+=(SIM_TRACE="$EX/trace/sim_$name.txt" MM_TRACE="/unitree_mujoco/mujoco_sim/logs/exam/${EX##*/}/trace/mm_$name.txt"); fi
-      echo "[$k] $(date +%T) $name: rev 2 plan $(wc -l < "$EX/plan_$name.txt") lines (de-randomized: frame-stamped streams, reset before each test, P5 x $P5N, fixed homing starts)"
+      echo "[$k] $(date +%T) $name: rev $REV plan $(wc -l < "$EX/plan_$name.txt") lines (de-randomized: frame-stamped streams, reset before each test, P5 x $P5N, fixed homing starts)${LTOPS:+; ladder $LTOPS}"
     fi
     if [[ $DET -eq 1 ]]; then
       (cd "$SIM" && env "${DETENV[@]}" HOMING_WALK="$name" HOMING_BALANCE="$BALANCE" HOMING_STOP_DIST="$STOP_DIST" LOCOSW_LOCKSTEP=1 HOMING_SEED="$SEED" METRICS=0 bash run_mujoco_homing.sh > "$EX/rig_$name.log" 2>&1 &)
@@ -213,7 +227,7 @@ worker() {  # worker <instance k>
     fi
     M=$(ls -t "$SIM"/logs/mujoco_locosw_*_"$k".log 2>/dev/null | head -1); [[ -n "$M" ]] && grep -E 'HEADLESS\] sim_t' "$M" | tail -1 | sed "s/^/[$k]    /"
     # the exam record that travels with the milestone (fleetdeck draws the sheets from it) -- JSON in git, no PNG
-    python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --stop-dist "$STOP_DIST" --exam "$EXAM" --instance "$k" --arm-ff "$FF" $([[ $NOMS -eq 1 ]] && echo "--ail /nonexistent") $([[ $DET -eq 1 ]] && echo "--rev 2 --det 1 --test-reset 1 --p5-stands $P5N --homing-fixed 1") 2>&1 | sed "s/^/[$k]    /"
+    python3 "$SIM/tools/exam_record.py" "$EX" "$name" "${slug:-$name}" --tag "$TAG" --seed "$SEED" --n "$N" --balance "$BALANCE" --stop-dist "$STOP_DIST" --exam "$EXAM" --instance "$k" --arm-ff "$FF" $([[ $NOMS -eq 1 ]] && echo "--ail /nonexistent") $([[ $DET -eq 1 ]] && echo "--rev $REV --det 1 --test-reset 1 --p5-stands $P5N --homing-fixed 1") 2>&1 | sed "s/^/[$k]    /"
     grep -c "POSE GAP" "$L" 2>/dev/null | sed "s/^/[$k]    pose gaps: /"
     if [[ "$FF" == 1 ]]; then   # the ff sender's log + the Bridge's ff events (APPLIED / reverted / MUTED / LIVE) travel with the exam
       docker exec "archb_locosw_$k" cat /tmp/arm_ff_only.log > "$EX/ff_$name.log" 2>/dev/null
@@ -230,4 +244,4 @@ wait
 T_END=$(date +%s)
 echo "##### $(date +%T) EXAM DONE: $NP policies on $PAR instances in $(( (T_END - T_START) / 60 )) min $(( (T_END - T_START) % 60 )) s"
 PYX="${EXAM_PY:-python3}"
-"$PYX" "$SIM/tools/exam_report.py" "$EX" --exam "$EXAM" --seed "$SEED" --n "$N" --balance "$BALANCE" --tag "$TAG" --wall "$((T_END - T_START))" --parallel "$PAR" $([[ $DET -eq 1 ]] && echo "--rev 2") | tee "$EX/report.txt"
+"$PYX" "$SIM/tools/exam_report.py" "$EX" --exam "$EXAM" --seed "$SEED" --n "$N" --balance "$BALANCE" --tag "$TAG" --wall "$((T_END - T_START))" --parallel "$PAR" $([[ $DET -eq 1 ]] && echo "--rev $REV") | tee "$EX/report.txt"

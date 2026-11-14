@@ -23,9 +23,13 @@ def load(p):
 if glob.glob(f"{a.exam_dir}/ladders_*.jsonl"):   # EXAM #2 (2026-10-30): the score by quality (exam_score.score_v2)
     names = sorted(os.path.basename(p)[len("ladders_"):-len(".jsonl")] for p in glob.glob(f"{a.exam_dir}/ladders_*.jsonl"))
     R = {}
+    def tops_of(nm):   # Exam #3 rev 3 (2026-11-14): the rev-3 ladder (vx to 0.80, wz +-0.60) -> the tracking rows over ITS rung counts; else None (as before)
+        try: m = json.load(open(f"{a.exam_dir}/exam_{nm}.json")).get("meta") or {}
+        except (OSError, ValueError, AttributeError): m = {}
+        return es.ladder_tops(3) if int(m.get("exam_version") or 0) == 3 and int(m.get("exam_rev") or 1) >= 3 else None
     for nm in names:
         L = load(f"{a.exam_dir}/ladders_{nm}.jsonl"); Pu = load(f"{a.exam_dir}/pushes_{nm}.jsonl")
-        R[nm] = es.score_v2(load(f"{a.exam_dir}/handover_{nm}.jsonl"), L[-1] if L else None, Pu[-1] if Pu else None, load(f"{a.exam_dir}/homing_{nm}.jsonl"))
+        R[nm] = es.score_v2(load(f"{a.exam_dir}/handover_{nm}.jsonl"), L[-1] if L else None, Pu[-1] if Pu else None, load(f"{a.exam_dir}/homing_{nm}.jsonl"), tops=tops_of(nm))
     new = {k: v for k, v in R.items() if k.startswith(a.new)}; old = {k: v for k, v in R.items() if k.startswith(a.old)}
     Q = list(es.QUALITIES); out = []; P = out.append
     mk = lambda r, k: next((m for m in r["metrics"] if m["key"] == k), {})

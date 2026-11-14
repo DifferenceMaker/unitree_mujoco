@@ -29,7 +29,9 @@ per-policy keys one value per policy.
   score s is the same number in a v4 and an Exam #3 reading of one run. The population must be Exam #3 records (they carry "enc").
 --rev N (2026-11-13, Exam #3 rev 2): keep only Exam #3 records of revision N (meta.exam_rev; none = rev 1). Without it the revision counts
   are printed (--e3) and a mixed population is flagged. --apply re-scores a version-6 record (rev 2) with score_e3(rev=meta.exam_rev,
-  p5_stands=meta.det.p5_stands); a version-5 record (rev 1) exactly as before."""
+  p5_stands=meta.det.p5_stands); a version-5 record (rev 1) exactly as before. Version 7 (rev 3, 2026-11-14: the rev-3 ladder, vx to 0.80,
+  wz +-0.60) the same way, score_e3(rev=3). Rev 3's shorter ladder moves the rung-pooled samples (impact, smooth, slip, steady, ...): pass
+  --rev 3 to calibrate on rev-3 records only."""
 import argparse, glob, importlib.util, json, os, statistics as st, time
 
 TOOLS = os.path.dirname(os.path.abspath(__file__))
@@ -169,8 +171,8 @@ def main():
             ver = int((r["meta"].get("score") or {}).get("version") or 2)   # each record keeps its own score version (v4: the v4 table)
             fn = {2: es.score_v2, 3: es.score_v3}.get(ver, es.score_v4)
             sc = fn(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), n_homing=int(r["meta"].get("n") or 10))
-            if ver in (5, 6):   # Exam #3 (2026-11-13, meta.score.version 5; rev 2 = version 6): score_e3 with the record's own "enc" (without this it would drop to v4)
-                rv = int(r["meta"].get("exam_rev") or (2 if ver == 6 else 1))   # rev 2: the worst of the repeated P5 stands
+            if ver in (5, 6, 7):   # Exam #3 (2026-11-13, meta.score.version 5; rev 2 = version 6; rev 3 = 7): score_e3 with the record's own "enc" (without this it would drop to v4)
+                rv = int(r["meta"].get("exam_rev") or {6: 2, 7: 3}.get(ver, 1))   # rev 2: the worst of the repeated P5 stands; rev 3: + the rev-3 ladder
                 kw = {"rev": rv, "p5_stands": (r["meta"].get("det") or {}).get("p5_stands")} if rv >= 2 else {}
                 sc = es.score_e3(r.get("handover"), r.get("ladders"), r.get("pushes"), r.get("homing"), enc=r.get("enc"), n_homing=int(r["meta"].get("n") or 10), **kw)
             r["meta"]["score"] = sc

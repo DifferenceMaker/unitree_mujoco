@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """exam_report.py <exam dir> [--exam 3|2|1 --seed S --n N --balance B --tag T --wall SECONDS --parallel P --rev R] -- the ranking table of one exam run.
-(--rev, 2026-11-13: Exam #3 rev 2 -> "EXAM #3 rev 2" in the head, score_e3(rev=2); each policy's exam_<name>.json meta.exam_rev wins.)
+(--rev, 2026-11-13: Exam #3 rev 2 -> "EXAM #3 rev 2" in the head, score_e3(rev=2); each policy's exam_<name>.json meta.exam_rev wins.
+ Rev 3, 2026-11-14: the same with the rev-3 ladder -- vx to 0.80, wz +-0.60 -- and its rung counts in the text.)
 
 Reads per policy homing_<name>.jsonl (Test 2 records) and stairs_<name>.jsonl (Test 1 record) from tools/exam.sh, prints the table,
 writes <exam dir>/EXAM.md and appends the same block to mujoco_sim/results/EXAM.md.
@@ -63,7 +64,7 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
         if E3:
             EN = load(f"{EX}/enc_{nm}.jsonl")
             REV[nm] = rev_of(nm)
-            if REV[nm][0] >= 2:   # rev 2: the P5 rows read the worst of the repeated P5 stands (score version 6)
+            if REV[nm][0] >= 2:   # rev 2: the P5 rows read the worst of the repeated P5 stands (score version 6); rev 3: + the rev-3 ladder (version 7)
                 sc = exam_score.score_e3(HO, L[-1] if L else None, P[-1] if P else None, H, enc=EN[-1] if EN else None, n_homing=int(a.n) if a.n != "?" else 10,
                                          rev=REV[nm][0], p5_stands=REV[nm][1])
             else:
@@ -139,6 +140,8 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
               "| Test 6 points stab/gait/energy/push | low rungs passed vx · vy · wz (information) | bias (recorded): worst lean° · walk vy mm/s · P5 lean° | Exam #3 constraints |",
               "|" + "---|" * 15]
         R2 = any(rv >= 2 for rv, _ in REV.values())   # rev 2: the P5 stand cell = the worst of the N stands + each stand in brackets
+        R3 = any(rv >= 3 for rv, _ in REV.values())   # rev 3 (2026-11-14): the shorter ladder -> its rung counts in the text below
+        nr = " / ".join(f"{ax} {n_}" for ax, n_ in exam_score.expected_rungs(exam_score.ladder_tops(3)).items()) if R3 else "30 / 12 / 32"
         if R2: el[0] = el[0].replace("| P5 stand: drift cm · lifts · rate rad/s ", "| P5 stand (rev 2: the WORST of the N stands; each stand drift · lifts in brackets): drift cm · lifts · rate rad/s ")
         for nm, sc, *_ in R:
             es = sc.get("enc") or {}
@@ -167,13 +170,16 @@ if a.exam in ("2", "3"):   # EXAM #2 (2026-10-30): score by quality (exam_score.
                   "+-0.010 rad band, P5 = the measured residuals unscaled = stress; per pattern a 15 s stand + a 15 s measured walk at vx 0.30, then 8 offset pushes at 1.0 m/s under P5): stability 5 "
                   "(P5 stand drift 1.5, lifts 1, torso rate 0.5, worst in-band stand drift 1, walk tilt change 1), gait 2 (impact, roughness change), energy 2 (offset-push recovery, walking power change), "
                   "pushes 1.43 (the 8 offset pushes, the Test 2 formula); a fall under a pattern or an offset push not held halves survival like any fall. 'same run, v4 rules' = score_v4 of the same record "
-                  f"(Exam #3 and Exam #2 scores do not compare). Constraints: walks_vx / vy / wz count EVERY ladder rung (30 / 12 / 32) at gain >= 0.5, share >= {exam_score.WALK_SHARE:g} (v4 counted from 0.10 m/s / 0.2 rad/s); added: stand_quiet (foot lifts 60 s stand + 120 s stand after walking <= {exam_score.STAND_QUIET_LIFTS:g} p), "
+                  f"(Exam #3 and Exam #2 scores do not compare). Constraints: walks_vx / vy / wz count EVERY ladder rung ({nr}) at gain >= 0.5, share >= {exam_score.WALK_SHARE:g} (v4 counted from 0.10 m/s / 0.2 rad/s); added: stand_quiet (foot lifts 60 s stand + 120 s stand after walking <= {exam_score.STAND_QUIET_LIFTS:g} p), "
                   f"enc_no_falls, enc_stand_drift <= {exam_score.ENC_STAND_DRIFT_CM:g} cm p, enc_stand_lifts <= {exam_score.ENC_STAND_LIFTS:g} p (p = provisional); the 'feasible' column above includes them. "
                   "The bias numbers (lean, drift vs P0) are recorded, not scored."
                   + (" REV 2 (2026-11-13, score version 6): the P5 stand is entered 3 times (stand; then 8 s walking at 0.30 on perfect encoders, P5 lands again, stand2; "
                      "the same for stand3) and the three P5 stand rows + enc_stand_drift / enc_stand_lifts read the WORST of them per metric (drift, lifts, rate = the max); "
                      "a fall / hard fail in any repeated segment is a P5 fall; every test starts from the standing snapshot; Test 3 starts = the fixed table "
                      "(tools/homing_starts.py). Weights and ramps as rev 1." if R2 else "")
+                  + (" REV 3 (2026-11-14, score version 7): rev 2 on the ladder of the trimmed training ranges, vx -0.50..+0.80 and wz +-0.60 "
+                     f"(tools/exam_score.py E3_REV3_LADDER_TOPS; vy +-0.30): {nr} rungs; walks_* / track_* / track_floor_* count these rungs, "
+                     "track_floor_wz08 reads the wz tops +-0.60; rev-3 scores do not compare with rev 2." if R3 else "")
                   + "\n\n" + "\n".join(el) + "\n")
     print(block)
     open(f"{EX}/EXAM.md", "w").write(block)

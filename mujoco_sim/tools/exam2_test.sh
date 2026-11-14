@@ -7,6 +7,7 @@
 # ladders: teleport, a 20 s stand (stance + the joint state for the stance drawing), then per axis a continuous ladder of 0.05 rungs
 #   (4 s each, the last 2.5 s measured) up to the top, a 4 s stop, the same ladder backwards, a 4 s stop: vx 0.05..1.00 / -0.05..-0.50,
 #   vy +-0.05..0.30, wz +-0.05..0.80 (340 s of sim). Record -> logs/staircase[$SFX].jsonl (kind "ladders").
+#   Exam #3 rev 3 (2026-11-14): vx -0.50..+0.80 and wz +-0.60 (HOMING_LADDER_TOPS from exam.sh; tools/exam_score.py E3_REV3_LADDER_TOPS).
 # pushes: teleport, 3 s settle, 12 pushes standing (2 s before each) then 12 walking at vx 0.3 (3 s before each): velocity kicks of
 #   0.5 / 1.0 / 1.5 m/s front / back / left / right, 5 s measured after each (183 s). Record -> logs/pushes[$SFX].jsonl.
 # A fall: recorded, the robot reset on the spot (standing snapshot), the script continues (ladders: the next half; pushes: the next push).
