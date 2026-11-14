@@ -1031,3 +1031,82 @@ re-score via `exam_calibrate.py --e3 --apply` (on copies) to their stored scores
 rev 2 adds 54 s of sim (two more P5 entries); rtf 5.3–6.3 per rig at 3 rigs (rev 1 in the same round 5.8): the frame joins cost
 ~0.1–0.25 ms per policy frame (the sim's policy-frame wait 1.43–1.65 ms vs 1.38 ms in rev 1); the homing timeouts (120 s each) set
 most of the difference between policies.
+
+## 15. EXAM #3 REV 3 (2026-11-14, operator-approved): the ladder of the trimmed training ranges
+Why: the training command ranges are trimmed to vx [-0.5, 0.8] m/s (was [-0.8, 1.2]) and wz [-0.6, 0.6] rad/s (was ±0.8); the operator:
+"adjust the exam accordingly". A rung outside the trained range asks for a speed the policy was never trained on (and MovementModule
+clips every command to the policy's own `deploy.yaml` ranges, so a ±0.6-trained policy would be scored against a command it never
+received). Rev 3 = rev 2 with **the Test 1 ladder cut to vx −0.50..+0.80 and wz ±0.60** (vy ±0.30 unchanged), 0.05 rungs as before:
+
+| axis | rev 1 / 2 rungs | rev 3 rungs | rev 3 ladder |
+|---|---|---|---|
+| vx | 30 (+0.05..+1.00, −0.05..−0.50) | **26** | +0.05..+0.80 (16), −0.05..−0.50 (10) |
+| vy | 12 | 12 | ±0.05..±0.30 |
+| wz | 32 (±0.05..±0.80) | **24** | ±0.05..±0.60 |
+
+Everything else is rev 2 (frame-stamped rig, plan, fixed homing starts, reset per test, P5 × 3, weights, ramps, calibration files,
+limits). `exam.sh` defaults to rev 3 since this date; `--rev 2` / `--rev 1` reproduce those exams exactly; `--exam 2` is untouched.
+Records: `meta.exam_rev` 3, `meta.score.version` 7 (+ `rev` 3), `meta.score.e3.ladder` = {tops, expected / ran rung counts per axis,
+extra, missing, match}. **Rev-3 scores do not compare with rev 2** (fewer rungs, a different sequence: every test after the ladders
+starts on other frames, and the stops follow other tops).
+
+### 15.1 One place for the ladder
+`tools/exam_score.py`: `E3_REV3_VX_TOP = 0.80`, `E3_REV3_WZ_TOP = 0.60` (**the wz maximum: one value**) → `E3_REV3_LADDER_TOPS`;
+`ladder_tops(rev)`, `ladder_tops_env(rev)`, `expected_rungs(tops)`, `ladder_check(ladders, tops)`. `exam.sh` rev 3 reads
+`ladder_tops_env(3)` = `vx=0.80:0.50,vy=0.30:0.30,wz=0.60:0.60` and passes it to the rig as `HOMING_LADDER_TOPS` (forwarded by
+`run_mujoco_loco_switch.sh` only when set); the commander (Aspired MM, `homing_commander.py` after `LADDER_AXES`) replaces its ladder
+tops with it **only under LOCKSTEP_DET** and prints `ladder tops (HOMING_LADDER_TOPS) vx +0.80/-0.50, vy +0.30/-0.30, wz +0.60/-0.60
+-> 62 rungs`. `exam.sh` refuses rev 3 on a worktree whose commander does not read the variable (it would run the rev-2 ladder silently),
+and `exam_record.py` prints the ladder check (`rungs ran / expected vx 26/26, vy 12/12, wz 24/24 | MATCH`).
+
+### 15.2 What follows the ladder (`score_e3(rev=3)`; rev 1 / 2 take the unchanged pre-rev-3 path, `tops=None`)
+- `walks_vx / vy / wz`: every rung of the rev-3 ladder, gain ≥ 0.5, share ≥ 0.9 unchanged. With 26 / 24 rungs at most **2** may fall
+  short ($\lfloor 0.1 \cdot 26 \rfloor = 2$; rev 2: 3 of 30 / 32): worked, 24/26 = 0.923 passes, 23/26 = 0.885 fails. The share rule is
+  the operator's; the count it allows is one rung tighter than rev 2.
+- `track_vx / track_wz` (tracking 20): mean rung score over 26 / 24 rungs (rev 2: 30 / 32). The removed rungs were the policy's best
+  tracked wz rungs: track_wz drops when the poorly tracked low rungs weigh more (s2_center_s2: 0.393 rev 2 → 0.243 rev 3).
+- `track_floor_vx`: the rungs from 0.10 m/s, 24 (rev 2: 28).
+- `track_floor_wz08`: **re-pointed** to the wz ladder's top rungs, ±0.60 (rev 1 / 2: ±0.80); the detail text says ±0.6. Kept, not
+  retired: it is the one check that the policy turns at the top of its commanded range (walks_wz's 10 % slack can hide exactly those two
+  rungs). The NAME stays `track_floor_wz08` (the study's space files, fleetdeck and `EXAM_TRACK_FLOOR`'s `wz08` key read it by name).
+- `score_v4` / `feasible_v4` inside a rev-3 record = the v4 rules on the rev-3 ladder (else 12 rungs that never ran would count as failed).
+- `e3.walks_low` (information, `share` read by the study): unchanged rungs (vx ±0.05/±0.10, vy ±0.05/±0.10, wz ±0.10..±0.30).
+- Changes by construction, not re-calibrated (operator: everything else as rev 2): the stops now follow the tops +0.80 / ±0.60;
+  the rung-pooled rows (impact, smoothness, pivot, slip, steadiness, swing share, joint-limit dwell, all-phase energy) lose the
+  fastest rungs; their ramps (`exam2_calibration_v4.json`, `exam3_calibration.json`) were set on rev-1 / 2 populations. A rev-3
+  recalibration = `exam_calibrate.py --e3 --rev 3` on rev-3 records.
+- Also adjusted: `exam_report.py` (rung counts + a REV 3 sentence in the head), `exam_calibrate.py --apply` (version 7 → score_e3(rev=3)),
+  `land_table.py` (its score_v2 re-score normalises over the rev-3 ladder for rev-3 records). fleetdeck needs nothing: the ladder sheet
+  ranges on the record's rungs, the score title reads `meta.score.rev` ("Exam #3 rev 3").
+- NOT changed, flagged: the homing commander's in-place turn `HOMING_WZ_TURN` = 0.8 rad/s (the robot's own homing value; Test 3 runs the
+  robot's commander). MovementModule clips it to the policy's `deploy.yaml` wz range, so a ±0.6-trained policy receives ±0.6 on the rig
+  and on the robot alike.
+
+### 15.3 Validation (2026-11-14 evening, s2_center_s2_2026-11-13, seed 1, n 10, ff on, balance p16c_sw_enc01, ONE rig at a time, unpinned)
+| run | flags | record values differing | traces | score | wall |
+|---|---|---|---|---|---|
+| A `r3val_a` | rev 3, `EXAM_TRACE=1`, --no-milestone | — | — | 63.0 | 350 s |
+| B `r3val_b` | rev 3, `EXAM_TRACE=1`, --no-milestone | **0 of 250 858** vs A | sim 1 054 500 frames, MovementModule 105 172 steps: IDENTICAL | 63.0 | 346 s |
+| D `s3_anchor_rev3` | the default (no --rev), into the milestone | **0 of 250 858** vs A | (no trace) | 63.0 | 345 s |
+| C `r2check` | `--rev 2`, --no-milestone | **0 of 258 517** vs the stored rev-2 record `studies/s2/records/s2_center_s2_final.json` | — | 62.1 = stored 62.1 | 349 s |
+
+Excluded from the comparisons (`det_compare.py`'s IGNORE: what names the run): in C vs the stored record exactly `meta.stamp`, `meta.tag` and
+16 `traj_file` names (wall-clock seconds in the file name) differ, nothing else. The rev-2 rig had no `HOMING_LADDER_TOPS` in its container
+env and its commander printed no ladder line; the rev-3 rigs printed `-> 62 rungs` and `exam_record.py` `MATCH` (26/26, 12/12, 24/24).
+Ladders: 468.88 s of sim in rev 3 vs 516.88 s in rev 2 (−48 s = 12 rungs × 4 s); the whole exam ~350 s of wall alone on the box either way.
+**Scoring code**: old vs new `exam_score.py` on every stored record (419 files): 82 v2, 68 v3, 188 v4, 9 Exam #3 rev 1, 30 rev 2 = 377
+re-scored records byte-identical (one sha256 over all; 42 Exam #1 / scoreless files skipped); the new `exam_record.py` rebuilds the stored
+rev-2 record from its original exam dir with 0 of 258 517 values differing.
+**Commander, robot path**: old vs new `homing_commander.py` imported under (a) the robot env (no HOMING_CLOCK / LOCKSTEP_DET), (b) the same +
+a stray `HOMING_LADDER_TOPS`, (c) HOMING_CLOCK=sim without LOCKSTEP_DET (rev 1, --exam 2), (d) rev 2 (DET, no tops): every module constant
+and the ladder / push / stumble / engage segment scripts identical; only (e) DET + tops changes `LADDER_AXES` (62 rungs, vx top +0.80).
+
+**The anchor** (`milestone_checkpoints/s2_center_s2_2026-11-13/exam/s3_anchor_rev3_2026-11-14_19-28-57.json`): score **63.0** (v4 rules on the
+same ladder 63.1; rev 2 of the same checkpoint 62.1 — the two do not compare), parts survival 10.0 / stability 21.1 / tracking 9.3 / gait 4.4 /
+energy 7.6 / pushes 6.1 / homing 4.5, ladder vx 26 / vy 12 / wz 24 rungs (ran = expected). Constraints (value / threshold → c):
+no_falls 0 / 0 → 0; **walks_vx 22/26 = 0.846** / 0.9 → 0.054 FAIL (short +0.05, +0.10, −0.05, −0.10; rev 2: 27/30 = 0.90 passed; −0.10
+reached gain 0.5 there and not here -- the backward ladder now follows the stop from +0.80, not +1.00, the likely cause); walks_vy 5/12 = 0.417 → 0.483;
+walks_wz 12/24 = 0.500 → 0.400; track_floor_vx 0.861 / 0.9 → 0.039; track_floor_vy 0.539 / 0.8 → 0.261; track_floor_wz08 (±0.6) 0.96 / 0.5
+→ −0.460; tilt_floor 1.36 / 8 → −6.64; **stand_quiet 2** (60 s stand 0 + 120 s stand after walking 2; rev 2: 11) / 6 → −4.0; enc_no_falls 0;
+enc_stand_drift 3.47 cm (3.5 / 2.1 / 2.4) / 5 → −1.53; enc_stand_lifts 2 (2 / 1 / 1) / 1 → 1.0 FAIL. walks_low (information): vx 0/4,
+vy 0/4, wz 1/10, share 0.056 (rev 2: 0.056). Not feasible (walks_vx / vy / wz, track floors vx / vy, enc_stand_lifts).
